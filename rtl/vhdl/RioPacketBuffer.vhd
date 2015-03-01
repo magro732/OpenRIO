@@ -55,11 +55,24 @@ use work.rio_common.all;
 
 -------------------------------------------------------------------------------
 -- Entity for RioPacketBuffer.
+--
+-- Generic variables
+-- -----------------
+-- SIZE_ADDRESS_WIDTH - The number of frames in powers of two.
+-- CONTENT_ADDRESS_WIDTH - The total number of entries in the memory that can
+-- be used to store packet data.
+-- CONTENT_WIDTH - The width of the data to store as packet content in the memory.
+-- MAX_PACKET_SIZE - The number of entries that must be available for a new
+-- complete full sized packet to be received. This option is present to ensure
+-- that it is always possible to move a packet to the storage without being
+-- surprised that the storage is suddenly empty.
 -------------------------------------------------------------------------------
 entity RioPacketBuffer is
   generic(
     SIZE_ADDRESS_WIDTH : natural := 6;
-    CONTENT_ADDRESS_WIDTH : natural := 8);
+    CONTENT_ADDRESS_WIDTH : natural := 8;
+    CONTENT_WIDTH : natural := 32;
+    MAX_PACKET_SIZE : natural := 69);
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -68,29 +81,31 @@ entity RioPacketBuffer is
     inboundWriteFrame_i : in std_logic;
     inboundWriteFrameAbort_i : in std_logic;
     inboundWriteContent_i : in std_logic;
-    inboundWriteContentData_i : in std_logic_vector(31 downto 0);
+    inboundWriteContentData_i : in std_logic_vector(CONTENT_WIDTH-1 downto 0);
     inboundReadFrameEmpty_o : out std_logic;
     inboundReadFrame_i : in std_logic;
     inboundReadFrameRestart_i : in std_logic;
     inboundReadFrameAborted_o : out std_logic;
+    inboundReadFrameSize_o : out std_logic_vector(CONTENT_ADDRESS_WIDTH-1 downto 0);
     inboundReadContentEmpty_o : out std_logic;
     inboundReadContent_i : in std_logic;
     inboundReadContentEnd_o : out std_logic;
-    inboundReadContentData_o : out std_logic_vector(31 downto 0);
+    inboundReadContentData_o : out std_logic_vector(CONTENT_WIDTH-1 downto 0);
     
     outboundWriteFrameFull_o : out std_logic;
     outboundWriteFrame_i : in std_logic;
     outboundWriteFrameAbort_i : in std_logic;
     outboundWriteContent_i : in std_logic;
-    outboundWriteContentData_i : in std_logic_vector(31 downto 0);
+    outboundWriteContentData_i : in std_logic_vector(CONTENT_WIDTH-1 downto 0);
     outboundReadFrameEmpty_o : out std_logic;
     outboundReadFrame_i : in std_logic;
     outboundReadFrameRestart_i : in std_logic;
     outboundReadFrameAborted_o : out std_logic;
+    outboundReadFrameSize_o : out std_logic_vector(CONTENT_ADDRESS_WIDTH-1 downto 0);
     outboundReadContentEmpty_o : out std_logic;
     outboundReadContent_i : in std_logic;
     outboundReadContentEnd_o : out std_logic;
-    outboundReadContentData_o : out std_logic_vector(31 downto 0));
+    outboundReadContentData_o : out std_logic_vector(CONTENT_WIDTH-1 downto 0));
 end entity;
 
 
@@ -102,7 +117,9 @@ architecture RioPacketBufferImpl of RioPacketBuffer is
   component PacketBufferContinous is
     generic(
       SIZE_ADDRESS_WIDTH : natural;
-      CONTENT_ADDRESS_WIDTH : natural);
+      CONTENT_ADDRESS_WIDTH : natural;
+      CONTENT_WIDTH : natural;
+      MAX_PACKET_SIZE : natural);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -111,16 +128,17 @@ architecture RioPacketBufferImpl of RioPacketBuffer is
       writeFrame_i : in std_logic;
       writeFrameAbort_i : in std_logic;
       writeContent_i : in std_logic;
-      writeContentData_i : in std_logic_vector(31 downto 0);
+      writeContentData_i : in std_logic_vector(CONTENT_WIDTH-1 downto 0);
 
       readFrameEmpty_o : out std_logic;
       readFrame_i : in std_logic;
       readFrameRestart_i : in std_logic;
       readFrameAborted_o : out std_logic;
+      readFrameSize_o : out std_logic_vector(CONTENT_ADDRESS_WIDTH-1 downto 0);
       readContentEmpty_o : out std_logic;
       readContent_i : in std_logic;
       readContentEnd_o : out std_logic;
-      readContentData_o : out std_logic_vector(31 downto 0));
+      readContentData_o : out std_logic_vector(CONTENT_WIDTH-1 downto 0));
   end component;
   
 begin
@@ -131,7 +149,9 @@ begin
   OutboundPacketBuffer: PacketBufferContinous
     generic map(
       SIZE_ADDRESS_WIDTH=>SIZE_ADDRESS_WIDTH,
-      CONTENT_ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH)
+      CONTENT_ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH,
+      CONTENT_WIDTH=>CONTENT_WIDTH,
+      MAX_PACKET_SIZE=>MAX_PACKET_SIZE)
     port map(
       clk=>clk, 
       areset_n=>areset_n, 
@@ -142,6 +162,7 @@ begin
       readFrameEmpty_o=>outboundReadFrameEmpty_o, 
       readFrame_i=>outboundReadFrame_i, readFrameRestart_i=>outboundReadFrameRestart_i, 
       readFrameAborted_o=>outboundReadFrameAborted_o,
+      readFrameSize_o=>outboundReadFrameSize_o,
       readContentEmpty_o=>outboundReadContentEmpty_o,
       readContent_i=>outboundReadContent_i, readContentEnd_o=>outboundReadContentEnd_o, 
       readContentData_o=>outboundReadContentData_o);
@@ -152,7 +173,9 @@ begin
   InboundPacketBuffer: PacketBufferContinous
     generic map(
       SIZE_ADDRESS_WIDTH=>SIZE_ADDRESS_WIDTH,
-      CONTENT_ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH)
+      CONTENT_ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH,
+      CONTENT_WIDTH=>CONTENT_WIDTH,
+      MAX_PACKET_SIZE=>MAX_PACKET_SIZE)
     port map(
       clk=>clk, 
       areset_n=>areset_n, 
@@ -163,6 +186,7 @@ begin
       readFrameEmpty_o=>inboundReadFrameEmpty_o, 
       readFrame_i=>inboundReadFrame_i, readFrameRestart_i=>inboundReadFrameRestart_i, 
       readFrameAborted_o=>inboundReadFrameAborted_o,
+      readFrameSize_o=>inboundReadFrameSize_o,
       readContentEmpty_o=>inboundReadContentEmpty_o,
       readContent_i=>inboundReadContent_i, readContentEnd_o=>inboundReadContentEnd_o, 
       readContentData_o=>inboundReadContentData_o);
@@ -188,7 +212,9 @@ use work.rio_common.all;
 entity RioPacketBufferWindow is
   generic(
     SIZE_ADDRESS_WIDTH : natural := 6;
-    CONTENT_ADDRESS_WIDTH : natural := 8);
+    CONTENT_ADDRESS_WIDTH : natural := 8;
+    CONTENT_WIDTH : natural := 32;
+    MAX_PACKET_SIZE : natural := 69);
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -197,7 +223,7 @@ entity RioPacketBufferWindow is
     inboundWriteFrame_i : in std_logic;
     inboundWriteFrameAbort_i : in std_logic;
     inboundWriteContent_i : in std_logic;
-    inboundWriteContentData_i : in std_logic_vector(31 downto 0);
+    inboundWriteContentData_i : in std_logic_vector(CONTENT_WIDTH-1 downto 0);
     inboundReadFrameEmpty_o : out std_logic;
     inboundReadFrame_i : in std_logic;
     inboundReadFrameRestart_i : in std_logic;
@@ -205,13 +231,13 @@ entity RioPacketBufferWindow is
     inboundReadContentEmpty_o : out std_logic;
     inboundReadContent_i : in std_logic;
     inboundReadContentEnd_o : out std_logic;
-    inboundReadContentData_o : out std_logic_vector(31 downto 0);
+    inboundReadContentData_o : out std_logic_vector(CONTENT_WIDTH-1 downto 0);
     
     outboundWriteFrameFull_o : out std_logic;
     outboundWriteFrame_i : in std_logic;
     outboundWriteFrameAbort_i : in std_logic;
     outboundWriteContent_i : in std_logic;
-    outboundWriteContentData_i : in std_logic_vector(31 downto 0);
+    outboundWriteContentData_i : in std_logic_vector(CONTENT_WIDTH-1 downto 0);
     outboundReadFrameEmpty_o : out std_logic;
     outboundReadFrame_i : in std_logic;
     outboundReadFrameRestart_i : in std_logic;
@@ -222,7 +248,7 @@ entity RioPacketBufferWindow is
     outboundReadContentEmpty_o : out std_logic;
     outboundReadContent_i : in std_logic;
     outboundReadContentEnd_o : out std_logic;
-    outboundReadContentData_o : out std_logic_vector(31 downto 0));
+    outboundReadContentData_o : out std_logic_vector(CONTENT_WIDTH-1 downto 0));
 end entity;
 
 
@@ -234,7 +260,9 @@ architecture RioPacketBufferWindowImpl of RioPacketBufferWindow is
   component PacketBufferContinous is
     generic(
       SIZE_ADDRESS_WIDTH : natural;
-      CONTENT_ADDRESS_WIDTH : natural);
+      CONTENT_ADDRESS_WIDTH : natural;
+      CONTENT_WIDTH : natural;
+      MAX_PACKET_SIZE : natural);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -243,23 +271,26 @@ architecture RioPacketBufferWindowImpl of RioPacketBufferWindow is
       writeFrame_i : in std_logic;
       writeFrameAbort_i : in std_logic;
       writeContent_i : in std_logic;
-      writeContentData_i : in std_logic_vector(31 downto 0);
+      writeContentData_i : in std_logic_vector(CONTENT_WIDTH-1 downto 0);
 
       readFrameEmpty_o : out std_logic;
       readFrame_i : in std_logic;
       readFrameRestart_i : in std_logic;
       readFrameAborted_o : out std_logic;
+      readFrameSize_o : out std_logic_vector(CONTENT_ADDRESS_WIDTH-1 downto 0);
       
       readContentEmpty_o : out std_logic;
       readContent_i : in std_logic;
       readContentEnd_o : out std_logic;
-      readContentData_o : out std_logic_vector(31 downto 0));
+      readContentData_o : out std_logic_vector(CONTENT_WIDTH-1 downto 0));
   end component;
   
   component PacketBufferContinousWindow is
     generic(
       SIZE_ADDRESS_WIDTH : natural;
-      CONTENT_ADDRESS_WIDTH : natural);
+      CONTENT_ADDRESS_WIDTH : natural;
+      CONTENT_WIDTH : natural;
+      MAX_PACKET_SIZE : natural);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -268,7 +299,7 @@ architecture RioPacketBufferWindowImpl of RioPacketBufferWindow is
       writeFrame_i : in std_logic;
       writeFrameAbort_i : in std_logic;
       writeContent_i : in std_logic;
-      writeContentData_i : in std_logic_vector(31 downto 0);
+      writeContentData_i : in std_logic_vector(CONTENT_WIDTH-1 downto 0);
 
       readFrameEmpty_o : out std_logic;
       readFrame_i : in std_logic;
@@ -282,7 +313,7 @@ architecture RioPacketBufferWindowImpl of RioPacketBufferWindow is
       readContentEmpty_o : out std_logic;
       readContent_i : in std_logic;
       readContentEnd_o : out std_logic;
-      readContentData_o : out std_logic_vector(31 downto 0));
+      readContentData_o : out std_logic_vector(CONTENT_WIDTH-1 downto 0));
   end component;
   
 begin
@@ -293,7 +324,9 @@ begin
   OutboundPacketBuffer: PacketBufferContinousWindow
     generic map(
       SIZE_ADDRESS_WIDTH=>SIZE_ADDRESS_WIDTH,
-      CONTENT_ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH)
+      CONTENT_ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH,
+      CONTENT_WIDTH=>CONTENT_WIDTH,
+      MAX_PACKET_SIZE=>MAX_PACKET_SIZE)
     port map(
       clk=>clk, 
       areset_n=>areset_n, 
@@ -317,7 +350,9 @@ begin
   InboundPacketBuffer: PacketBufferContinous
     generic map(
       SIZE_ADDRESS_WIDTH=>SIZE_ADDRESS_WIDTH,
-      CONTENT_ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH)
+      CONTENT_ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH,
+      CONTENT_WIDTH=>CONTENT_WIDTH,
+      MAX_PACKET_SIZE=>MAX_PACKET_SIZE)
     port map(
       clk=>clk, 
       areset_n=>areset_n, 
@@ -328,6 +363,7 @@ begin
       readFrameEmpty_o=>inboundReadFrameEmpty_o, 
       readFrame_i=>inboundReadFrame_i, readFrameRestart_i=>inboundReadFrameRestart_i, 
       readFrameAborted_o=>inboundReadFrameAborted_o,
+      readFrameSize_o=>open,
       readContentEmpty_o=>inboundReadContentEmpty_o,
       readContent_i=>inboundReadContent_i, readContentEnd_o=>inboundReadContentEnd_o, 
       readContentData_o=>inboundReadContentData_o);
@@ -355,7 +391,9 @@ use ieee.numeric_std.all;
 entity PacketBufferContinous is
   generic(
     SIZE_ADDRESS_WIDTH : natural;
-    CONTENT_ADDRESS_WIDTH : natural);
+    CONTENT_ADDRESS_WIDTH : natural;
+    CONTENT_WIDTH : natural;
+    MAX_PACKET_SIZE : natural);
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -364,17 +402,18 @@ entity PacketBufferContinous is
     writeFrame_i : in std_logic;
     writeFrameAbort_i : in std_logic;
     writeContent_i : in std_logic;
-    writeContentData_i : in std_logic_vector(31 downto 0);
+    writeContentData_i : in std_logic_vector(CONTENT_WIDTH-1 downto 0);
 
     readFrameEmpty_o : out std_logic;
     readFrame_i : in std_logic;
     readFrameRestart_i : in std_logic;
     readFrameAborted_o : out std_logic;
+    readFrameSize_o : out std_logic_vector(CONTENT_ADDRESS_WIDTH-1 downto 0);
     
     readContentEmpty_o : out std_logic;
     readContent_i : in std_logic;
     readContentEnd_o : out std_logic;
-    readContentData_o : out std_logic_vector(31 downto 0));
+    readContentData_o : out std_logic_vector(CONTENT_WIDTH-1 downto 0));
 end entity;
 
 
@@ -458,7 +497,7 @@ begin
   -----------------------------------------------------------------------------
   
   writeFrameFull_o <= '1' when ((backIndexNext = frontIndex) or
-                                (available <= 68)) else '0';
+                                (available < MAX_PACKET_SIZE)) else '0';
                                     
   Writer: process(clk, areset_n)
   begin
@@ -510,6 +549,7 @@ begin
   readFrameEmpty_o <= '1' when (frontIndex = backIndex) else '0';
   readContentEmpty_o <= '1' when ((frontIndex = backIndex) and
                                   (memoryWrite_p = memoryRead_p)) else '0';
+  readFrameSize_o <= std_logic_vector(readFrameEnd_p - memoryStart_p);
   
   Reader: process(clk, areset_n)
   begin
@@ -563,7 +603,7 @@ begin
   -- REMARK: Use paritybits here as well to make sure the frame data does not
   -- become corrupt???
   FrameContent: MemorySimpleDualPort
-    generic map(ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH, DATA_WIDTH=>32)
+    generic map(ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH, DATA_WIDTH=>CONTENT_WIDTH)
     port map(
       clkA_i=>clk, enableA_i=>writeContent_i,
       addressA_i=>std_logic_vector(memoryWrite_p), dataA_i=>writeContentData_i,
@@ -592,7 +632,9 @@ use ieee.numeric_std.all;
 entity PacketBufferContinousWindow is
   generic(
     SIZE_ADDRESS_WIDTH : natural;
-    CONTENT_ADDRESS_WIDTH : natural);
+    CONTENT_ADDRESS_WIDTH : natural;
+    CONTENT_WIDTH : natural;
+    MAX_PACKET_SIZE : natural);
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -601,7 +643,7 @@ entity PacketBufferContinousWindow is
     writeFrame_i : in std_logic;
     writeFrameAbort_i : in std_logic;
     writeContent_i : in std_logic;
-    writeContentData_i : in std_logic_vector(31 downto 0);
+    writeContentData_i : in std_logic_vector(CONTENT_WIDTH-1 downto 0);
 
     readFrameEmpty_o : out std_logic;
     readFrame_i : in std_logic;
@@ -615,7 +657,7 @@ entity PacketBufferContinousWindow is
     readContentEmpty_o : out std_logic;
     readContent_i : in std_logic;
     readContentEnd_o : out std_logic;
-    readContentData_o : out std_logic_vector(31 downto 0));
+    readContentData_o : out std_logic_vector(CONTENT_WIDTH-1 downto 0));
 end entity;
 
 
@@ -701,7 +743,7 @@ begin
   -----------------------------------------------------------------------------
   
   writeFrameFull_o <= '1' when ((backIndexNext = frontIndex) or
-                                (available <= 68)) else '0';
+                                (available < MAX_PACKET_SIZE)) else '0';
                                     
   Writer: process(clk, areset_n)
   begin
@@ -821,7 +863,7 @@ begin
   -- REMARK: Use paritybits here as well to make sure the frame data does not
   -- become corrupt???
   FrameContent: MemorySimpleDualPort
-    generic map(ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH, DATA_WIDTH=>32)
+    generic map(ADDRESS_WIDTH=>CONTENT_ADDRESS_WIDTH, DATA_WIDTH=>CONTENT_WIDTH)
     port map(
       clkA_i=>clk, enableA_i=>writeContent_i,
       addressA_i=>std_logic_vector(memoryWrite_p), dataA_i=>writeContentData_i,
