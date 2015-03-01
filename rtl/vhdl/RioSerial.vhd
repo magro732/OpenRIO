@@ -45,6 +45,118 @@
 
 -------------------------------------------------------------------------------
 -- RioSerial
+--
+-- clk - System clock.
+-- areset_n - System reset. Asynchronous, active low. 
+--
+-- portLinkTimeout_i - The number of ticks to wait for a packet-accepted before
+--   a timeout occurrs.
+-- linkInitialized_o - Indicates if a link partner is answering with valid
+--   status-control-symbols. 
+-- inputPortEnable_i - Activate the input port for non-maintenance packets. If
+--   deasserted, only non-maintenance packets are allowed.
+-- outputPortEnable_i - Activate the output port for non-maintenance packets.
+--   If deasserted, only non-maintenance packets are allowed.
+--
+-- This interface makes it possible to read and write ackId in both outbound
+-- and inbound directions. All input signals are validated by localAckIdWrite.
+-- localAckIdWrite_i - Indicate if a localAckId write operation is ongoing.
+--   Usually this signal is high one tick. 
+-- clrOutstandingAckId_i - Clear outstanding ackId, i.e. reset the transmission
+--   window. The signal is only read if localAckIdWrite_i is high.
+-- inboundAckId_i - The value to set the inbound ackId (the ackId that the
+--  next inbound packet should have) to. This signal is only read if localAckIdWrite
+--  is high.
+-- outstandingAckId_i - The value to set the outstanding ackId (the ackId
+--   transmitted but not acknowledged) to. This signal is only read if localAckIdWrite
+--   is high.
+-- outboundAckId_i - The value to set the outbound ackId (the ackId that the
+--   next outbound packet will have) to. This signal is only read if localAckIdWrite
+--   is high.
+-- inboundAckId_o - The current inbound ackId.
+-- outstandingAckId_o - The current outstanding ackId.
+-- outboundAckId_o - The current outbound ackId.
+--
+-- This is the interface to the packet buffering sublayer. 
+-- The window signals are used to send packets without removing them from the
+-- memory storage. This way, many packet can be sent without awaiting
+-- packet-accepted symbols and if a packet-accepted gets lost, it is possible
+-- to revert and resend a packet. This is achived by reading readWindowEmpty
+-- for new packet and asserting readWindowNext when a packet has been sent.
+-- When the packet-accepted is received, readFrame should be asserted to remove the
+-- packet from the storage. If a packet-accepted is missing, readWindowReset is
+-- asserted to set the current packet to read to the one that has not received
+-- a packet-accepted.
+-- readFrameEmpty_i - Indicate if a packet is ready in the outbound direction.
+--   Once deasserted, it is possible to read the packet content using
+--   readContent_o to update readContentData and readContentEnd.
+-- readFrame_o - Assert this signal for one tick to discard the oldest packet.
+--   It should be used when a packet has been fully read, a linkpartner has
+--   accepted it and the resources occupied by it should be returned to be
+--   used for new packets.
+-- readFrameRestart_o - Assert this signal to restart the reading of the
+--   current packet. readContentData and readContentEnd will be reset to the
+--   first content of the packet. 
+-- readFrameAborted_i - This signal is asserted if the current packet was
+--   aborted while it was written. It is used when a transmitter starts to send a
+--   packet before it has been fully received and it is cancelled before it is
+--   completed. A one tick asserted readFrameRestart signal resets this signal.
+-- readWindowEmpty_i - Indicate if there are more packets to send.
+-- readWindowReset_o - Reset the current packet to the oldest stored in the memory.
+-- readWindowNext_o - Indicate that a new packet should be read. Must only be
+--   asserted if readWindowEmpty is deasserted. It should be high for one tick.
+-- readContentEmpty_i - Indicate if there are any packet content to be read.
+--   This signal is updated directly when packet content is written making it
+--   possible to read packet content before the full packet has been written to
+--   the memory storage.
+-- readContent_o - Update readContentData and readContentEnd.
+-- readContentEnd_i - Indicate if the end of the current packet has been
+--   reached. When asserted, readContentData is not valid.
+-- readContentData_i - The content of the current packet.
+-- writeFrameFull_i - Indicate if the inbound packet storage is ready to accept
+--   a new packet.
+-- writeFrame_o - Indicate that a new complete inbound packet has been written.
+-- writeFrameAbort_o - Indicate that the current packet is aborted and that all
+--   data written for this packet should be discarded. 
+-- writeContent_o - Indicate that writeContentData is valid and should be
+--   written into the packet content storage. 
+-- writeContentData_o - The content to write to the packet content storage.
+--
+-- This is the interface to the PCS (Physical Control Sublayer). Four types of
+-- symbols exist, idle, control, data and error.
+-- Idle symbols are transmitted when nothing else can be transmitted. They are
+-- mainly intended to enforce a timing on the transmitted symbols. This is
+-- needed to be able to guarantee that a status-control-symbol is transmitted
+-- at least once every 256 symbol.
+-- Control symbols contain control-symbols as described by the standard.
+-- Data symbols contains a 32-bit fragment of a RapidIO packet.
+-- Error symbols indicate that a corrupted symbol was received. This could be
+-- used by a PCS layer to indicate that a transmission error was detected and
+-- that the above layers should send link-requests to ensure the synchronism
+-- between the link-partners.
+-- The signals in this interface are:
+-- portInitialized_i - An asserted signal on this pin indicates that the PCS
+--   layer has established synchronization with the link and is ready to accept
+--   symbols. 
+-- outboundSymbolEmpty_o - An asserted signal indicates that there are no
+--   outbound symbols to read. Once deasserted, outboundSymbol_o will be
+--   already be valid. This signal will be updated one tick after
+--   outboundSymbolRead_i has been asserted.
+-- outboundSymbolRead_i - Indicate that outboundSymbol_o has been read and a
+--   new value could be accepted. It should be active for one tick. 
+-- outboundSymbol_o - The outbound symbol. The two MSB bits are the type of the
+--   symbol.
+--   bit 34-33 
+--   00=IDLE, the rest of the bits are not used.
+--   01=CONTROL, the control symbols payload (24 bits) are placed in the MSB
+--     part of the symbol data.
+--   10=ERROR, the rest of the bits are not used.
+--   11=DATA, all the remaining bits contain the data-symbol payload.
+-- inboundSymbolFull_o - An asserted signal indicates that no more inbound
+--   symbols can be accepted.
+-- inboundSymbolWrite_i - Indicate that inboundSymbol_i contains valid
+-- information that should be forwarded. Should be active for one tick.
+-- inboundSymbol_i - The inbound symbol. See outboundSymbol_o for formating.
 -------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
