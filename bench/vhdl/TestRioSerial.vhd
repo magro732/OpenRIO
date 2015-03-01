@@ -246,7 +246,7 @@ begin
         report "Missmatching symbol type:expected=" &
         integer'image(to_integer(unsigned(symbolType))) &
         " got=" &
-        integer'image(to_integer(unsigned(outboundSymbol(36 downto 35))))
+        integer'image(to_integer(unsigned(outboundSymbol(33 downto 32))))
         severity error;
       
       if (outboundSymbol(33 downto 32) = SYMBOL_CONTROL) then
@@ -475,6 +475,8 @@ begin
                                         STYPE1_NOP, "000"));
     end loop;
 
+    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbol(SYMBOL_IDLE);
     wait until linkInitialized = '1';
     
     ---------------------------------------------------------------------------
@@ -1399,7 +1401,7 @@ begin
     end loop;
 
     -- Wait for the frame to complete.
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(0) <= '0';
     
     -- Receive the end of the frame.
@@ -1446,7 +1448,7 @@ begin
     end loop;
 
     -- Wait for the frame to complete.
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(1) <= '0';
     
     -- Receive the end of the frame.
@@ -1595,7 +1597,7 @@ begin
     end loop;
 
     -- Wait for the frame to complete.
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(3) <= '0';
     
     -- Receive the end of the retransmitted frame.
@@ -1665,7 +1667,7 @@ begin
     end loop;
 
     -- Wait for the frame to complete.
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(4) <= '0';
     
     ReceiveSymbol(SYMBOL_CONTROL,
@@ -1707,7 +1709,7 @@ begin
       ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
     end loop;
 
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(5) <= '0';
     
     ReceiveSymbol(SYMBOL_CONTROL,
@@ -1820,7 +1822,7 @@ begin
       ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
     end loop;
 
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(6) <= '0';
     
     ReceiveSymbol(SYMBOL_CONTROL,
@@ -1904,7 +1906,7 @@ begin
       ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
     end loop;
 
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(7) <= '0';
     
     ReceiveSymbol(SYMBOL_CONTROL,
@@ -1976,7 +1978,7 @@ begin
       ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
     end loop;
 
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(8) <= '0';
 
     ReceiveSymbol(SYMBOL_CONTROL,
@@ -2031,7 +2033,7 @@ begin
       ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
     end loop;
 
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(9) <= '0';
 
     ReceiveSymbol(SYMBOL_CONTROL,
@@ -2069,7 +2071,7 @@ begin
       ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
     end loop;
 
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(10) <= '0';
 
     ReceiveSymbol(SYMBOL_CONTROL,
@@ -2131,7 +2133,7 @@ begin
       ReceiveSymbol(SYMBOL_DATA, frameWrite(11).payload(i));
     end loop;
 
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(11) <= '0';
 
     -- Receive the frame.
@@ -2142,7 +2144,7 @@ begin
       ReceiveSymbol(SYMBOL_DATA, frameWrite(12).payload(i));
     end loop;
 
-    wait until frameComplete = '1';
+    wait until frameComplete = '1' and clk'event and clk = '1';
     frameValid(12) <= '0';
     
     ReceiveSymbol(SYMBOL_CONTROL,
@@ -2200,7 +2202,7 @@ begin
         ReceiveSymbol(SYMBOL_DATA, frameWrite(j+13).payload(i));
       end loop;
 
-      wait until frameComplete = '1';
+      wait until frameComplete = '1' and clk'event and clk = '1';
       frameValid(j+13) <= '0';
     end loop;
 
@@ -2361,6 +2363,7 @@ begin
   -- 
   -----------------------------------------------------------------------------
   FrameSender: process
+    variable frameComplete : std_logic;
     variable frameIndex : natural range 0 to 70;
     variable backIndex, frontIndex : natural range 0 to 63;
   begin
@@ -2371,6 +2374,7 @@ begin
     readContentEnd_o <= '0';
     readContentData_o <= (others=>'U');
     frameComplete_o <= '0';
+    frameComplete := '0';
     backIndex := 0;
     frontIndex := 0;
     wait until areset_n = '1';
@@ -2388,6 +2392,7 @@ begin
       end if;
       
       if (readWindowReset_i = '1') then
+        frameComplete := '0';
         frameIndex := 0;
         frontIndex := backIndex;
         readContentEnd_o <= '0';
@@ -2395,19 +2400,23 @@ begin
       end if;
 
       if (readWindowNext_i = '1') then
+        assert frameComplete = '0' report "Reading next frame too fast." severity error;
         assert frameIndex = frameWrite_i(frontIndex).length report "Did not read all frame content." severity error;
-        frameComplete_o <= '1';
         readContentEnd_o <= '0';
         readContentData_o <= (others=>'U');
-        frameIndex := 0;
-        if(frontIndex < 63) then
-          frontIndex := frontIndex + 1;
-        else
-          frontIndex := 0;
-        end if;
+        frameComplete := '1';
       else
-        frameComplete_o <= '0';
+        if (frameComplete = '1') and (frameValid_i(frontIndex) = '0') then
+          frameComplete := '0';
+          frameIndex := 0;
+          if(frontIndex < 63) then
+            frontIndex := frontIndex + 1;
+          else
+            frontIndex := 0;
+          end if;
+        end if;
       end if;
+      frameComplete_o <= frameComplete;
       
       if (readFrameRestart_i = '1') then
         frameIndex := 0;
@@ -2427,7 +2436,7 @@ begin
         end if;
       end if;
       
-      if(frameValid_i(frontIndex) = '1') then
+      if(frameValid_i(frontIndex) = '1') and (frameComplete = '0') then
         readFrameEmpty_o <= '0';
         readWindowEmpty_o <= '0';
         readContentEmpty_o <= '0';
