@@ -1358,251 +1358,245 @@ begin
 
     discardFrameOut <= '0';
 
-    if (fatalError_i = '1') then
-      readWindowResetOut <= '1';
-    elsif (recoverActive_i = '1') then
-      ackIdWindow_o <= ackId_i;
+    if ((fatalError_i = '1') or (recoverActive_i = '1') or
+        (operational_i = '0')) then
+      -----------------------------------------------------------------------
+      -- This state is entered at startup or if any error has occurred.
+      -- A port that is not initialized or in an error state should not
+      -- transmit any packets.
+      -----------------------------------------------------------------------
+      
+      -- Initialize framing before entering the operational state.
       frameState_o <= FRAME_IDLE;
+      ackIdWindow_o <= ackId_i;
       readWindowResetOut <= '1';
     else
-      if (operational_i = '0') then
-        -----------------------------------------------------------------------
-        -- This state is entered at startup. A port that is not initialized
-        -- should only transmit idle sequences.
-        -----------------------------------------------------------------------
+      -------------------------------------------------------------------
+      -- This state is the operational state. It relays frames and handle
+      -- flow control.
+      -------------------------------------------------------------------
+      
+      if (sendRestartFromRetry = '1') then
+        -- Required to send a restart-from-retry.
         
-        -- Initialize framing before entering the operational state.
-        frameState_o <= FRAME_IDLE;
+        -- Send a restart-from-retry control symbol to acknowledge the restart
+        -- of the frame.
+        symbolControlRestartOut <= '1';
+
+        -- Make sure there wont be any timeout before the frame is
+        -- starting to be retransmitted.
+        timeSentSet_o <= '1';
+
+        -- Restart the frame transmission.
+        -- Since the transmission-window is reset, it is ok to go to the
+        -- FRAME_IDLE-state even if the present state was FRAME_DISCARD since
+        -- we will end up in the discard state anyway after the frames has
+        -- been resent.
         ackIdWindow_o <= ackId_i;
+        frameState_o <= FRAME_IDLE;
         readWindowResetOut <= '1';
-      else
-        -------------------------------------------------------------------
-        -- This state is the operational state. It relays frames and handle
-        -- flow control.
-        -------------------------------------------------------------------
-        
-        if (sendRestartFromRetry = '1') then
-          -- Required to send a restart-from-retry.
+      elsif (sendLinkRequest = '1') then
+        -- Required to send a link-request.
+        -- There is no need to restart the packet transmission since we do
+        -- not yet know which packets that was successfully received by our
+        -- link partner. Wait for the reply before anything is discarded.
+
+        -- Send a link-request symbol.
+        symbolControlLinkRequestOut <= '1';
+
+        -- Write the current timer value.
+        timeSentSet_o <= '1';
+      elsif ((sendRestartFromRetry = '0') and (sendLinkRequest = '0')  and
+             (outputErrorStopped_i = '0')) then
+        -- No control-symbol is required to be sent to the link-partner.
+        -- Proceed to send a pending packet.
+
+        -- Check the current state of the frame transfer.
+        case frameState_i is
           
-          -- Send a restart-from-retry control symbol to acknowledge the restart
-          -- of the frame.
-          symbolControlRestartOut <= '1';
+          when FRAME_IDLE =>
+            ---------------------------------------------------------------
+            -- No frame has been started.
+            ---------------------------------------------------------------
 
-          -- Make sure there wont be any timeout before the frame is
-          -- starting to be retransmitted.
-          timeSentSet_o <= '1';
+            -- Wait for a new frame to arrive from the frame buffer.
+            if (readWindowEmpty_i = '0') then
+              -- Update the output from the frame buffer to contain the
+              -- data when it is read later.
+              readContentOut <= '1';
+              frameState_o <= FRAME_START;
+            end if;
 
-          -- Restart the frame transmission.
-          -- Since the transmission-window is reset, it is ok to go to the
-          -- FRAME_IDLE-state even if the present state was FRAME_DISCARD since
-          -- we will end up in the discard state anyway after the frames has
-          -- been resent.
-          ackIdWindow_o <= ackId_i;
-          frameState_o <= FRAME_IDLE;
-          readWindowResetOut <= '1';
-        elsif (sendLinkRequest = '1') then
-          -- Required to send a link-request.
-          -- There is no need to restart the packet transmission since we do
-          -- not yet know which packets that was successfully received by our
-          -- link partner. Wait for the reply before anything is discarded.
+          when FRAME_START | FRAME_START_CONTINUE =>
+            -------------------------------------------------------
+            -- Check if we are allowed to transmit this packet.
+            -------------------------------------------------------
+            -- The packet may be not allowed, i.e. a non-maintenance
+            -- sent when only maintenance is allowed. The link-partner can be
+            -- busy, i.e. not having enough buffers to receive the new packet
+            -- in or the number of outstanding packets may be too large.
+            -- This state should result in a start-of-frame if possible or
+            -- end-of-frame if a frame has not been ended properly yet.
 
-          -- Send a link-request symbol.
-          symbolControlLinkRequestOut <= '1';
+            -- Check if the packet is allowed.
+            if ((portEnable_i = '1') or
+                (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS)) then
+              -- Packet is allowed.
 
-          -- Write the current timer value.
-          timeSentSet_o <= '1';
-        elsif ((sendRestartFromRetry = '0') and (sendLinkRequest = '0')  and
-               (outputErrorStopped_i = '0')) then
-          -- No control-symbol is required to be sent to the link-partner.
-          -- Proceed to send a pending packet.
+              -- Check if the link is able to accept the new frame.
+              if ((bufferStatus_i /= "00000") and
+                  ((unsigned(ackIdWindow_i)+1) /= unsigned(ackId_i))) then
+                -- There are buffers ready to receive the new packet at the other
+                -- side and there are ackIds left to tag it.
+                -- The packet may be transmitted.
 
-          -- Check the current state of the frame transfer.
-          case frameState_i is
-            
-            when FRAME_IDLE =>
-              ---------------------------------------------------------------
-              -- No frame has been started.
-              ---------------------------------------------------------------
-
-              -- Wait for a new frame to arrive from the frame buffer.
-              if (readWindowEmpty_i = '0') then
-                -- Update the output from the frame buffer to contain the
-                -- data when it is read later.
+                -- Read the next packet content and buffer the current output.
                 readContentOut <= '1';
-                frameState_o <= FRAME_START;
-              end if;
-
-            when FRAME_START | FRAME_START_CONTINUE =>
-              -------------------------------------------------------
-              -- Check if we are allowed to transmit this packet.
-              -------------------------------------------------------
-              -- The packet may be not allowed, i.e. a non-maintenance
-              -- sent when only maintenance is allowed. The link-partner can be
-              -- busy, i.e. not having enough buffers to receive the new packet
-              -- in or the number of outstanding packets may be too large.
-              -- This state should result in a start-of-frame if possible or
-              -- end-of-frame if a frame has not been ended properly yet.
-
-              -- Check if the packet is allowed.
-              if ((portEnable_i = '1') or
-                  (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS)) then
-                -- Packet is allowed.
-
-                -- Check if the link is able to accept the new frame.
-                if ((bufferStatus_i /= "00000") and
-                    ((unsigned(ackIdWindow_i)+1) /= unsigned(ackId_i))) then
-                  -- There are buffers ready to receive the new packet at the other
-                  -- side and there are ackIds left to tag it.
-                  -- The packet may be transmitted.
-
-                  -- Read the next packet content and buffer the current output.
-                  readContentOut <= '1';
-                  frameContent_o <= readContentData_i;
-                  
-                  -- Send a control symbol to start the packet and a status to
-                  -- complete the symbol.
-                  symbolControlStartOut <= '1';
-                  
-                  -- Proceed to send the first packet data symbol containing
-                  -- the ackId.
-                  frameState_o <= FRAME_FIRST;
-                else
-                  -- The link cannot accept the packet.
-                  -- Wait in this state and dont do anything.
-                  if (frameState_i = FRAME_START_CONTINUE) then
-                    symbolControlEndOut <= '1';
-                  end if;
-                  readFrameRestartOut <= '1';
-                  frameState_o <= FRAME_IDLE;
-                end if;
+                frameContent_o <= readContentData_i;
+                
+                -- Send a control symbol to start the packet and a status to
+                -- complete the symbol.
+                symbolControlStartOut <= '1';
+                
+                -- Proceed to send the first packet data symbol containing
+                -- the ackId.
+                frameState_o <= FRAME_FIRST;
               else
-                -- The packet is not allowed.
-                -- Discard it.
+                -- The link cannot accept the packet.
+                -- Wait in this state and dont do anything.
                 if (frameState_i = FRAME_START_CONTINUE) then
                   symbolControlEndOut <= '1';
                 end if;
-                frameState_o <= FRAME_DISCARD;
-              end if;
-
-            when FRAME_FIRST =>
-              ---------------------------------------------------------------
-              -- Send the first packet content containing our current
-              -- ackId.
-              ---------------------------------------------------------------
-
-              -- Write a new data symbol and fill in our ackId on the
-              -- packet.
-              symbolDataOut <= '1';
-              symbolDataContentOut <=
-                std_logic_vector(ackIdWindow_i) & "0" & frameContent_i(25 downto 0);
-
-              -- Read the next frame content and go to next state to send it.
-              readContentOut <= '1';
-              frameContent_o <= readContentData_i;
-              frameState_o <= FRAME_MIDDLE;
-              
-            when FRAME_MIDDLE | FRAME_INSERT_WAIT =>
-              ---------------------------------------------------------------
-              -- The frame has not been fully sent.
-              -- Send a data symbol until the last part of the packet is
-              -- detected.
-              ---------------------------------------------------------------
-              
-              -- Write a new data symbol.
-              symbolDataOut <= '1';
-              symbolDataContentOut <= frameContent_i;
-              frameContent_o <= readContentData_i;
-
-              -- Check if the packet is ending.
-              if (readContentEnd_i = '1') then
-                -- The packet is ending.
-                readWindowNextOut <= '1';
-                frameState_o <= FRAME_LAST;
-              elsif ((frameState_i = FRAME_MIDDLE) and (rxControlEmpty_i = '0')) then
-                -- There is a pending control-symbol from the receiver.
-                -- This must only be entered if the previous state was a data
-                -- symbol, not if an idle symbol was inserted.
-                frameState_o <= FRAME_INSERT_IDLE;
-              else
-                -- The packet is not ending.
-                readContentOut <= '1';
-                frameState_o <= FRAME_MIDDLE;
-              end if;
-
-            when FRAME_INSERT_IDLE =>
-              -----------------------------------------------------------------
-              -- Dont send a data-symbol this tick to allow for a pending 
-              -- control-symbol from the receiver to be inserted into the stream.
-              -----------------------------------------------------------------
-
-              symbolDataOut <= '0';
-              readContentOut <= '1';
-              frameState_o <= FRAME_INSERT_WAIT;
-              
-            when FRAME_LAST =>
-              -----------------------------------------------------------------
-              -- Sending the last data symbol of a packet.
-              -- If there are pending packets, they can be started immediatly,
-              -- otherwise, the current packet should be ended.
-              -----------------------------------------------------------------
-
-              -- Send the last data symbol of the packet.
-              symbolDataOut <= '1';
-              symbolDataContentOut <= frameContent_i;
-
-              -- Check if there are pending packets.
-              if (readWindowEmpty_i = '0') then
-                -- Pending packet exist.
-                readContentOut <= '1';
-                frameState_o <= FRAME_START_CONTINUE;
-              else
-                -- No pending packets.
-                frameState_o <= FRAME_END;
-              end if;
-
-              -- Update the window ackId.
-              ackIdWindow_o <= std_logic_vector(unsigned(ackIdWindow_i) + 1);
-
-              -- Start timeout supervision for the transmitted frame.
-              timeSentSet_o <= '1';
-
-            when FRAME_END =>
-              -----------------------------------------------------------------
-              -- There are no packets to directly follow the one that is ending.
-              -- Mark the current packet as ended.
-              -----------------------------------------------------------------
-
-              -- Send a control symbol to end the frame. 
-              symbolControlEndOut <= '1';
-              frameState_o <= FRAME_IDLE;
-
-            when FRAME_DISCARD =>
-              ---------------------------------------------------------------
-              -- The packet should be discarded.
-              -- Hold any pending packets until there are no outstanding ones.
-              ---------------------------------------------------------------
-
-              -- Check that there are no outstanding packets.
-              if(unsigned(ackIdWindow_i) = unsigned(ackId_i)) then
-                -- No unacknowledged packets.
-                -- It is now safe to remove the unallowed packet.
-                discardFrameOut <= '1';
-
-                -- Go back and send a new frame.
+                readFrameRestartOut <= '1';
                 frameState_o <= FRAME_IDLE;
-              else
-                -- Still outstanding packets.
-                -- Dont do anything.
               end if;
-              
-            when others =>
-              ---------------------------------------------------------------
-              -- 
-              ---------------------------------------------------------------
-              null;
-              
-          end case;
-        end if;
+            else
+              -- The packet is not allowed.
+              -- Discard it.
+              if (frameState_i = FRAME_START_CONTINUE) then
+                symbolControlEndOut <= '1';
+              end if;
+              frameState_o <= FRAME_DISCARD;
+            end if;
+
+          when FRAME_FIRST =>
+            ---------------------------------------------------------------
+            -- Send the first packet content containing our current
+            -- ackId.
+            ---------------------------------------------------------------
+
+            -- Write a new data symbol and fill in our ackId on the
+            -- packet.
+            symbolDataOut <= '1';
+            symbolDataContentOut <=
+              std_logic_vector(ackIdWindow_i) & "0" & frameContent_i(25 downto 0);
+
+            -- Read the next frame content and go to next state to send it.
+            readContentOut <= '1';
+            frameContent_o <= readContentData_i;
+            frameState_o <= FRAME_MIDDLE;
+            
+          when FRAME_MIDDLE | FRAME_INSERT_WAIT =>
+            ---------------------------------------------------------------
+            -- The frame has not been fully sent.
+            -- Send a data symbol until the last part of the packet is
+            -- detected.
+            ---------------------------------------------------------------
+            
+            -- Write a new data symbol.
+            symbolDataOut <= '1';
+            symbolDataContentOut <= frameContent_i;
+            frameContent_o <= readContentData_i;
+
+            -- Check if the packet is ending.
+            if (readContentEnd_i = '1') then
+              -- The packet is ending.
+              readWindowNextOut <= '1';
+              frameState_o <= FRAME_LAST;
+            elsif ((frameState_i = FRAME_MIDDLE) and (rxControlEmpty_i = '0')) then
+              -- There is a pending control-symbol from the receiver.
+              -- This must only be entered if the previous state was a data
+              -- symbol, not if an idle symbol was inserted.
+              frameState_o <= FRAME_INSERT_IDLE;
+            else
+              -- The packet is not ending.
+              readContentOut <= '1';
+              frameState_o <= FRAME_MIDDLE;
+            end if;
+
+          when FRAME_INSERT_IDLE =>
+            -----------------------------------------------------------------
+            -- Dont send a data-symbol this tick to allow for a pending 
+            -- control-symbol from the receiver to be inserted into the stream.
+            -----------------------------------------------------------------
+
+            symbolDataOut <= '0';
+            readContentOut <= '1';
+            frameState_o <= FRAME_INSERT_WAIT;
+            
+          when FRAME_LAST =>
+            -----------------------------------------------------------------
+            -- Sending the last data symbol of a packet.
+            -- If there are pending packets, they can be started immediatly,
+            -- otherwise, the current packet should be ended.
+            -----------------------------------------------------------------
+
+            -- Send the last data symbol of the packet.
+            symbolDataOut <= '1';
+            symbolDataContentOut <= frameContent_i;
+
+            -- Check if there are pending packets.
+            if (readWindowEmpty_i = '0') then
+              -- Pending packet exist.
+              readContentOut <= '1';
+              frameState_o <= FRAME_START_CONTINUE;
+            else
+              -- No pending packets.
+              frameState_o <= FRAME_END;
+            end if;
+
+            -- Update the window ackId.
+            ackIdWindow_o <= std_logic_vector(unsigned(ackIdWindow_i) + 1);
+
+            -- Start timeout supervision for the transmitted frame.
+            timeSentSet_o <= '1';
+
+          when FRAME_END =>
+            -----------------------------------------------------------------
+            -- There are no packets to directly follow the one that is ending.
+            -- Mark the current packet as ended.
+            -----------------------------------------------------------------
+
+            -- Send a control symbol to end the frame. 
+            symbolControlEndOut <= '1';
+            frameState_o <= FRAME_IDLE;
+
+          when FRAME_DISCARD =>
+            ---------------------------------------------------------------
+            -- The packet should be discarded.
+            -- Hold any pending packets until there are no outstanding ones.
+            ---------------------------------------------------------------
+
+            -- Check that there are no outstanding packets.
+            if(unsigned(ackIdWindow_i) = unsigned(ackId_i)) then
+              -- No unacknowledged packets.
+              -- It is now safe to remove the unallowed packet.
+              discardFrameOut <= '1';
+
+              -- Go back and send a new frame.
+              frameState_o <= FRAME_IDLE;
+            else
+              -- Still outstanding packets.
+              -- Dont do anything.
+            end if;
+            
+          when others =>
+            ---------------------------------------------------------------
+            -- 
+            ---------------------------------------------------------------
+            null;
+            
+        end case;
       end if;
     end if;
   end process;  
