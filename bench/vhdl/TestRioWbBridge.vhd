@@ -62,7 +62,7 @@ package TestPortPackage is
     address : std_logic_vector(ADDRESS_WIDTH-1 downto 0);
     byteSelect : std_logic_vector(7 downto 0);
     length : natural range 1 to DATA_SIZE_MAX;
-    data : DoublewordArray(DATA_SIZE_MAX-1 downto 0);
+    data : DoublewordArray(0 to DATA_SIZE_MAX-1);
     latency : natural;
   end record;
 
@@ -97,7 +97,7 @@ package TestPortPackage is
       adr_i : in std_logic_vector(30 downto 0);
       sel_i : in std_logic_vector(7 downto 0);
       dat_i : in std_logic_vector(63 downto 0);
-      dat_o : in std_logic_vector(63 downto 0);
+      dat_o : out std_logic_vector(63 downto 0);
       err_o : out std_logic;
       ack_o : out std_logic);
   end component;
@@ -107,15 +107,15 @@ package TestPortPackage is
       clk : in std_logic;
       areset_n : in std_logic;
 
-      outboundEmpty_o : out std_logic;
-      outboundWrite_i : in std_logic;
-      outboundMessage_i : in TestPortMessagePacketBuffer;
-      outboundAck_o : out std_logic;
+      readEmpty_o : out std_logic;
+      readWrite_i : in std_logic;
+      readMessage_i : in TestPortMessagePacketBuffer;
+      readAck_o : out std_logic;
       
-      inboundEmpty_o : out std_logic;
-      inboundWrite_i : in std_logic;
-      inboundMessage_i : in TestPortMessagePacketBuffer;
-      inboundAck_o : out std_logic;
+      writeEmpty_o : out std_logic;
+      writeWrite_i : in std_logic;
+      writeMessage_i : in TestPortMessagePacketBuffer;
+      writeAck_o : out std_logic;
       
       readFrameEmpty_o : out std_logic;
       readFrame_i : in std_logic;
@@ -232,15 +232,15 @@ entity TestPortPacketBuffer is
     clk : in std_logic;
     areset_n : in std_logic;
 
-    outboundEmpty_o : out std_logic;
-    outboundWrite_i : in std_logic;
-    outboundMessage_i : in TestPortMessagePacketBuffer;
-    outboundAck_o : out std_logic;
+    readEmpty_o : out std_logic;
+    readWrite_i : in std_logic;
+    readMessage_i : in TestPortMessagePacketBuffer;
+    readAck_o : out std_logic;
     
-    inboundEmpty_o : out std_logic;
-    inboundWrite_i : in std_logic;
-    inboundMessage_i : in TestPortMessagePacketBuffer;
-    inboundAck_o : out std_logic;
+    writeEmpty_o : out std_logic;
+    writeWrite_i : in std_logic;
+    writeMessage_i : in TestPortMessagePacketBuffer;
+    writeAck_o : out std_logic;
     
     readFrameEmpty_o : out std_logic;
     readFrame_i : in std_logic;
@@ -268,7 +268,7 @@ end entity;
 -------------------------------------------------------------------------------
 architecture TestPortPacketBufferPortImpl of TestPortPacketBuffer is
   constant QUEUE_SIZE : natural := 63;
-  type QueueArray is array (natural range <>) of MessageFrame;
+  type QueueArray is array (natural range <>) of TestPortMessagePacketBuffer;
   
   function QueueIndexInc(constant i : natural) return natural is
     variable returnValue : natural;
@@ -286,7 +286,7 @@ begin
   -----------------------------------------------------------------------------
   -- 
   -----------------------------------------------------------------------------
-  Outbound: process
+  Reader: process
     variable frameQueue : QueueArray(0 to QUEUE_SIZE);
     variable front, back, window : natural range 0 to QUEUE_SIZE;
     variable frameIndex : natural;
@@ -304,18 +304,18 @@ begin
     back := 0;
     window := 0;
     frameIndex := 0;
-    outboundEmpty_o <= '1';
-    outboundAck_o <= '0';
+    readEmpty_o <= '1';
+    readAck_o <= '0';
 
     loop
-      wait until clk = '1' or outboundWrite_i = '1';
+      wait until clk = '1' or readWrite_i = '1';
 
       if (clk'event) then
         if (readFrame_i = '1') then
           if (back /= front) then
             back := QueueIndexInc(back);
           else
-            TestError("OUTBOUND:BACK:reading when no frame is present");
+            TestError("READ:BACK:reading when no frame is present");
           end if;
         end if;
 
@@ -333,7 +333,7 @@ begin
             window := QueueIndexInc(window);
             frameIndex := 0;
           else
-            TestError("OUTBOUND:WINDOW:reading when no frame is present");
+            TestError("READ:WINDOW:reading when no frame is present");
           end if;
         end if;
         
@@ -348,10 +348,10 @@ begin
                 readContentEnd_o <= '0';
               end if;
             else
-              TestError("OUTBOUND:CONTENT:reading when frame has ended");
+              TestError("READ:CONTENT:reading when frame has ended");
             end if;
           else
-            TestError("OUTBOUND:CONTENT:reading when no frame is present");
+            TestError("READ:CONTENT:reading when no frame is present");
           end if;
         end if;
 
@@ -374,18 +374,18 @@ begin
         end if;
         
         if (front = back) then
-          outboundEmpty_o <= '1';
+          readEmpty_o <= '1';
         else
-          outboundEmpty_o <= '0';
+          readEmpty_o <= '0';
         end if;
-      elsif (outboundWrite_i'event) then
-        frameQueue(front) := outboundMessage_i;
+      elsif (readWrite_i'event) then
+        frameQueue(front) := readMessage_i;
         front := QueueIndexInc(front);
 
-        outboundEmpty_o <= '0';
-        outboundAck_o <= '1';
-        wait until outboundWrite_i = '0';
-        outboundAck_o <= '0';
+        readEmpty_o <= '0';
+        readAck_o <= '1';
+        wait until readWrite_i = '0';
+        readAck_o <= '0';
       end if;
     end loop;    
   end process;
@@ -393,36 +393,36 @@ begin
   -----------------------------------------------------------------------------
   -- 
   -----------------------------------------------------------------------------
-  Inbound: process
+  Writer: process
     variable frameQueue : QueueArray(0 to QUEUE_SIZE);
     variable front, back : natural range 0 to QUEUE_SIZE;
     variable frameIndex : natural range 0 to 69;
   begin
     wait until areset_n = '1';
 
-    inboundEmpty_o <= '1';
-    inboundAck_o <= '0';
+    writeEmpty_o <= '1';
+    writeAck_o <= '0';
 
     front := 0;
     back := 0;
     frameIndex := 0;
 
     loop
-      wait until clk = '1' or inboundWrite_i = '1';
+      wait until clk = '1' or writeWrite_i = '1';
 
       if (clk'event) then
 
         if (writeFrame_i = '1') then
           if (frameIndex = 0) then
-            TestError("INBOUND:Empty frame written.");
+            TestError("WRITE:Empty frame written.");
           end if;
           if (frameIndex /= frameQueue(back).frame.length) then
-            TestError("INBOUND:Frame with unmatching length was written.");
+            TestError("WRITE:Frame with unmatching length was written.");
           end if;
           if (back /= front) then
             back := QueueIndexInc(back);
           else
-            TestError("INBOUND:Unexpected frame written.");
+            TestError("WRITE:Unexpected frame written.");
           end if;
           frameIndex := 0;
         end if;
@@ -430,12 +430,12 @@ begin
         if (writeFrameAbort_i = '1') then
           if (back /= front) then
             if (frameQueue(back).willAbort) then
-              if (frameIndex /= frameQueue(back).frame.length) then
-                TestError("INBOUND:Frame with unmatching length was aborted.");
-              end if;
+              TestCompare(frameIndex,
+                          frameQueue(back).frame.length,
+                          "frameIndex abort");
               back := QueueIndexInc(back);
             else
-              TestError("INBOUND:Not expecting this frame to abort.");
+              TestError("WRITE:Not expecting this frame to abort.");
             end if;
           end if;
           frameIndex := 0;
@@ -443,28 +443,28 @@ begin
 
         if (writeContent_i = '1') then
           if (frameIndex < frameQueue(back).frame.length) then
-            if (frameQueue(back).frame.payload(frameIndex) /= writeContentData_i) then
-              TestError("INBOUND:Unexpected frame content written.");
-            end if;
+            TestCompare(writeContentData_i,
+                        frameQueue(back).frame.payload(frameIndex),
+                        "frame content");
             frameIndex := frameIndex + 1;
           else
-            TestError("INBOUND:Receiving more frame content than expected.");
+            TestError("WRITE:Receiving more frame content than expected.");
           end if;
         end if;
         
         if (front = back) then
-          inboundEmpty_o <= '1';
+          writeEmpty_o <= '1';
         else
-          inboundEmpty_o <= '0';
+          writeEmpty_o <= '0';
         end if;
-      elsif (inboundWrite_i'event) then
-        frameQueue(front) := inboundMessage_i;
+      elsif (writeWrite_i'event) then
+        frameQueue(front) := writeMessage_i;
         front := QueueIndexInc(front);
 
-        inboundEmpty_o <= '0';
-        inboundAck_o <= '1';
-        wait until inboundWrite_i = '0';
-        inboundAck_o <= '0';
+        writeEmpty_o <= '0';
+        writeAck_o <= '1';
+        wait until writeWrite_i = '0';
+        writeAck_o <= '0';
       end if;
     end loop;
   end process;
@@ -504,7 +504,7 @@ entity TestPortWishbone is
     adr_i : in std_logic_vector(30 downto 0);
     sel_i : in std_logic_vector(7 downto 0);
     dat_i : in std_logic_vector(63 downto 0);
-    dat_o : in std_logic_vector(63 downto 0);
+    dat_o : out std_logic_vector(63 downto 0);
     err_o : out std_logic;
     ack_o : out std_logic);
 end entity;
@@ -513,9 +513,9 @@ end entity;
 -------------------------------------------------------------------------------
 -- 
 -------------------------------------------------------------------------------
-architecture TestWishbonePortImpl of TestWishbonePort is
+architecture TestPortWishboneImpl of TestPortWishbone is
   constant QUEUE_SIZE : natural := 63;
-  type QueueArray is array (natural range <>) of MessageFrame;
+  type QueueArray is array (natural range <>) of TestPortMessageWishbone;
   
   function QueueIndexInc(constant i : natural) return natural is
     variable returnValue : natural;
@@ -559,34 +559,42 @@ begin
       if (clk'event) then
         if (cyc_i = '1') then
           if (front /= back) then
-            TestCompare(stb_i, '1', "stb_i");
-            if (queue(back).writeAccess) then
-              TestCompare(we_i, '1', "we_i");
-            else
-              TestCompare(we_i, '0', "we_i");
-            end if;
-            TestCompare(adr_i, queue(back).address, "adr_i");
-            TestCompare(sel_i, queue(back).byteSelect, "sel_i");
-            TestCompare(dat_i, queue(back).data(cyclePosition), "dat_i");
-
-            if (latencyCounter = queue(back).latency) then
-              ack_o <= '1';
-              latencyCounter := 0;
-              if(cyclePosition = queue(back).length) then
-                back := QueueIndexInc(back);
-                cyclePosition := 0;
+            if (cyclePosition < queue(back).length) then
+              TestCompare(stb_i, '1', "stb_i");
+              if (queue(back).writeAccess) then
+                TestCompare(we_i, '1', "we_i");
               else
+                TestCompare(we_i, '0', "we_i");
+              end if;
+              -- REMARK: Add this...
+              --TestCompare(adr_i, std_logic_vector(unsigned(queue(back).address)+cyclePosition), "adr_i");
+              TestCompare(sel_i, queue(back).byteSelect, "sel_i");
+              if (queue(back).writeAccess) then
+                TestCompare(dat_i, queue(back).data(cyclePosition), "dat_i");
+              end if;
+
+              if (latencyCounter = queue(back).latency) then
+                dat_o <= queue(back).data(cyclePosition);
+                ack_o <= '1';
+                latencyCounter := 0;
                 cyclePosition := cyclePosition + 1;
+              else
+                dat_o <= (others=>'U');
+                ack_o <= '0';
+                latencyCounter := latencyCounter + 1;
               end if;
             else
+              back := QueueIndexInc(back);
+              cyclePosition := 0;
+              latencyCounter := 0;
+              dat_o <= (others=>'U');
               ack_o <= '0';
-              latencyCounter := latencyCounter + 1;
             end if;
           else
             TestError("Unexpected access.");
           end if;
         else
-          if (cyclePostion /= 0) or (latencyCounter /= 0) then
+          if (cyclePosition /= 0) or (latencyCounter /= 0) then
             TestError("Cycle unexpectedly aborted.");
             cyclePosition := 0;
             latencyCounter := 0;
@@ -595,9 +603,9 @@ begin
         end if;
 
         if (front = back) then
-          outboundWriteEmpty_o <= '1';
+          messageEmpty_o <= '1';
         else
-          outboundWriteEmpty_o <= '0';
+          messageEmpty_o <= '0';
         end if;
       elsif (messageWrite_i'event) then
         queue(front) := message_i;
@@ -652,6 +660,7 @@ architecture TestRioWbBridgeImpl of TestRioWbBridge is
     port(
       clk : in std_logic;
       areset_n : in std_logic;
+      enable : in std_logic;
 
       readFrameEmpty_i : in std_logic;
       readFrame_o : out std_logic;
@@ -765,12 +774,142 @@ begin
                              constant byteSelect : in std_logic_vector(7 downto 0);
                              constant length : in natural range 1 to DATA_SIZE_MAX;
                              constant data : in DoublewordArray(0 to DATA_SIZE_MAX-1);
-                             constant latency : natural := 0) is
+                             constant latency : natural := 1) is
     begin
       TestPortWishboneWrite(wbMessageWrite, wbMessage, wbMessageAck,
                             writeAccess, address, byteSelect, length, data, latency);
     end procedure;
+
+    ---------------------------------------------------------------------------
+    -- 
+    ---------------------------------------------------------------------------
+    function getReadSize(constant rdsize : in std_logic_vector(3 downto 0);
+                         constant wdptr : in std_logic) return natural is
+    begin
+      case rdsize is
+        when "0000" | "0001" | "0010" | "0011" =>
+          return 1;
+        when "0100" | "0110" =>
+          return 1;
+        when "0101" =>
+          return 1;
+        when "1000" =>
+          return 1;
+        when "0111" =>
+          return 1;
+        when "1001" =>
+          return 1;
+        when "1010" =>
+          return 1;
+        when "1011" =>
+          if (wdptr = '0') then
+            return 1;
+          else
+            return 2;
+          end if;
+        when "1100" =>
+          if (wdptr = '0') then
+            return 4;
+          else
+            return 8;
+          end if;
+        when "1101" =>
+          if (wdptr = '0') then
+            return 12;
+          else
+            return 16;
+          end if;
+        when "1110" =>
+          if (wdptr = '0') then
+            return 20;
+          else
+            return 24;
+          end if;
+        when "1111" =>
+          if (wdptr = '0') then
+            return 28;
+          else
+            return 32;
+          end if;
+        when others =>
+          return 0;
+      end case;
+    end function;
     
+    function getReadMask(constant rdsize : in std_logic_vector(3 downto 0);
+                         constant wdptr : in std_logic) return std_logic_vector is
+    begin
+      case rdsize is
+        when "0000" =>
+          if (wdptr = '0') then
+            return "10000000";
+          else
+            return "00001000";
+          end if;
+        when "0001" =>
+          if (wdptr = '0') then
+            return "01000000";
+          else
+            return "00000100";
+          end if;
+        when "0010" =>
+          if (wdptr = '0') then
+            return "00100000";
+          else
+            return "00000010";
+          end if;
+        when "0011" =>
+          if (wdptr = '0') then
+            return "00010000";
+          else
+            return "00000001";
+          end if;
+        when "0100" =>
+          if (wdptr = '0') then
+            return "11000000";
+          else
+            return "00001100";
+          end if;
+        when "0110" =>
+          if (wdptr = '0') then
+            return "00110000";
+          else
+            return "00000011";
+          end if;
+        when "0101" =>
+          if (wdptr = '0') then
+            return "11100000";
+          else
+            return "00000111";
+          end if;
+        when "1000" =>
+          if (wdptr = '0') then
+            return "11110000";
+          else
+            return "00001111";
+          end if;
+        when "0111" =>
+          if (wdptr = '0') then
+            return "11111000";
+          else
+            return "00011111";
+          end if;
+        when "1001" =>
+          if (wdptr = '0') then
+            return "11111100";
+          else
+            return "00111111";
+          end if;
+        when "1010" =>
+          if (wdptr = '0') then
+            return "11111110";
+          else
+            return "01111111";
+          end if;
+        when others =>
+          return "11111111";
+      end case;
+    end function;
     
     ---------------------------------------------------------------------------
     -- 
@@ -778,12 +917,19 @@ begin
     variable seed1 : positive := 1;
     variable seed2: positive := 1;
 
+    variable rdsize : std_logic_vector(3 downto 0);
+    variable wdptr : std_logic;
     variable ioData : DoubleWordArray(0 to 31);
     variable frame : RioFrame;
     
   begin
     areset_n <= '0';
+    enable <= '1';
 
+    inboundWrite <= '0';
+    outboundWrite <= '0';
+    wbMessageWrite <= '0';
+    
     writeFrameFull <= '0';
 
     wait until clk'event and clk = '1';
@@ -794,10 +940,10 @@ begin
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioLogicalCommon");
+    PrintS("TG_RioWbBridge");
     PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioLogicalCommon-TC1");
-    PrintS("Description: Test maintenance read requests.");
+    PrintS("TG_RioWbBridge-TC1");
+    PrintS("Description: Test maintenance requests.");
     PrintS("Requirement: XXXXX");
     PrintS("-----------------------------------------------------------------");
     PrintS("Step 1:");
@@ -805,33 +951,61 @@ begin
     PrintS("Result: Check the accesses on the external configuration port.");
     PrintS("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC1-Step1");
+    PrintR("TG_RioWbBridge-TC1-Step1");
     ---------------------------------------------------------------------------
     
-    ioData(0) := x"deadbeefc0debabe";
+    ---------------------------------------------------------------------------
+    PrintS("-----------------------------------------------------------------");
+    PrintS("TG_RioWbBridge-TC2");
+    PrintS("Description: Test request class packets.");
+    PrintS("Requirement: XXXXX");
+    PrintS("-----------------------------------------------------------------");
+    PrintS("Step 1:");
+    PrintS("Action: Send maintenance read request for one word on even offset.");
+    PrintS("Result: Check the accesses on the external configuration port.");
+    PrintS("-----------------------------------------------------------------");
+    ---------------------------------------------------------------------------
+    PrintR("TG_RioWbBridge-TC2-Step1");
+    ---------------------------------------------------------------------------
+    -- REMARK: Change the address also...
+    for i in 0 to 15 loop
+      for j in 0 to 1 loop
+        rdsize := std_logic_vector(to_unsigned(i, 4));
+        if (j = 0) then
+          wdptr := '0';
+        else
+          wdptr:= '1';
+        end if;
+        
+        CreateRandomPayload(ioData, seed1, seed2);
 
-    InboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_REQUEST_CLASS, 
-                                sourceId=>x"dead", destId=>x"beef",
-                                payload=>RioNread(rdsize=>"0000",
-                                                  tid=>x"aa",
-                                                  address=>"00000000000000000000000000000",
-                                                  wdptr=>'0',
-                                                  xamsbs=>"00")));
-
-    OutboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                 tt=>"01", ftype=>FTYPE_RESPONSE_CLASS, 
-                                 sourceId=>x"beef", destId=>x"dead",
-                                 payload=>RioResponse(status=>"0000",
+        InboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                    tt=>"01", ftype=>FTYPE_REQUEST_CLASS, 
+                                    sourceId=>x"dead", destId=>x"beef",
+                                    payload=>RioNread(rdsize=>rdsize,
                                                       tid=>x"aa",
-                                                      dataLength=>1,
-                                                      data=>ioData)));
+                                                      address=>"00000000000000000000000000000",
+                                                      wdptr=>wdptr,
+                                                      xamsbs=>"00")));
 
-    SetSlaveAccess(false, "0000000000000000000000000000000", "00000001", 1, ioData);
+        OutboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                     tt=>"01", ftype=>FTYPE_RESPONSE_CLASS, 
+                                     sourceId=>x"beef", destId=>x"dead",
+                                     payload=>RioResponse(status=>"0000",
+                                                          tid=>x"aa",
+                                                          dataLength=>getReadSize(rdsize, wdptr),
+                                                          data=>ioData)));
 
-    TestWait(inboundEmpty, '1', "inbound frame");
-    TestWait(outboundEmpty, '1', "outbound frame");
-    TestWait(wbMessageEmpty, '1', "wishbone access");
+        SetSlaveAccess(false, "0000000000000000000000000000000",
+                       getReadMask(rdsize, wdptr),
+                       getReadSize(rdsize, wdptr),
+                       ioData);
+
+        TestWait(inboundEmpty, '1', "inbound frame");
+        TestWait(outboundEmpty, '1', "outbound frame");
+        TestWait(wbMessageEmpty, '1', "wishbone access");
+      end loop;
+    end loop;
     
     ---------------------------------------------------------------------------
     -- Test completed.
@@ -845,10 +1019,17 @@ begin
   -----------------------------------------------------------------------------
   TestObject: RioWbBridge
     generic map(
-      EXTENDED_ADDRESS=>0)
+      EXTENDED_ADDRESS=>0,
+      DEVICE_IDENTITY=>x"dead",
+      DEVICE_VENDOR_IDENTITY=>x"beef",
+      DEVICE_REV=>x"c0debabe",
+      ASSY_IDENTITY=>x"1111",
+      ASSY_VENDOR_IDENTITY=>x"2222",
+      ASSY_REV=>x"3333")
     port map(
       clk=>clk, 
-      areset_n=>areset_n, 
+      areset_n=>areset_n,
+      enable=>enable,
       readFrameEmpty_i=>readFrameEmpty, 
       readFrame_o=>readFrame, 
       readContent_o=>readContent, 
@@ -876,18 +1057,21 @@ begin
   TestPortPacketBufferInst: TestPortPacketBuffer
     port map(
       clk=>clk, areset_n=>areset_n, 
-      outboundEmpty_o=>outboundEmpty, 
-      outboundWrite_i=>outboundWrite, 
-      outboundMessage_i=>outboundMessage, 
-      outboundAck_o=>outboundAck, 
-      inboundEmpty_o=>inboundEmpty, 
-      inboundWrite_i=>inboundWrite, 
-      inboundMessage_i=>inboundMessage, 
-      inboundAck_o=>inboundAck, 
+      readEmpty_o=>inboundEmpty, 
+      readWrite_i=>inboundWrite, 
+      readMessage_i=>inboundMessage, 
+      readAck_o=>inboundAck, 
+      writeEmpty_o=>outboundEmpty, 
+      writeWrite_i=>outboundWrite, 
+      writeMessage_i=>outboundMessage, 
+      writeAck_o=>outboundAck, 
       readFrameEmpty_o=>readFrameEmpty, 
       readFrame_i=>readFrame, 
-      readFrameRestart_i=>readFrameRestart, 
-      readFrameAborted_o=>readFrameAborted, 
+      readFrameRestart_i=>'0', 
+      readFrameAborted_o=>readFrameAborted,
+      readWindowEmpty_o=>open,
+      readWindowReset_i=>'0',
+      readWindowNext_i=>readFrame,
       readContentEmpty_o=>readContentEmpty, 
       readContent_i=>readContent, 
       readContentEnd_o=>readContentEnd, 

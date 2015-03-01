@@ -66,6 +66,7 @@ entity RioWbBridge is
   port(
     clk : in std_logic;
     areset_n : in std_logic;
+    enable : in std_logic;
 
     readFrameEmpty_i : in std_logic;
     readFrame_o : out std_logic;
@@ -112,7 +113,7 @@ architecture RioWbBridgeImpl of RioWbBridge is
       srcId_o : out std_logic_vector(31 downto 0);
       tid_o : out std_logic_vector(7 downto 0);
       address_o : out std_logic_vector(16*EXTENDED_ADDRESS+30 downto 0);
-      length_o : out std_logic_vector(3 downto 0);
+      length_o : out std_logic_vector(4 downto 0);
       select_o : out std_logic_vector(7 downto 0);
       done_i : in std_logic;
       
@@ -140,11 +141,11 @@ architecture RioWbBridgeImpl of RioWbBridge is
       srcId_o : out std_logic_vector(31 downto 0);
       tid_o : out std_logic_vector(7 downto 0);
       address_o : out std_logic_vector(16*EXTENDED_ADDRESS+30 downto 0);
-      length_o : out std_logic_vector(3 downto 0);
+      length_o : out std_logic_vector(4 downto 0);
       select_o : out std_logic_vector(7 downto 0);
-      payloadSetFirst_i : in std_logic;
-      payloadSetNext_i : in std_logic;
-      payload_o : out std_logic_vector(31 downto 0);
+      payloadRead_i : in std_logic;
+      payloadIndex_i : in std_logic_vector(4 downto 0);
+      payload_o : out std_logic_vector(63 downto 0);
       done_i : in std_logic;
       
       slaveCyc_i : in std_logic;
@@ -170,10 +171,10 @@ architecture RioWbBridgeImpl of RioWbBridge is
       tid_i : in std_logic_vector(7 downto 0);
       error_i : in std_logic;
       payloadPresent_i :  in std_logic;
-      payloadLength_i : in std_logic_vector(3 downto 0);
+      payloadLength_i : in std_logic_vector(4 downto 0);
       payloadWrite_i : in std_logic;
-      payloadIndex_i : in std_logic_vector(3 downto 0);
-      payload_i : in std_logic_vector(31 downto 0);
+      payloadIndex_i : in std_logic_vector(4 downto 0);
+      payload_i : in std_logic_vector(63 downto 0);
       done_o : out std_logic;
       
       masterCyc_o : out std_logic;
@@ -212,6 +213,70 @@ architecture RioWbBridgeImpl of RioWbBridge is
       slaveAck_o : out std_logic);
   end component;
 
+  type StateType is (IDLE,
+                     REQUEST_CLASS, REQUEST_CLASS_RESPONSE,
+                     WRITE_CLASS, WRITE_CLASS_RESPONSE);
+  signal state : StateType;
+  
+  signal adr : std_logic_vector(16*EXTENDED_ADDRESS+30 downto 0);
+  signal datOut : std_logic_vector(63 downto 0);
+
+  signal payloadUpdate : std_logic;
+  signal payloadIndex : std_logic_vector(4 downto 0);
+  
+  signal requestReady : std_logic;
+  signal requestVc : std_logic;
+  signal requestCrf : std_logic;
+  signal requestPrio : std_logic_vector(1 downto 0);
+  signal requestTt : std_logic_vector(1 downto 0);
+  signal requestDstId : std_logic_vector(31 downto 0);
+  signal requestSrcId : std_logic_vector(31 downto 0);
+  signal requestTid : std_logic_vector(7 downto 0);
+  signal requestAddress : std_logic_vector(16*EXTENDED_ADDRESS+30 downto 0);
+  signal requestLength : std_logic_vector(4 downto 0);
+  signal requestSelect : std_logic_vector(7 downto 0);
+  signal requestDone : std_logic;
+  signal requestAck : std_logic;
+
+  signal writeReady : std_logic;
+  signal writeVc : std_logic;
+  signal writeCrf : std_logic;
+  signal writePrio : std_logic_vector(1 downto 0);
+  signal writeTt : std_logic_vector(1 downto 0);
+  signal writeDstId : std_logic_vector(31 downto 0);
+  signal writeSrcId : std_logic_vector(31 downto 0);
+  signal writeTid : std_logic_vector(7 downto 0);
+  signal writeAddress : std_logic_vector(16*EXTENDED_ADDRESS+30 downto 0);
+  signal writeLength : std_logic_vector(4 downto 0);
+  signal writeSelect : std_logic_vector(7 downto 0);
+  signal writePayload : std_logic_vector(63 downto 0);
+  signal writeDone : std_logic;
+  signal writeAck : std_logic;
+
+  signal responseReady : std_logic;
+  signal responseVc : std_logic;
+  signal responseCrf : std_logic;
+  signal responsePrio : std_logic_vector(1 downto 0);
+  signal responseTt : std_logic_vector(1 downto 0);
+  signal responseDstId : std_logic_vector(31 downto 0);
+  signal responseSrcId : std_logic_vector(31 downto 0);
+  signal responseTid : std_logic_vector(7 downto 0);
+  signal responseError : std_logic;
+  signal responsePayloadPresent : std_logic;
+  signal responsePayload : std_logic_vector(63 downto 0);
+  signal responseDone : std_logic;
+
+  signal inboundCyc : std_logic;
+  signal inboundStb : std_logic;
+  signal inboundAdr : std_logic_vector(7 downto 0);
+  signal inboundDat : std_logic_vector(31 downto 0);
+  signal inboundAck : std_logic;
+
+  signal outboundCyc : std_logic;
+  signal outboundStb : std_logic;
+  signal outboundDat : std_logic_vector(31 downto 0);
+  signal outboundAck : std_logic;
+  
 --  signal configStb : std_logic;
 --  signal configWe : std_logic;
 --  signal configAdr : std_logic_vector(23 downto 0);
@@ -226,6 +291,14 @@ architecture RioWbBridgeImpl of RioWbBridge is
 
 begin
 
+  responseVc <= requestVc when (responsePayloadPresent = '1') else writeVc;
+  responseCrf <= requestCrf when (responsePayloadPresent = '1') else writeCrf;
+  responsePrio <= requestPrio when (responsePayloadPresent = '1') else writePrio;
+  responseTt <= requestTt when (responsePayloadPresent = '1') else writeTt;
+  responseDstId <= requestSrcId when (responsePayloadPresent = '1') else writeSrcId;
+  responseSrcId <= requestDstId when (responsePayloadPresent = '1') else writeDstId;
+  responseTid <= requestTid when (responsePayloadPresent = '1') else writeTid;
+  
   -----------------------------------------------------------------------------
   -- 
   -----------------------------------------------------------------------------
@@ -241,107 +314,125 @@ begin
       adr <= (others=>'0');
       datOut <= (others=>'0');
 
-      responseReadReady <= '0';
-      responseWriteReady <= '0';
-      responsePayloadWrite <= '0';
-
+      payloadUpdate <= '0';
+      payloadIndex <= (others=>'0');
+      
       requestDone <= '0';
       
-      requestPayloadIndex <= (others=>'0');
+      writeDone <= '0';
+      
+      responseReady <= '0';
+      responseError <= '0';
+      responsePayloadPresent <= '0';
+      responsePayload <= (others=>'0');
     elsif (clk'event and clk = '1') then
-      requestDone <= '0';
-      responsePayloadWrite <= '0';
+      if (enable = '1') then
+        requestDone <= '0';
+        writeDone <= '0';
+        responseReady <= '0';
+        
+        payloadUpdate <= '0';
+        if (payloadUpdate = '1') then
+          payloadIndex <= std_logic_vector(unsigned(payloadIndex) + 1);
+        end if;
+        
+        case state is
+          when IDLE =>
+            ---------------------------------------------------------------------
+            -- 
+            ---------------------------------------------------------------------
+            if (requestReady = '1') then
+              cyc_o <= '1';
+              stb_o <= '1';
+              we_o <= '0';
+              adr <= requestAddress;
+              sel_o <= requestSelect;
+              
+              payloadIndex <= (others=>'0');
+              
+              responsePayloadPresent <= '1';
+              state <= REQUEST_CLASS;
+            elsif (writeReady = '1') then
+              cyc_o <= '1';
+              stb_o <= '1';
+              we_o <= '1';
+              adr <= writeAddress;
+              sel_o <= writeSelect;
+              datOut <= writePayload;
 
-      if (responsePayloadWrite = '1') then
-        responsePayloadIndex <= std_logic_vector(unsigned(responsePayloadIndex) + 1);
-      end if;
-      
-      case state is
-        when IDLE =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (requestReady = '1') then
-            cyc_o <= '1';
-            stb_o <= '1';
-            we_o <= '0';
-            adr <= requestAddress;
-            responsePayloadPresent <= '1';
-            state <= REQUEST_CLASS;
-          elsif (writeReady = '1') then
-            cyc_o <= '1';
-            stb_o <= '1';
-            we_o <= '1';
-            adr <= writeAddress;
-            datOut <= writePayload;
-            writePayloadNext <= '1';
-            responsePayloadPresent <= '0';
-            state <= WRITE_CLASS;
-          end if;          
+              payloadUpdate <= '1';
+              payloadIndex <= (others=>'0');
+              
+              responsePayloadPresent <= '0';
+              state <= WRITE_CLASS;
+            end if;          
 
-        when REQUEST_CLASS =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (ack_i = '1') then
-            responsePayloadWrite <= '1';
-            
-            if (responsePayloadIndex /= requestPayloadLength) then
+          when REQUEST_CLASS =>
+            ---------------------------------------------------------------------
+            -- 
+            ---------------------------------------------------------------------
+            if (ack_i = '1') then
+              -- Note that responsePayloadIndex is updated after the write has been made.
+              payloadUpdate <= '1';
+              responsePayload <= dat_i;
+              
               adr <= std_logic_vector(unsigned(adr) + 1);
-            else
-              requestDone <= '1';
-              cyc_o <= '0';
-              stb_o <= '0';
-              state <= NREAD_RESPONSE;
-            end if;
+
+              if (payloadIndex = requestLength) then
+                requestDone <= '1';
+                cyc_o <= '0';
+                stb_o <= '0';
+                state <= REQUEST_CLASS_RESPONSE;
+              end if;
 --          elsif(err_i = '1') then
 --            REMARK: Implement error indication from wb-bus...
-          end if;
-
-        when REQUEST_CLASS_RESPONSE =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (responseDone = '1') then
-            responseReadReady <= '0';
-            state <= IDLE;
-          else
-            responseReadReady <= '1';
-          end if;
-
-        when WRITE_CLASS =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (ack_i = '1') then
-            responsePayloadWrite <= '1';
-
-            if (responsePayloadIndex /= requestPayloadLength) then
-              adr <= std_logic_vector(unsigned(configAdr) + 1);
-              datOut <= writePayload;
-              requestPayloadIndex <= std_logic_vector(unsigned(requestPayloadIndex) + 1);
-            else
-              writeDone <= '1';
-              cyc_o <= '0';
-              stb_o <= '0';
-              state <= WRITE_CLASS_RESPONSE;
             end if;
-          end if;
 
-        when WRITE_CLASS_RESPONSE =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (responseDone = '1') then
-            responseWriteReady <= '0';
-            state <= IDLE;
-          else
-            responseWriteReady <= '1';
-          end if;
+          when REQUEST_CLASS_RESPONSE =>
+            ---------------------------------------------------------------------
+            -- 
+            ---------------------------------------------------------------------
+            if (responseDone = '1') then
+              responseReady <= '0';
+              state <= IDLE;
+            else
+              responseReady <= '1';
+            end if;
 
-        when others =>
+          when WRITE_CLASS =>
+            ---------------------------------------------------------------------
+            -- 
+            ---------------------------------------------------------------------
+            if (ack_i = '1') then
+              payloadUpdate <= '1';
 
-      end case;
+              adr <= std_logic_vector(unsigned(adr) + 1);
+              
+              if (payloadIndex /= writeLength) then
+                datOut <= writePayload;
+              else
+                writeDone <= '1';
+                cyc_o <= '0';
+                stb_o <= '0';
+                state <= WRITE_CLASS_RESPONSE;
+              end if;
+            end if;
+
+          when WRITE_CLASS_RESPONSE =>
+            ---------------------------------------------------------------------
+            -- 
+            ---------------------------------------------------------------------
+            if (writeDone = '1') then
+              responseReady <= '0';
+              state <= IDLE;
+            else
+              responseReady <= '1';
+            end if;
+
+          when others =>
+
+        end case;
+      end if;
     end if;
   end process;
   
@@ -365,14 +456,14 @@ begin
       srcId_o=>requestSrcId,
       tid_o=>requestTid,
       address_o=>requestAddress,
-      length_o=>requestPayloadLength,
+      length_o=>requestLength,
       select_o=>requestSelect,
       done_i=>requestDone,
       slaveCyc_i=>inboundCyc,
       slaveStb_i=>inboundStb,
       slaveAdr_i=>inboundAdr,
       slaveDat_i=>inboundDat,
-      slaveAck_o=>inboundAck);
+      slaveAck_o=>requestAck);
 
   WriteClassInboundInst: WriteClassInbound
     generic map(
@@ -392,15 +483,15 @@ begin
       address_o=>writeAddress, 
       length_o=>writeLength, 
       select_o=>writeSelect, 
-      payloadSetFirst_i=>writePayloadFirst, 
-      payloadSetNext_i=>writePayloadNext, 
+      payloadRead_i=>payloadUpdate, 
+      payloadIndex_i=>payloadIndex, 
       payload_o=>writePayload, 
       done_i=>writeDone, 
-      slaveCyc_i=>inboundCyc_i, 
-      slaveStb_i=>inboundStb_i, 
-      slaveAdr_i=>inboundAdr_i, 
-      slaveDat_i=>inboundDat_i, 
-      slaveAck_o=>inboundAck_o);
+      slaveCyc_i=>inboundCyc, 
+      slaveStb_i=>inboundStb, 
+      slaveAdr_i=>inboundAdr, 
+      slaveDat_i=>inboundDat, 
+      slaveAck_o=>writeAck);
 
   ResponseClassOutboundInst: ResponseClassOutbound
     port map(
@@ -408,25 +499,26 @@ begin
       areset_n=>areset_n,
       enable=>enable,
       ready_i=>responseReady,
-      vc_i=>vc,
-      crf_i=>crf,
-      prio_i=>prio,
-      tt_i=>tt,
-      dstid_i=>srcid,
-      srcid_i=>dstid,
-      tid_i=>tid,
+      vc_i=>responseVc,
+      crf_i=>responseCrf,
+      prio_i=>responsePrio,
+      tt_i=>responseTt,
+      dstid_i=>responseDstId,
+      srcid_i=>responseSrcId,
+      tid_i=>responseTid,
       error_i=>responseError,
       payloadPresent_i=>responsePayloadPresent,
-      payloadLength_i=>responsePayloadLength,
-      payloadWrite_i=>responsePayloadWrite,
-      payloadIndex_i=>responsePayloadIndex,
+      payloadLength_i=>requestLength,
+      payloadWrite_i=>payloadUpdate,
+      payloadIndex_i=>payloadIndex,
       payload_i=>responsePayload,
       done_o=>responseDone,
       masterCyc_o=>outboundCyc,
       masterStb_o=>outboundStb,
       masterDat_o=>outboundDat,
       masterAck_i=>outboundAck);
-  
+
+  inboundAck <= requestAck or writeAck;
   RioLogicalCommonInst: RioLogicalCommon
     port map(
       clk=>clk,
@@ -586,7 +678,7 @@ entity RequestClassInbound is
     srcId_o : out std_logic_vector(31 downto 0);
     tid_o : out std_logic_vector(7 downto 0);
     address_o : out std_logic_vector(16*EXTENDED_ADDRESS+30 downto 0);
-    length_o : out std_logic_vector(3 downto 0);
+    length_o : out std_logic_vector(4 downto 0);
     select_o : out std_logic_vector(7 downto 0);
     done_i : in std_logic;
     
@@ -622,20 +714,24 @@ begin
   RequestClass: process(clk, areset_n)
   begin
     if (areset_n = '0') then
+      state <= RECEIVE_PACKET;
+      
+      rdsize <= (others=>'0');
+      wdptr <= '0';
+      
       slaveAck <= '0';
-
       complete <= '0';
+      
+      packetIndex <= 0;
       
       vc_o <= '0';
       crf_o <= '0';
       prio_o <= "00";
       tt_o <= "00";
+      dstId_o <= (others=>'0');
+      srcId_o <= (others=>'0');
+      tid_o <= (others=>'0');
       address_o <= (others=>'0');
-
-      rdsize <= (others=>'0');
-      wdptr <= '0';
-      
-      packetIndex <= 0;
     elsif (clk'event and clk = '1') then
       case state is
         when RECEIVE_PACKET =>
@@ -684,8 +780,8 @@ begin
                       -- There should be no more content in an NREAD.
                       -- Discard.
                   end case;
+                  slaveAck <= '1';
                 end if;
-                slaveAck <= '1';
               end if;
             else
               slaveAck <= '0';
@@ -723,110 +819,110 @@ begin
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      length_o <= 0;
+      length_o <= "00000";
       select_o <= (others=>'0');
     elsif (clk'event and clk = '1') then
       if (complete = '1') then
         if (wdptr = '0') then
           case rdsize is
             when "0000" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "10000000";
             when "0001" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "01000000";
             when "0010" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00100000";
             when "0011" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00010000";
             when "0100" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11000000";
             when "0101" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11100000";
             when "0110" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00110000";
             when "0111" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11111000";
             when "1000" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11110000";
             when "1001" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11111100";
             when "1010" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11111110";
             when "1011" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11111111";
             when "1100" =>
-              length_o <= 3;
+              length_o <= "00011";
               select_o <= "11111111";
             when "1101" =>
-              length_o <= 11;
+              length_o <= "01011";
               select_o <= "11111111";
             when "1110" =>
-              length_o <= 19;
+              length_o <= "10011";
               select_o <= "11111111";
             when others =>
-              length_o <= 27;
+              length_o <= "11011";
               select_o <= "11111111";
           end case;
         else
           case rdsize is
             when "0000" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00001000";
             when "0001" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00000100";
             when "0010" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00000010";
             when "0011" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00000001";
             when "0100" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00001100";
             when "0101" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00000111";
             when "0110" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00000011";
             when "0111" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00011111";
             when "1000" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00001111";
             when "1001" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00111111";
             when "1010" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "01111111";
             when "1011" =>
-              length_o <= 1;
+              length_o <= "00001";
               select_o <= "11111111";
             when "1100" =>
-              length_o <= 7;
+              length_o <= "00111";
               select_o <= "11111111";
             when "1101" =>
-              length_o <= 15;
+              length_o <= "01111";
               select_o <= "11111111";
             when "1110" =>
-              length_o <= 23;
+              length_o <= "10111";
               select_o <= "11111111";
             when others =>
-              length_o <= 31;
+              length_o <= "11111";
               select_o <= "11111111";
           end case;
         end if;
@@ -867,11 +963,11 @@ entity WriteClassInbound is
     srcId_o : out std_logic_vector(31 downto 0);
     tid_o : out std_logic_vector(7 downto 0);
     address_o : out std_logic_vector(16*EXTENDED_ADDRESS+30 downto 0);
-    length_o : out std_logic_vector(3 downto 0);
+    length_o : out std_logic_vector(4 downto 0);
     select_o : out std_logic_vector(7 downto 0);
-    payloadSetFirst_i : in std_logic;
-    payloadSetNext_i : in std_logic;
-    payload_o : out std_logic_vector(31 downto 0);
+    payloadRead_i : in std_logic;
+    payloadIndex_i : in std_logic_vector(4 downto 0);
+    payload_o : out std_logic_vector(63 downto 0);
     done_i : in std_logic;
     
     slaveCyc_i : in std_logic;
@@ -912,13 +1008,14 @@ architecture WriteClassInbound of WriteClassInbound is
   signal complete : std_logic;
 
   signal packetIndex : natural range 0 to 68;
-  signal requestData : std_logic_vector(31 downto 0);
 
-  signal payloadIndex : std_logic_vector(4 downto 0);
+  signal doubleWord : std_logic_vector(63 downto 16);
+  
   signal memoryWrite : std_logic;
   signal memoryAddress : std_logic_vector(4 downto 0);
   signal memoryDataIn : std_logic_vector(63 downto 0);
 
+  
 begin
 
   slaveAck_o <= slaveAck;
@@ -928,26 +1025,29 @@ begin
   WriteClass: process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      slaveAck <= '0';
+      state <= RECEIVE_PACKET;
 
-      complete <= '0';
-      
-      vc_o <= '0';
-      crf_o <= '0';
-      prio_o <= "00";
-      tt_o <= "00";
-      tid_o <= (others=>'0');
-      
-      address_o <= (others=>'0');
-      
       wdptr <= '0';
       wrsize <= (others=>'0');
       
+      slaveAck <= '0';
+      complete <= '0';
+      
       packetIndex <= 0;
+      doubleWord <= (others=>'0');
 
       memoryWrite <= '0';
       memoryAddress <= (others=>'0');
       memoryDataIn <= (others=>'0');
+
+      vc_o <= '0';
+      crf_o <= '0';
+      prio_o <= "00";
+      tt_o <= "00";
+      dstId_o <= (others=>'0');
+      srcId_o <= (others=>'0');
+      tid_o <= (others=>'0');
+      address_o <= (others=>'0');
     elsif (clk'event and clk = '1') then
       case state is
         when RECEIVE_PACKET =>
@@ -1010,8 +1110,8 @@ begin
                       -- There should be no more content in an NWRITE request.
                       -- Discard.
                   end case;
+                  slaveAck <= '1';
                 end if;
-                slaveAck <= '1';
               end if;
             else
               if (memoryWrite = '1') then
@@ -1055,47 +1155,47 @@ begin
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      length_o <= 0;
+      length_o <= "00000";
       select_o <= (others=>'0');
     elsif (clk'event and clk = '1') then
       if (complete = '1') then
         if (wdptr = '0') then
           case wrsize is
             when "0000" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "10000000";
             when "0001" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "01000000";
             when "0010" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00100000";
             when "0011" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00010000";
             when "0100" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11000000";
             when "0101" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11100000";
             when "0110" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00110000";
             when "0111" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11111000";
             when "1000" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11110000";
             when "1001" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11111100";
             when "1010" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11111110";
             when "1011" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "11111111";
             when others =>
               length_o <= memoryAddress;
@@ -1104,37 +1204,37 @@ begin
         else
           case wrsize is
             when "0000" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00001000";
             when "0001" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00000100";
             when "0010" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00000010";
             when "0011" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00000001";
             when "0100" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00001100";
             when "0101" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00000111";
             when "0110" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00000011";
             when "0111" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00011111";
             when "1000" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00001111";
             when "1001" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "00111111";
             when "1010" =>
-              length_o <= 0;
+              length_o <= "00000";
               select_o <= "01111111";
             when others =>
               length_o <= memoryAddress;
@@ -1148,19 +1248,7 @@ begin
   -----------------------------------------------------------------------------
   -- Payload content memory.
   -----------------------------------------------------------------------------
-  process(clk, areset_n)
-  begin
-    if (areset_n = '0') then
-      payloadIndex <= (others=>'0');
-    elsif (clk'event and clk = '1') then
-      if (payloadSetFirst_i = '1') then
-        payloadIndex <= (others=>'0');
-      elsif (payloadSetNext_i = '1') then
-        payloadIndex <= std_logic_vector(unsigned(payloadIndex) + 1);
-      end if;
-    end if;
-  end process;
-  
+
   PayloadMemory: MemorySimpleDualPort
     generic map(ADDRESS_WIDTH=>5, DATA_WIDTH=>64)
     port map(clkA_i=>clk,
@@ -1168,8 +1256,8 @@ begin
              addressA_i=>memoryAddress,
              dataA_i=>memoryDataIn,
              clkB_i=>clk,
-             enableB_i=>enable,
-             addressB_i=>payloadIndex,
+             enableB_i=>payloadRead_i,
+             addressB_i=>payloadIndex_i,
              dataB_o=>payload_o);
 
 end architecture;
@@ -1203,10 +1291,10 @@ entity ResponseClassOutbound is
     tid_i : in std_logic_vector(7 downto 0);
     error_i : in std_logic;
     payloadPresent_i :  in std_logic;
-    payloadLength_i : in std_logic_vector(3 downto 0);
+    payloadLength_i : in std_logic_vector(4 downto 0);
     payloadWrite_i : in std_logic;
-    payloadIndex_i : in std_logic_vector(3 downto 0);
-    payload_i : in std_logic_vector(31 downto 0);
+    payloadIndex_i : in std_logic_vector(4 downto 0);
+    payload_i : in std_logic_vector(63 downto 0);
     done_o : out std_logic;
     
     masterCyc_o : out std_logic;
@@ -1236,15 +1324,16 @@ architecture ResponseClassOutbound of ResponseClassOutbound is
       dataB_o : out std_logic_vector(DATA_WIDTH-1 downto 0));
   end component;
 
-  type StateType is (WAIT_PACKET,
-                     READ_RESPONSE, WRITE_RESPONSE,
+  signal header : std_logic_vector(31 downto 0);
+  
+  type StateType is (WAIT_PACKET, SEND_RESPONSE, 
                      WAIT_COMPLETE, RESPONSE_DONE);
   signal state : StateType;
 
-  signal packetIndex : natural range 0 to 65;
-  signal header : std_logic_vector(31 downto 0);
-  signal payload : std_logic_vector(63 downto 0);
-  signal payloadIndex : std_logic_vector(4 downto 0);
+  signal packetIndex : natural range 0 to 68;
+
+  signal responsePayloadIndex : std_logic_vector(4 downto 0);
+  signal responsePayload : std_logic_vector(15 downto 0);
     
   signal memoryEnable : std_logic;
   signal memoryAddress : std_logic_vector(4 downto 0);
@@ -1257,16 +1346,21 @@ begin
   Response: process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      masterCyc_o <= '0';
-      masterStb_o <= '0';
+      state <= WAIT_PACKET;
 
+      packetIndex <= 0;
+
+      responsePayloadIndex <= (others=>'0');
+      responsePayload <= (others=>'0');
+        
       memoryEnable <= '0';
       memoryAddress <= (others=>'0');
 
-      payloadIndex <= (others=>'0');
       done_o <= '0';
       
-      state <= WAIT_PACKET;
+      masterCyc_o <= '0';
+      masterStb_o <= '0';
+      masterDat_o <= (others=>'0');
     elsif (clk'event and clk = '1') then
       if (enable = '1') then
         case state is
@@ -1277,14 +1371,14 @@ begin
             if (ready_i = '1') then
               masterCyc_o <= '1';
               masterStb_o <= '1';
-              masterDat_o <= responseHeader;
+              masterDat_o <= header;
               
               packetIndex <= 1;
+              responsePayloadIndex <= (others=>'0');
 
               memoryEnable <= '1';
               memoryAddress <= (others=>'0');
 
-              payloadIndex <= (others=>'0');
               state <= SEND_RESPONSE;
             end if;
 
@@ -1326,13 +1420,13 @@ begin
                 when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 | 25 | 27 | 29 | 31 | 33 | 35 |
                   37 | 39 | 41 | 43 | 45 | 47 | 49 | 51 | 53 | 55 | 57 | 59 | 61 | 63 | 65 | 67 =>
                   -- double-wordN(15:0) & double-wordN(63:48)
-                  masterDat_o <= responsePayload & memoryDataRead(31 downto 16);
+                  masterDat_o <= responsePayload & memoryDataRead(63 downto 48);
                   packetIndex <= packetIndex + 1;
 
                   responsePayloadIndex <=
                     std_logic_vector(unsigned(responsePayloadIndex) + 1);
                   
-                  if (responsePayloadIndex = responsePayloadLength_i) then
+                  if (responsePayloadIndex = payloadLength_i) then
                     state <= WAIT_COMPLETE;
                   else
                     packetIndex <= packetIndex + 1;

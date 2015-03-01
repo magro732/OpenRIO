@@ -57,7 +57,8 @@
 --   16-bit deviceAddress support. All fields are right-justified.
 -------------------------------------------------------------------------------
 -- REMARK: Egress; Places packets in different queues depending on the packet priority?
--- REMARK: Do not use Wishbone, use request/grant scheme instead...
+-- REMARK: Do not use Wishbone, use request/grant scheme instead?
+-- REMARK: 8-bit deviceId has not been verified, fix.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -227,18 +228,22 @@ begin
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      masterCyc_o <= '0';
-      masterStb_o <= '0';
-      
       state <= IDLE;
+      
       packetPosition <= 0;
       packetContent <= (others=>'0');
+      
       tt <= "00";
       ftype <= "0000";
       transaction <= "0000";
 
       readContent_o <= '0';
       readFrame_o <= '0';
+
+      masterCyc_o <= '0';
+      masterStb_o <= '0';
+      masterAdr_o <= (others=>'0');
+      masterDat_o <= (others=>'0');
     elsif (clk'event and clk = '1') then
       readContent_o <= '0';
       readFrame_o <= '0';
@@ -357,7 +362,7 @@ begin
               readContent_o <= '1';
             else
               readFrame_o <= '1';
-              state <= END_PACKET;
+              state <= FORWARD_LAST;
             end if;
           end if;
 
@@ -482,43 +487,68 @@ architecture RioLogicalCommonEgress of RioLogicalCommonEgress is
                      HEADER_GET, HEADER_ACK,
                      DESTINATION_GET, DESTINATION_ACK,
                      SOURCE_GET, SOURCE_ACK,
-                     CONTENT_GET, CONTENT_ACK,
-                     CRC_APPEND, SEND_FRAME,
+                     CONTENT_GET, CONTENT_ACK, 
+                     CRC_APPEND, CRC_UPDATE, CRC_LAST, SEND_FRAME,
                      RESTART_FRAME, WAIT_UPDATE);
   signal state : StateType;
-  signal packetPosition : natural range 0 to 31;
-  signal halfWordPending : std_logic;
-  signal halfWord : std_logic_vector(15 downto 0);
+  signal packetPosition : natural range 0 to 69;
   
-  signal header : std_logic_vector(15 downto 0);
+  signal temp : std_logic_vector(15 downto 0);
+  
   signal tt : std_logic_vector(1 downto 0);
   signal dstAddr : std_logic_vector(7 downto 0);
-  
-  signal writeContentData : std_logic_vector(31 downto 0);
 
+  signal writeContent : std_logic;
+  signal writeContentData1 : std_logic_vector(31 downto 0);
+  signal writeContentData2 : std_logic_vector(31 downto 0);
+
+  signal crcReset : std_logic;
   signal crc16Current, crc16Temp, crc16Next: std_logic_vector(15 downto 0);
 
 begin
 
-  writeContentData_o <= writeContentData;
+  writeContent_o <= writeContent;
+  writeContentData_o <= writeContentData1;
+
+  
+  process(clk, areset_n)
+  begin
+    if (areset_n = '0') then
+      crc16Current <= x"0000";
+    elsif (clk'event and clk = '1') then
+      if (crcReset = '1') then
+        crc16Current <= x"ffff";
+      elsif (writeContent = '1') then
+        crc16Current <= crc16Next;
+      end if;
+    end if;
+  end process;
   
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
       state <= IDLE;
-      crc16Current <= x"0000";
+      packetPosition <= 0;
 
+      tt <= (others=>'0');
+      dstAddr <= (others=>'0');
+
+      temp <= (others=>'0');
+      writeContent <= '0';
+      writeContentData1 <= (others=>'0');
+      writeContentData2 <= (others=>'0');
+      
+      crcReset <= '0';
+      
       slaveAck_o <= '0';
 
-      halfWordPending <= '0';
-      
-      writeContent_o <= '0';
       writeFrame_o <= '0';
       writeFrameAbort_o <= '0';
-      writeContentData <= (others=>'0');
     elsif (clk'event and clk = '1') then
-      writeContent_o <= '0';
+      writeContent <= '0';
       writeFrame_o <= '0';
+      
+      crcReset <= '0';
       
       case state is
         when IDLE =>
@@ -526,8 +556,8 @@ begin
           -- 
           ---------------------------------------------------------------------
           packetPosition <= 0;
+          crcReset <= '1';
           if (writeFrameFull_i = '0') then
-            crc16Current <= x"ffff";
             state <= HEADER_GET;
           end if;
 
@@ -536,7 +566,7 @@ begin
           -- 
           ---------------------------------------------------------------------
           if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
-            header <= slaveDat_i(15 downto 0);
+            temp <= slaveDat_i(15 downto 0);
             tt <= slaveDat_i(5 downto 4);
 
             slaveAck_o <= '1';
@@ -558,14 +588,10 @@ begin
           ---------------------------------------------------------------------
           
           if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
-            if (tt = "00") then
-              dstAddr <= slaveDat_i(7 downto 0);
-            elsif (tt = "01") then
-              writeContent_o <= '1';
-              writeContentData <= header & slaveDat_i(15 downto 0);
-              packetPosition <= packetPosition + 1;
+            if (tt = "01") then
+              writeContentData2 <= temp & slaveDat_i(15 downto 0);
             else
-              -- REMARK: Not supported.
+              report "TT-field not supported." severity error;
             end if;
             
             slaveAck_o <= '1';
@@ -581,26 +607,14 @@ begin
           slaveAck_o <= '0';
           state <= SOURCE_GET;
 
-          if (tt = "01") then
-            crc16Current <= crc16Next;
-          end if;
-
         when SOURCE_GET =>
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
           
           if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
-            if (tt = "00") then
-              halfWordPending <= '0';
-              writeContent_o <= '1';
-              writeContentData <= header & dstAddr & slaveDat_i(7 downto 0);
-              packetPosition <= packetPosition + 1;
-            elsif (tt = "01") then
-              halfWordPending <= '1';
-              halfWord <= slaveDat_i(15 downto 0);
-            else
-              -- REMARK: Not supported.
+            if (tt = "01") then
+              temp <= slaveDat_i(15 downto 0);
             end if;
             
             slaveAck_o <= '1';
@@ -621,61 +635,95 @@ begin
           -- 
           ---------------------------------------------------------------------
           if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
-            if (halfWordPending = '0') then
-              writeContent_o <= '1';
-              writeContentData <= slaveDat_i;
-              packetPosition <= packetPosition + 1;
+            if (packetPosition < 19) then
+              if (tt = "01") then
+                writeContentData2 <= temp & slaveDat_i(31 downto 16);
+                temp <= slaveDat_i(15 downto 0);
+                slaveAck_o <= '1';
+              end if;
+            elsif (packetPosition = 19) then
+              if (tt = "01") then
+                writeContentData2 <= crc16Next & temp;
+              end if;
             else
-              writeContent_o <= '1';
-              writeContentData <= halfWord & slaveDat_i(31 downto 16);
-              packetPosition <= packetPosition + 1;
-              halfWord <= slaveDat_i(15 downto 0);
+              if (tt = "01") then
+                writeContentData2 <= slaveDat_i;
+                slaveAck_o <= '1';
+              end if;
             end if;
-            
-            slaveAck_o <= '1';
+            writeContent <= '1';
+            writeContentData1 <= writeContentData2;
+            packetPosition <= packetPosition + 1;
             state <= CONTENT_ACK;
           else
             state <= CRC_APPEND;
           end if;
-
+          
         when CONTENT_ACK =>
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          slaveAck_o <= '0';
-          
-          crc16Current <= crc16Next;
-
           if (packetPosition = 20) then
-            if (halfWordPending = '0') then
-              halfWordPending <= '1';
-              halfWord <= crc16Next;
-            else
-              writeContent_o <= '1';
-              writeContentData <= halfWord & crc16Next;
-              crc16Current <= crc16Next;
-              packetPosition <= packetPosition + 1;
-              halfWordPending <= '0';
-              halfWord <= crc16Next;
+            if (tt = "01") then
+              writeContentData2 <= crc16Next & temp;
             end if;
           end if;
-          
+          slaveAck_o <= '0';
           state <= CONTENT_GET;
 
         when CRC_APPEND =>
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          if (tt = "00") then
-            writeContent_o <= '1';
-            writeContentData <= crc16Current & x"0000";
-          elsif (tt = "01") then
-            writeContent_o <= '1';
-            writeContentData <= crc16Current & x"0000";
+          if (packetPosition < 19) then
+            if (tt = "01") then
+              writeContent <= '1';
+              writeContentData1 <= writeContentData2;
+              packetPosition <= packetPosition + 1;
+            end if;
+          elsif (packetPosition = 19) then
+            if (tt = "01") then
+              writeContent <= '1';
+              writeContentData1 <= writeContentData2;
+              packetPosition <= packetPosition + 1;
+            end if;
+          else
+            if (tt = "01") then
+              writeContentData1 <= writeContentData2(31 downto 16) & x"0000";
+              packetPosition <= packetPosition + 1;
+            end if;
           end if;
+          state <= CRC_UPDATE;
+          
+        when CRC_UPDATE =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          state <= CRC_LAST;
 
+        when CRC_LAST =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          if (packetPosition < 19) then
+            if (tt = "01") then
+              writeContent <= '1';
+              writeContentData1 <= crc16Current & x"0000";
+            end if;
+          elsif (packetPosition = 19) then
+            if (tt = "01") then
+
+            end if;
+          else
+            if (tt = "01") then
+              writeContent <= '1';
+              writeContentData1 <= writeContentData2(31 downto 16) & crc16Temp;
+              packetPosition <= packetPosition + 1;
+            end if;
+          end if;
+          
           state <= SEND_FRAME;
-
+          
         when SEND_FRAME =>
           ---------------------------------------------------------------------
           -- 
@@ -711,9 +759,9 @@ begin
 
   Crc16High: Crc16CITT
     port map(
-      d_i=>writeContentData(31 downto 16), crc_i=>crc16Current, crc_o=>crc16Temp);
+      d_i=>writeContentData1(31 downto 16), crc_i=>crc16Current, crc_o=>crc16Temp);
   Crc16Low: Crc16CITT
     port map(
-      d_i=>writeContentData(15 downto 0), crc_i=>crc16Temp, crc_o=>crc16Next);
+      d_i=>writeContentData1(15 downto 0), crc_i=>crc16Temp, crc_o=>crc16Next);
 
 end architecture;
