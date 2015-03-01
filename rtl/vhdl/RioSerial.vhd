@@ -807,7 +807,6 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.rio_common.all;
-use work.rio_serial_common.all;
 
 -------------------------------------------------------------------------------
 -- Entity for RioTransmitterCore.
@@ -964,6 +963,18 @@ begin
   linkInitialized_o <= operational_i;
                        
   -----------------------------------------------------------------------------
+  -- Assign control symbol from fifo signals.
+  -----------------------------------------------------------------------------
+  
+  txControlStype0 <= txControlSymbol_i(12 downto 10);
+  txControlParameter0 <= txControlSymbol_i(9 downto 5);
+  txControlParameter1 <= txControlSymbol_i(4 downto 0);
+
+  rxControlStype0 <= rxControlSymbol_i(12 downto 10);
+  rxControlParameter0 <= rxControlSymbol_i(9 downto 5);
+  rxControlParameter1 <= rxControlSymbol_i(4 downto 0);
+
+  -----------------------------------------------------------------------------
   -- N-3
   -- Receive stuff from link-partner and timeout supervision.
   -- Input: ackId, ackIdWindow, timeoutExpired
@@ -987,8 +998,12 @@ begin
   end process;
   
   -- REMARK: Reset statusReceived at startup...
-  process(outputErrorStopped_i, recoverActive_i, recoverCounter_i, ackId_i, bufferStatus_i,
-          statusReceived_i, numberSentLinkRequests_i)
+  process(outputErrorStopped_i, recoverActive_i, recoverCounter_i,
+          ackId_i, bufferStatus_i, statusReceived_i,
+          numberSentLinkRequests_i,
+          txFull_i, operational_i,
+          txControlEmpty_i, txControlStype0,
+          txControlParameter0, txControlParameter1)
   begin
     txControlUpdate_o <= '0';
     outputErrorStopped_o <= outputErrorStopped_i;
@@ -999,6 +1014,8 @@ begin
     statusReceived_o <= statusReceived_i;
     numberSentLinkRequests_o <= numberSentLinkRequests_i;
 
+    readFrame_o <= '0';
+    
     sendRestartFromRetryOut <= '0';
     sendLinkRequestOut <= '0';
 
@@ -1199,7 +1216,8 @@ begin
   
   -- This process decide which stype1-part of a control symbols to send as well
   -- as all data symbols.
-  process(frameState_i, ackIdWindow_i, timeCurrent_i, sendRestartFromRetry, sendLinkRequest)
+  process(frameState_i, frameWordCounter_i, frameContent_i, ackIdWindow_i, timeCurrent_i,
+          sendRestartFromRetry, sendLinkRequest)
   begin
     readFrame_o <= '0';
     readFrameRestart_o <= '0';
@@ -1208,6 +1226,8 @@ begin
     readContent_o <= '0';
 
     frameState_o <= frameState_i;
+    frameWordCounter_o <= frameWordCounter_i;
+    frameContent_o <= frameContent_i;
     ackIdWindow_o <= ackIdWindow_i;
     
     timeSentWrite_o <= '0';
@@ -1513,6 +1533,8 @@ begin
   begin
     operational_o <= operational_i;
     counter_o <= counter_i;
+    symbolsTransmitted_o <= symbolsTransmitted_i;
+    rxControlUpdate_o <= '0';
     
     controlValidOut <= '0';
     stype0Out <= STYPE0_STATUS;

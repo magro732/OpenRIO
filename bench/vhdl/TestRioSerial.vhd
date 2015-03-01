@@ -67,6 +67,8 @@ end entity;
 architecture TestRioSerialImpl of TestRioSerial is
   
   component TestSwitchPort is
+    generic(
+      NUMBER_WORDS : natural range 1 to 8 := 1);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -91,18 +93,19 @@ architecture TestRioSerialImpl of TestRioSerial is
       readContentEmpty_o : out std_logic;
       readContent_i : in std_logic;
       readContentEnd_o : out std_logic;
-      readContentData_o : out std_logic_vector(31 downto 0);
+      readContentData_o : out std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
       
       writeFrameFull_o : out std_logic;
       writeFrame_i : in std_logic;
       writeFrameAbort_i : in std_logic;
       writeContent_i : in std_logic;
-      writeContentData_i : in std_logic_vector(31 downto 0));
+      writeContentData_i : in std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0));
   end component;
 
   component RioSerial is
     generic(
-      TIMEOUT_WIDTH : natural);
+      TIMEOUT_WIDTH : natural;
+      NUMBER_WORDS : natural range 1 to 8 := 1);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -125,31 +128,31 @@ architecture TestRioSerialImpl of TestRioSerial is
       readFrame_o : out std_logic;
       readFrameRestart_o : out std_logic;
       readFrameAborted_i : in std_logic;
-
       readWindowEmpty_i : in std_logic;
       readWindowReset_o : out std_logic;
       readWindowNext_o : out std_logic;
-      
       readContentEmpty_i : in std_logic;
       readContent_o : out std_logic;
       readContentEnd_i : in std_logic;
-      readContentData_i : in std_logic_vector(31 downto 0);
+      readContentData_i : in std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
       writeFrameFull_i : in std_logic;
       writeFrame_o : out std_logic;
       writeFrameAbort_o : out std_logic;
       writeContent_o : out std_logic;
-      writeContentData_o : out std_logic_vector(31 downto 0);
+      writeContentData_o : out std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
       portInitialized_i : in std_logic;
       outboundSymbolEmpty_o : out std_logic;
       outboundSymbolRead_i : in std_logic;
-      outboundSymbol_o : out std_logic_vector(33 downto 0);
+      outboundSymbol_o : out std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
       inboundSymbolFull_o : out std_logic;
       inboundSymbolWrite_i : in std_logic;
-      inboundSymbol_i : in std_logic_vector(33 downto 0));
+      inboundSymbol_i : in std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0));
   end component;
 
+  constant NUMBER_WORDS : natural range 1 to 8 := 1;
+  
   signal clk : std_logic;
   signal areset_n : std_logic;
 
@@ -173,10 +176,10 @@ architecture TestRioSerialImpl of TestRioSerial is
   signal portInitialized : std_logic;
   signal outboundSymbolEmpty : std_logic;
   signal outboundSymbolRead : std_logic;
-  signal outboundSymbol : std_logic_vector(33 downto 0);
+  signal outboundSymbol : std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
   signal inboundSymbolFull : std_logic;
   signal inboundSymbolWrite : std_logic;
-  signal inboundSymbol : std_logic_vector(33 downto 0);
+  signal inboundSymbol : std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
   signal readFrameEmpty : std_logic;
   signal readFrame : std_logic;
@@ -188,13 +191,13 @@ architecture TestRioSerialImpl of TestRioSerial is
   signal readContentEmpty : std_logic;
   signal readContent : std_logic;
   signal readContentEnd : std_logic;
-  signal readContentData : std_logic_vector(31 downto 0);
+  signal readContentData : std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
   signal writeFrameFull : std_logic;
   signal writeFrame : std_logic;
   signal writeFrameAbort : std_logic;
   signal writeContent : std_logic;
-  signal writeContentData : std_logic_vector(31 downto 0);
+  signal writeContentData : std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
   signal frameValid : std_logic_vector(0 to 63);
   signal frameWrite : RioFrameArray(0 to 63);
@@ -231,15 +234,22 @@ begin
     begin
       wait until outboundSymbolEmpty = '0' and clk'event and clk = '1';
 
+      while ((outboundSymbol(33 downto 32) = SYMBOL_IDLE) and
+             (symbolType /= SYMBOL_IDLE)) loop
+        outboundSymbolRead <= '1';
+        wait until clk'event and clk = '1';
+        outboundSymbolRead <= '0';
+        wait until outboundSymbolEmpty = '0' and clk'event and clk = '1';
+      end loop;
+      
       assert symbolType = outboundSymbol(33 downto 32)
         report "Missmatching symbol type:expected=" &
         integer'image(to_integer(unsigned(symbolType))) &
         " got=" &
-        integer'image(to_integer(unsigned(outboundSymbol(33 downto 32))))
+        integer'image(to_integer(unsigned(outboundSymbol(36 downto 35))))
         severity error;
       
-      if ((outboundSymbol(33 downto 32) = SYMBOL_CONTROL) or
-          (outboundSymbol(33 downto 32) = SYMBOL_CONTROL)) then
+      if (outboundSymbol(33 downto 32) = SYMBOL_CONTROL) then
         assert symbolContent(31 downto 8) = outboundSymbol(31 downto 8)
           report "Missmatching symbol content:expected=" &
           integer'image(to_integer(unsigned(symbolContent(31 downto 8)))) &
@@ -249,7 +259,7 @@ begin
       elsif (outboundSymbol(33 downto 32) = SYMBOL_DATA) then
         assert symbolContent(31 downto 0) = outboundSymbol(31 downto 0)
           report "Missmatching symbol content:expected=" &
-          integer'image(to_integer(unsigned(symbolContent(31 downto 0)))) &
+          integer'image(to_integer(unsigned(symbolContent(31 downto 0)))) &      
           " got=" &
           integer'image(to_integer(unsigned(outboundSymbol(31 downto 0))))
           severity error;
@@ -2240,6 +2250,8 @@ begin
   -----------------------------------------------------------------------------
 
   TestPort: TestSwitchPort
+    generic map(
+      NUMBER_WORDS=>1)
     port map(
       clk=>clk, areset_n=>areset_n,
       frameValid_i=>frameValid, frameWrite_i=>frameWrite, frameComplete_o=>frameComplete,
@@ -2255,7 +2267,7 @@ begin
 
   TestPhy: RioSerial
     generic map(
-      TIMEOUT_WIDTH=>11)
+      TIMEOUT_WIDTH=>11, NUMBER_WORDS=>1)
     port map(
       clk=>clk, areset_n=>areset_n,
       portLinkTimeout_i=>portLinkTimeout,
@@ -2303,6 +2315,8 @@ use work.rio_common.all;
 -- 
 -------------------------------------------------------------------------------
 entity TestSwitchPort is
+  generic(
+    NUMBER_WORDS : natural range 1 to 8 := 1);
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -2327,13 +2341,13 @@ entity TestSwitchPort is
     readContentEmpty_o : out std_logic;
     readContent_i : in std_logic;
     readContentEnd_o : out std_logic;
-    readContentData_o : out std_logic_vector(31 downto 0);
+    readContentData_o : out std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
     
     writeFrameFull_o : out std_logic;
     writeFrame_i : in std_logic;
     writeFrameAbort_i : in std_logic;
     writeContent_i : in std_logic;
-    writeContentData_i : in std_logic_vector(31 downto 0));
+    writeContentData_i : in std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0));
 end entity;
 
 
@@ -2405,7 +2419,7 @@ begin
         assert frameValid_i(frontIndex) = '1' report "Unexpected content read." severity error;
         if (frameIndex /= frameWrite_i(frontIndex).length) then
           readContentEnd_o <= '0';
-          readContentData_o <= frameWrite_i(frontIndex).payload(frameIndex);
+          readContentData_o <= "00" & frameWrite_i(frontIndex).payload(frameIndex);
           frameIndex := frameIndex + 1;
         else
           readContentEnd_o <= '1';
@@ -2466,7 +2480,7 @@ begin
             frameIndex := 0;
           end if;
           if (writeContent_i = '1') then
-            assert writeContentData_i = frameRead_i.payload(frameIndex)
+            assert writeContentData_i(32*NUMBER_WORDS-1 downto 0) = frameRead_i.payload(frameIndex)
               report "Unexpected frame content received." severity error;
             frameIndex := frameIndex + 1;
           end if;
