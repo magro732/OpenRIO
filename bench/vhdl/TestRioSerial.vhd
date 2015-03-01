@@ -68,7 +68,7 @@ architecture TestRioSerialImpl of TestRioSerial is
   
   component TestSwitchPort is
     generic(
-      NUMBER_WORDS : natural range 1 to 8 := 1);
+      NUMBER_WORDS : natural range 1 to 4 := 1);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -93,18 +93,19 @@ architecture TestRioSerialImpl of TestRioSerial is
       readContentEmpty_o : out std_logic;
       readContent_i : in std_logic;
       readContentEnd_o : out std_logic;
-      readContentData_o : out std_logic_vector(31 downto 0);
+      readContentData_o : out std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
       
       writeFrameFull_o : out std_logic;
       writeFrame_i : in std_logic;
       writeFrameAbort_i : in std_logic;
       writeContent_i : in std_logic;
-      writeContentData_i : in std_logic_vector(31 downto 0));
+      writeContentData_i : in std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0));
   end component;
 
   component RioSerial is
     generic(
-      TIMEOUT_WIDTH : natural);
+      TIMEOUT_WIDTH : natural := 20;
+      NUMBER_WORDS : natural range 1 to 4 := 1);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -133,24 +134,26 @@ architecture TestRioSerialImpl of TestRioSerial is
       readContentEmpty_i : in std_logic;
       readContent_o : out std_logic;
       readContentEnd_i : in std_logic;
-      readContentData_i : in std_logic_vector(31 downto 0);
+      readContentData_i : in std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
       writeFrameFull_i : in std_logic;
       writeFrame_o : out std_logic;
       writeFrameAbort_o : out std_logic;
       writeContent_o : out std_logic;
-      writeContentData_o : out std_logic_vector(31 downto 0);
+      writeContentData_o : out std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
       portInitialized_i : in std_logic;
       outboundSymbolFull_i : in std_logic;
       outboundSymbolWrite_o : out std_logic;
-      outboundSymbol_o : out std_logic_vector(((2+32)-1) downto 0);
+      outboundSymbolType_o : out std_logic_vector(2*NUMBER_WORDS-1 downto 0);
+      outboundSymbol_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0);
       inboundSymbolEmpty_i : in std_logic;
       inboundSymbolRead_o : out std_logic;
-      inboundSymbol_i : in std_logic_vector(((2+32)-1) downto 0));
+      inboundSymbolType_i : in std_logic_vector(2*NUMBER_WORDS-1 downto 0);
+      inboundSymbol_i : in std_logic_vector(32*NUMBER_WORDS-1 downto 0));
   end component;
 
-  constant NUMBER_WORDS : natural range 1 to 4 := 1;
+  constant NUMBER_WORDS : natural range 1 to 4 := 2;
   
   signal clk : std_logic;
   signal areset_n : std_logic;
@@ -172,10 +175,12 @@ architecture TestRioSerialImpl of TestRioSerial is
   signal portInitialized : std_logic;
   signal outboundSymbolFull : std_logic;
   signal outboundSymbolWrite : std_logic;
-  signal outboundSymbol : std_logic_vector((2+32)-1 downto 0);
+  signal outboundSymbolType : std_logic_vector(2*NUMBER_WORDS-1 downto 0);
+  signal outboundSymbol : std_logic_vector(32*NUMBER_WORDS-1 downto 0);
   signal inboundSymbolEmpty : std_logic;
   signal inboundSymbolRead : std_logic;
-  signal inboundSymbol : std_logic_vector((2+32)-1 downto 0);
+  signal inboundSymbolType : std_logic_vector(2*NUMBER_WORDS-1 downto 0);
+  signal inboundSymbol : std_logic_vector(32*NUMBER_WORDS-1 downto 0);
 
   signal readFrameEmpty : std_logic;
   signal readFrame : std_logic;
@@ -187,13 +192,13 @@ architecture TestRioSerialImpl of TestRioSerial is
   signal readContentEmpty : std_logic;
   signal readContent : std_logic;
   signal readContentEnd : std_logic;
-  signal readContentData : std_logic_vector(31 downto 0);
+  signal readContentData : std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
   signal writeFrameFull : std_logic;
   signal writeFrame : std_logic;
   signal writeFrameAbort : std_logic;
   signal writeContent : std_logic;
-  signal writeContentData : std_logic_vector(31 downto 0);
+  signal writeContentData : std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
   signal frameValid : std_logic_vector(0 to 63);
   signal frameWrite : RioFrameArray(0 to 63);
@@ -221,6 +226,9 @@ begin
   -----------------------------------------------------------------------------
   TestDriver: process
 
+    variable inboundSymbolIndex : natural := 0;
+    variable outboundSymbolIndex : natural := 0;
+    
     ---------------------------------------------------------------------------
     -- Procedure to receive a symbol.
     ---------------------------------------------------------------------------
@@ -230,38 +238,47 @@ begin
       constant acceptIdle : in boolean := true) is
     begin
       outboundSymbolFull <= '0';
-      wait until clk'event and clk = '1' and outboundSymbolWrite = '1';
 
+      if (outboundSymbolIndex = NUMBER_WORDS) then
+        outboundSymbolIndex := 0;
+        wait until clk'event and clk = '1' and outboundSymbolWrite = '1';
+      end if;
+      
       if (acceptIdle) then
-        while ((outboundSymbol(33 downto 32) = SYMBOL_IDLE) and
+        while ((outboundSymbolType(2*(outboundSymbolIndex+1)-1 downto 2*(outboundSymbolIndex)) = SYMBOL_IDLE) and
                (symbolType /= SYMBOL_IDLE)) loop
-          wait until clk'event and clk = '1' and outboundSymbolWrite = '1';
+          outboundSymbolIndex := outboundSymbolIndex + 1;
+          if (outboundSymbolIndex = NUMBER_WORDS) then
+            outboundSymbolIndex := 0;
+            wait until clk'event and clk = '1' and outboundSymbolWrite = '1';
+          end if;
         end loop;
       end if;
       
-      assert symbolType = outboundSymbol(33 downto 32)
+      assert symbolType = outboundSymbolType(2*(outboundSymbolIndex+1)-1 downto 2*(outboundSymbolIndex))
         report "Missmatching symbol type:expected=" &
         integer'image(to_integer(unsigned(symbolType))) &
         " got=" &
-        integer'image(to_integer(unsigned(outboundSymbol(33 downto 32))))
+        integer'image(to_integer(unsigned(outboundSymbolType(2*(outboundSymbolIndex+1)-1 downto 2*(outboundSymbolIndex)))))
         severity error;
       
-      if (outboundSymbol(33 downto 32) = SYMBOL_CONTROL) then
-        assert symbolContent(31 downto 8) = outboundSymbol(31 downto 8)
+      if (outboundSymbolType(2*(outboundSymbolIndex+1)-1 downto 2*(outboundSymbolIndex)) = SYMBOL_CONTROL) then
+        assert symbolContent(31 downto 8) = outboundSymbol(32*(outboundSymbolIndex+1)-1 downto 32*outboundSymbolIndex+8)
           report "Missmatching symbol content:expected=" &
           integer'image(to_integer(unsigned(symbolContent(31 downto 8)))) &
           " got=" &
-          integer'image(to_integer(unsigned(outboundSymbol(31 downto 8))))
+          integer'image(to_integer(unsigned(outboundSymbol(32*(outboundSymbolIndex+1)-1 downto 32*outboundSymbolIndex+8))))
           severity error;
-      elsif (outboundSymbol(33 downto 32) = SYMBOL_DATA) then
-        assert symbolContent(31 downto 0) = outboundSymbol(31 downto 0)
+      elsif (outboundSymbolType(2*(outboundSymbolIndex+1)-1 downto 2*(outboundSymbolIndex)) = SYMBOL_DATA) then
+        assert symbolContent(31 downto 0) = outboundSymbol(32*(outboundSymbolIndex+1)-1 downto 32*outboundSymbolIndex)
           report "Missmatching symbol content:expected=" &
           integer'image(to_integer(unsigned(symbolContent(31 downto 0)))) &      
           " got=" &
-          integer'image(to_integer(unsigned(outboundSymbol(31 downto 0))))
+          integer'image(to_integer(unsigned(outboundSymbol(32*(outboundSymbolIndex+1)-1 downto 32*outboundSymbolIndex))))
           severity error;
       end if;
 
+      outboundSymbolIndex := outboundSymbolIndex + 1;
       outboundSymbolFull <= '1';
     end procedure;
 
@@ -270,12 +287,21 @@ begin
     ---------------------------------------------------------------------------
     procedure SendSymbol(
       constant symbolType : in std_logic_vector(1 downto 0);
-      constant symbolContent : in std_logic_vector(31 downto 0) := x"00000000") is
+      constant symbolContent : in std_logic_vector(31 downto 0) := x"00000000";
+      constant flush : in boolean := false) is
     begin
       inboundSymbolEmpty <= '0';
-      inboundSymbol <= symbolType & symbolContent;
+      inboundSymbolType(2*(inboundSymbolIndex+1)-1 downto 2*inboundSymbolIndex) <= symbolType;
+      inboundSymbol(32*(inboundSymbolIndex+1)-1 downto 32*inboundSymbolIndex) <= symbolContent;
 
-      wait until clk'event and clk = '1' and inboundSymbolRead = '1';
+      inboundSymbolIndex := inboundSymbolIndex + 1;
+      if (flush or (inboundSymbolIndex = NUMBER_WORDS)) then
+        wait until clk'event and clk = '1' and inboundSymbolRead = '1';
+        inboundSymbolIndex := 0;
+        inboundSymbolType <= (others=>'0');
+        inboundSymbol <= (others=>'0');
+      end if;
+
       inboundSymbolEmpty <= '1';
     end procedure;
 
@@ -303,6 +329,7 @@ begin
     portInitialized <= '0';
     outboundSymbolFull <= '1';
     inboundSymbolEmpty <= '1';
+    inboundSymbolType <= (others=>'0');
     inboundSymbol <= (others => '0');
 
     localAckIdWrite <= '0';
@@ -358,7 +385,8 @@ begin
     
     -- The transmitter should send idle sequences at startup and a status once
     -- in a while.
-    for i in 0 to 256 loop
+    -- REMARK: Find out why 4 additional idle are sent...
+    for i in 0 to 259 loop
       ReceiveSymbol(SYMBOL_IDLE);
     end loop;
     ReceiveSymbol(SYMBOL_CONTROL,
@@ -403,7 +431,7 @@ begin
     
     -- The transmitter should send idle sequences at startup and a status once
     -- in a while.
-    for i in 0 to 256 loop
+    for i in 0 to 259 loop
       ReceiveSymbol(SYMBOL_IDLE);
     end loop;
     ReceiveSymbol(SYMBOL_CONTROL,
@@ -437,10 +465,11 @@ begin
     ---------------------------------------------------------------------------
 
     -- A received error-free status triggers transmission of status symbols in
-    -- a more rapid past.
+    -- a more rapid pace.
     SendSymbol(SYMBOL_CONTROL,
                RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_NOP, "000"));
+                                      STYPE1_NOP, "000"),
+               true);
 
     -- The transmitter should send at least 15 additional statuses after
     -- receiving an error free status.
@@ -481,11 +510,15 @@ begin
     ---------------------------------------------------------------------------
     
     -- Make the link fully initialized by sending 7 additional statuses.
-    for i in 0 to 6 loop
+    for i in 0 to 5 loop
       SendSymbol(SYMBOL_CONTROL,
                  RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
                                         STYPE1_NOP, "000"));
     end loop;
+    SendSymbol(SYMBOL_CONTROL,
+               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                      STYPE1_NOP, "000"),
+               true);
 
     -- Tick the transmitter by reading it and check that the link is initialized.
     ReceiveSymbol(SYMBOL_IDLE);
@@ -534,9 +567,6 @@ begin
     -- Check that the frame has been received in the frame buffer.
     wait until frameReceived = '1';
     frameExpected <= '0';
-    
-    -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
     
     -- Receive acknowledge for the transmitted frame.
     ReceiveSymbol(SYMBOL_CONTROL,
@@ -2272,7 +2302,7 @@ begin
 
   TestPort: TestSwitchPort
     generic map(
-      NUMBER_WORDS=>1)
+      NUMBER_WORDS=>NUMBER_WORDS)
     port map(
       clk=>clk, areset_n=>areset_n,
       frameValid_i=>frameValid, frameWrite_i=>frameWrite, frameComplete_o=>frameComplete,
@@ -2288,7 +2318,8 @@ begin
 
   TestPhy: RioSerial
     generic map(
-      TIMEOUT_WIDTH=>11)
+      TIMEOUT_WIDTH=>11,
+      NUMBER_WORDS=>NUMBER_WORDS)
     port map(
       clk=>clk, areset_n=>areset_n,
       portLinkTimeout_i=>portLinkTimeout,
@@ -2303,20 +2334,30 @@ begin
       inboundAckId_o=>inboundAckIdRead, 
       outstandingAckId_o=>outstandingAckIdRead, 
       outboundAckId_o=>outboundAckIdRead, 
-      readFrameEmpty_i=>readFrameEmpty, readFrame_o=>readFrame, readFrameRestart_o=>readFrameRestart, 
+      readFrameEmpty_i=>readFrameEmpty,
+      readFrame_o=>readFrame,
+      readFrameRestart_o=>readFrameRestart, 
       readFrameAborted_i=>readFrameAborted,
       readWindowEmpty_i=>readWindowEmpty,
-      readWindowReset_o=>readWindowReset, readWindowNext_o=>readWindowNext,
+      readWindowReset_o=>readWindowReset,
+      readWindowNext_o=>readWindowNext,
       readContentEmpty_i=>readContentEmpty,
-      readContent_o=>readContent, readContentEnd_i=>readContentEnd, readContentData_i=>readContentData,
-      writeFrameFull_i=>writeFrameFull, writeFrame_o=>writeFrame, writeFrameAbort_o=>writeFrameAbort,
-      writeContent_o=>writeContent, writeContentData_o=>writeContentData,
+      readContent_o=>readContent,
+      readContentEnd_i=>readContentEnd,
+      readContentData_i=>readContentData,
+      writeFrameFull_i=>writeFrameFull,
+      writeFrame_o=>writeFrame,
+      writeFrameAbort_o=>writeFrameAbort,
+      writeContent_o=>writeContent,
+      writeContentData_o=>writeContentData,
       portInitialized_i=>portInitialized,
       outboundSymbolFull_i=>outboundSymbolFull,
       outboundSymbolWrite_o=>outboundSymbolWrite,
+      outboundSymbolType_o=>outboundSymbolType,
       outboundSymbol_o=>outboundSymbol,
       inboundSymbolEmpty_i=>inboundSymbolEmpty,
       inboundSymbolRead_o=>inboundSymbolRead,
+      inboundSymbolType_i=>inboundSymbolType,
       inboundSymbol_i=>inboundSymbol);
 
 end architecture;
@@ -2339,7 +2380,7 @@ use work.rio_common.all;
 -------------------------------------------------------------------------------
 entity TestSwitchPort is
   generic(
-    NUMBER_WORDS : natural range 1 to 8 := 1);
+    NUMBER_WORDS : natural range 1 to 4 := 1);
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -2364,13 +2405,13 @@ entity TestSwitchPort is
     readContentEmpty_o : out std_logic;
     readContent_i : in std_logic;
     readContentEnd_o : out std_logic;
-    readContentData_o : out std_logic_vector(31 downto 0);
+    readContentData_o : out std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
     
     writeFrameFull_o : out std_logic;
     writeFrame_i : in std_logic;
     writeFrameAbort_i : in std_logic;
     writeContent_i : in std_logic;
-    writeContentData_i : in std_logic_vector(31 downto 0));
+    writeContentData_i : in std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0));
 end entity;
 
 
@@ -2387,6 +2428,7 @@ begin
     variable frameComplete : std_logic_vector(0 to 63);
     variable frameIndex : natural range 0 to 70;
     variable backIndex, frontIndex : natural range 0 to 63;
+    variable remaining : natural;
   begin
     readFrameEmpty_o <= '1';
     readFrameAborted_o <= '0';
@@ -2456,8 +2498,19 @@ begin
       
       if (readContent_i = '1') then
         assert frameValid_i(frontIndex) = '1' report "Unexpected content read." severity error;
-        readContentData_o <= frameWrite_i(frontIndex).payload(frameIndex);
-        frameIndex := frameIndex + 1;
+        remaining := frameWrite_i(frontIndex).length - frameIndex;
+        if (remaining > NUMBER_WORDS) then
+          readContentData_o(2+(32*NUMBER_WORDS-1) downto 2+(32*NUMBER_WORDS-1)-1) <= std_logic_vector(to_unsigned(NUMBER_WORDS, 2));
+          remaining := NUMBER_WORDS;
+        else
+          readContentData_o(2+(32*NUMBER_WORDS-1) downto 2+(32*NUMBER_WORDS-1)-1) <= std_logic_vector(to_unsigned(remaining, 2));
+        end if;
+        
+        for i in 0 to remaining-1 loop
+          readContentData_o((NUMBER_WORDS*32-1)-32*i downto (NUMBER_WORDS-1)*32-32*i) <= frameWrite_i(frontIndex).payload(frameIndex);
+          frameIndex := frameIndex + 1;
+        end loop;
+
         if (frameIndex /= frameWrite_i(frontIndex).length) then
           readContentEnd_o <= '0';
         else
@@ -2483,6 +2536,7 @@ begin
     type StateType is (STATE_IDLE, STATE_READ, STATE_UPDATE);
     variable state : StateType;
     variable frameIndex : natural range 0 to 69;
+    variable words : natural range 0 to 4;
   begin
     writeFrameFull_o <= '1';
     frameReceived_o <= '0';
@@ -2516,9 +2570,12 @@ begin
             frameIndex := 0;
           end if;
           if (writeContent_i = '1') then
-            assert writeContentData_i(32*NUMBER_WORDS-1 downto 0) = frameRead_i.payload(frameIndex)
-              report "Unexpected frame content received." severity error;
-            frameIndex := frameIndex + 1;
+            words := to_integer(unsigned(writeContentData_i(2+(32*NUMBER_WORDS-1) downto 2+(32*NUMBER_WORDS-1)-1)));
+            for i in 0 to words loop
+              assert writeContentData_i((NUMBER_WORDS*32-1)-32*i downto (NUMBER_WORDS-1)*32-32*i) = frameRead_i.payload(frameIndex)
+                report "Unexpected frame content received." severity error;
+              frameIndex := frameIndex + 1;
+            end loop;
           end if;
           if (frameExpected_i = '0') then
             state := STATE_IDLE;

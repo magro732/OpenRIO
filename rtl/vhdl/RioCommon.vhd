@@ -424,10 +424,10 @@ package body rio_common is
   begin
     for i in payload'range loop
       uniform(seed1, seed2, rand);
-      int_rand := integer(trunc(rand*256.0));
+      int_rand := integer(round(rand*256.0));
       payload(i)(7 downto 0) := std_logic_vector(to_unsigned(int_rand, 8));
       uniform(seed1, seed2, rand);
-      int_rand := integer(trunc(rand*256.0));
+      int_rand := integer(round(rand*256.0));
       payload(i)(15 downto 8) := std_logic_vector(to_unsigned(int_rand, 8));
     end loop;
   end procedure;
@@ -442,28 +442,28 @@ package body rio_common is
   begin
     for i in payload'range loop
       uniform(seed1, seed2, rand);
-      int_rand := integer(trunc(rand*256.0));
+      int_rand := integer(round(rand*256.0));
       payload(i)(7 downto 0) := std_logic_vector(to_unsigned(int_rand, 8));
       uniform(seed1, seed2, rand);
-      int_rand := integer(trunc(rand*256.0));
+      int_rand := integer(round(rand*256.0));
       payload(i)(15 downto 8) := std_logic_vector(to_unsigned(int_rand, 8));
       uniform(seed1, seed2, rand);
-      int_rand := integer(trunc(rand*256.0));
+      int_rand := integer(round(rand*256.0));
       payload(i)(23 downto 16) := std_logic_vector(to_unsigned(int_rand, 8));
       uniform(seed1, seed2, rand);
-      int_rand := integer(trunc(rand*256.0));
+      int_rand := integer(round(rand*256.0));
       payload(i)(31 downto 24) := std_logic_vector(to_unsigned(int_rand, 8));
       uniform(seed1, seed2, rand);
-      int_rand := integer(trunc(rand*256.0));
+      int_rand := integer(round(rand*256.0));
       payload(i)(39 downto 32) := std_logic_vector(to_unsigned(int_rand, 8));
       uniform(seed1, seed2, rand);
-      int_rand := integer(trunc(rand*256.0));
+      int_rand := integer(round(rand*256.0));
       payload(i)(47 downto 40) := std_logic_vector(to_unsigned(int_rand, 8));
       uniform(seed1, seed2, rand);
-      int_rand := integer(trunc(rand*256.0));
+      int_rand := integer(round(rand*256.0));
       payload(i)(55 downto 48) := std_logic_vector(to_unsigned(int_rand, 8));
       uniform(seed1, seed2, rand);
-      int_rand := integer(trunc(rand*256.0));
+      int_rand := integer(round(rand*256.0));
       payload(i)(63 downto 56) := std_logic_vector(to_unsigned(int_rand, 8));
     end loop;
   end procedure;

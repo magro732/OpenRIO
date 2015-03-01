@@ -44,6 +44,59 @@
 
 
 -------------------------------------------------------------------------------
+-- RioSerial common package.
+-------------------------------------------------------------------------------
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+use work.rio_common.all;
+
+-------------------------------------------------------------------------------
+-- 
+-------------------------------------------------------------------------------
+package rioserial_common is
+  type TxInternalType is record
+    operational : std_logic;
+    ackId : std_logic_vector(4 downto 0);
+    bufferStatus : std_logic_vector(4 downto 0);
+    statusReceived : std_logic;
+    numberSentLinkRequests : std_logic_vector(1 downto 0);
+    outputErrorStopped : std_logic;
+    fatalError : std_logic;
+    recoverActive : std_logic;
+    recoverCounter : std_logic_vector(4 downto 0);
+    ackIdWindow : std_logic_vector(4 downto 0);
+    frameState : std_logic_vector(3 downto 0);
+    frameWordCounter : std_logic_vector(1 downto 0);
+    frameContent : std_logic_vector(63 downto 0);
+    counter : std_logic_vector(3 downto 0);
+    symbolsTransmitted : std_logic_vector(7 downto 0);
+    maintenanceClass : std_logic;
+  end record;
+
+  type TxInternalArrayType is array(natural range <>) of TxInternalType;
+
+  -- REMARK: What to do about the NUMBER_WORDS?!
+  type RxInternalType is record
+    operational : std_logic;
+    inputRetryStopped : std_logic;
+    inputErrorStopped : std_logic;
+    ackId : unsigned(4 downto 0);
+    frameIndex : std_logic_vector(6 downto 0);
+    frameWordCounter : std_logic_vector(1 downto 0);
+    frameContent : std_logic_vector(32*NUMBER_WORDS-1 downto 0);
+    crc : std_logic_vector(15 downto 0);
+  end record;
+
+  type RxInternalArrayType is array(natural range <>) of RxInternalType;
+end package;
+
+package body rioserial_common is
+  -- Empty.
+end package body;
+                              
+
+-------------------------------------------------------------------------------
 -- RioSerial
 --
 -- Generics
@@ -194,7 +247,8 @@ use work.rio_common.all;
 -------------------------------------------------------------------------------
 entity RioSerial is
   generic(
-    TIMEOUT_WIDTH : natural := 20);
+    TIMEOUT_WIDTH : natural := 20;
+    NUMBER_WORDS : natural range 1 to 4 := 1);
   port(
     -- System signals.
     clk : in std_logic;
@@ -227,23 +281,25 @@ entity RioSerial is
     readContentEmpty_i : in std_logic;
     readContent_o : out std_logic;
     readContentEnd_i : in std_logic;
-    readContentData_i : in std_logic_vector(31 downto 0);
+    readContentData_i : in std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
     -- Inbound frame interface.
     writeFrameFull_i : in std_logic;
     writeFrame_o : out std_logic;
     writeFrameAbort_o : out std_logic;
     writeContent_o : out std_logic;
-    writeContentData_o : out std_logic_vector(31 downto 0);
+    writeContentData_o : out std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
     -- PCS layer signals.
     portInitialized_i : in std_logic;
     outboundSymbolFull_i : in std_logic;
     outboundSymbolWrite_o : out std_logic;
-    outboundSymbol_o : out std_logic_vector(((2+32)-1) downto 0);
+    outboundSymbolType_o : out std_logic_vector(2*NUMBER_WORDS-1 downto 0);
+    outboundSymbol_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0);
     inboundSymbolEmpty_i : in std_logic;
     inboundSymbolRead_o : out std_logic;
-    inboundSymbol_i : in std_logic_vector(((2+32)-1) downto 0));
+    inboundSymbolType_i : in std_logic_vector(2*NUMBER_WORDS-1 downto 0);
+    inboundSymbol_i : in std_logic_vector(32*NUMBER_WORDS-1 downto 0));
 end entity;
 
 
@@ -293,10 +349,10 @@ architecture RioSerialImpl of RioSerial is
       txData_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0);
 
       txControlEmpty_i : in std_logic_vector(NUMBER_WORDS-1 downto 0);
-      txControlSymbol_i : in std_logic_vector(12*NUMBER_WORDS downto 0);
+      txControlSymbol_i : in std_logic_vector(13*NUMBER_WORDS-1 downto 0);
       txControlUpdate_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
       rxControlEmpty_i : in std_logic_vector(NUMBER_WORDS-1 downto 0);
-      rxControlSymbol_i : in std_logic_vector(12*NUMBER_WORDS downto 0);
+      rxControlSymbol_i : in std_logic_vector(13*NUMBER_WORDS-1 downto 0);
       rxControlUpdate_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
 
       linkInitialized_i : in std_logic;
@@ -337,9 +393,9 @@ architecture RioSerialImpl of RioSerial is
       rxData_i : in std_logic_vector(32*NUMBER_WORDS-1 downto 0);
 
       txControlWrite_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
-      txControlSymbol_o : out std_logic_vector(12*NUMBER_WORDS downto 0);
+      txControlSymbol_o : out std_logic_vector(13*NUMBER_WORDS-1 downto 0);
       rxControlWrite_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
-      rxControlSymbol_o : out std_logic_vector(12*NUMBER_WORDS downto 0);
+      rxControlSymbol_o : out std_logic_vector(13*NUMBER_WORDS-1 downto 0);
 
       ackIdStatus_o : out std_logic_vector(4 downto 0);
       linkInitialized_o : out std_logic;
@@ -352,29 +408,21 @@ architecture RioSerialImpl of RioSerial is
       writeContentData_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0));
   end component;
 
-  constant NUMBER_WORDS : natural := 1;
-  
   signal linkInitializedRx : std_logic;
   signal linkInitializedTx : std_logic;
   signal ackIdStatus : std_logic_vector(4 downto 0);
   
   signal txControlWrite : std_logic_vector(NUMBER_WORDS-1 downto 0);
-  signal txControlWriteSymbol : std_logic_vector(12*NUMBER_WORDS downto 0);
+  signal txControlWriteSymbol : std_logic_vector(13*NUMBER_WORDS-1 downto 0);
   signal txControlReadEmpty : std_logic_vector(NUMBER_WORDS-1 downto 0);
   signal txControlRead : std_logic_vector(NUMBER_WORDS-1 downto 0);
-  signal txControlReadSymbol : std_logic_vector(12*NUMBER_WORDS downto 0);
+  signal txControlReadSymbol : std_logic_vector(13*NUMBER_WORDS-1 downto 0);
 
   signal rxControlWrite : std_logic_vector(NUMBER_WORDS-1 downto 0);
-  signal rxControlWriteSymbol : std_logic_vector(12*NUMBER_WORDS downto 0);
+  signal rxControlWriteSymbol : std_logic_vector(13*NUMBER_WORDS-1 downto 0);
   signal rxControlReadEmpty : std_logic_vector(NUMBER_WORDS-1 downto 0);
   signal rxControlRead : std_logic_vector(NUMBER_WORDS-1 downto 0);
-  signal rxControlReadSymbol : std_logic_vector(12*NUMBER_WORDS downto 0);
-
-  signal outboundType : std_logic_vector(1 downto 0);
-  signal outboundData : std_logic_vector(32*NUMBER_WORDS-1 downto 0);
-
-  signal inboundType : std_logic_vector(1 downto 0);
-  signal inboundData : std_logic_vector(32*NUMBER_WORDS-1 downto 0);
+  signal rxControlReadSymbol : std_logic_vector(13*NUMBER_WORDS-1 downto 0);
 
 begin
 
@@ -385,7 +433,6 @@ begin
   -- Serial layer modules.
   -----------------------------------------------------------------------------
   
-  outboundSymbol_o <= outboundType & outboundData;
   Transmitter: RioTransmitter
     generic map(
       TIMEOUT_WIDTH=>TIMEOUT_WIDTH,
@@ -402,9 +449,9 @@ begin
       outboundAckId_o=>outboundAckId_o, 
       portInitialized_i=>portInitialized_i,
       txFull_i=>outboundSymbolFull_i,
-      txWrite_o=>outboundsymbolWrite_o,
-      txType_o=>outboundType,
-      txData_o=>outboundData, 
+      txWrite_o=>outboundSymbolWrite_o,
+      txType_o=>outboundSymbolType_o,
+      txData_o=>outboundSymbol_o,
       txControlEmpty_i=>txControlReadEmpty,
       txControlSymbol_i=>txControlReadSymbol,
       txControlUpdate_o=>txControlRead, 
@@ -424,7 +471,7 @@ begin
       readContentEmpty_i=>readContentEmpty_i,
       readContent_o=>readContent_o, 
       readContentEnd_i=>readContentEnd_i,
-      readContentWords_i=>"00",
+      readContentWords_i=>readContentData_i(32*NUMBER_WORDS+1 downto 32*NUMBER_WORDS),
       readContentData_i=>readContentData_i(32*NUMBER_WORDS-1 downto 0));
 
   SymbolFifo: for i in 0 to NUMBER_WORDS-1 generate
@@ -434,9 +481,9 @@ begin
         clk=>clk, areset_n=>areset_n,
         empty_o=>txControlReadEmpty(i),
         read_i=>txControlRead(i),
-        data_o=>txControlReadSymbol(12*(i+1) downto 12*i),
+        data_o=>txControlReadSymbol(13*(i+1)-1 downto 13*i),
         write_i=>txControlWrite(i),
-        data_i=>txControlWriteSymbol(12*(i+1) downto 12*i));
+        data_i=>txControlWriteSymbol(13*(i+1)-1 downto 13*i));
 
     RxSymbolFifo: RioFifo
       generic map(DEPTH_WIDTH=>5, DATA_WIDTH=>13)
@@ -444,13 +491,11 @@ begin
         clk=>clk, areset_n=>areset_n,
         empty_o=>rxControlReadEmpty(i),
         read_i=>rxControlRead(i),
-        data_o=>rxControlReadSymbol(12*(i+1) downto 12*i),
+        data_o=>rxControlReadSymbol(13*(i+1)-1 downto 13*i),
         write_i=>rxControlWrite(i), 
-        data_i=>rxControlWriteSymbol(12*(i+1) downto 12*i));
+        data_i=>rxControlWriteSymbol(13*(i+1)-1 downto 13*i));
   end generate;
     
-  inboundType <= inboundSymbol_i(2+(32*NUMBER_WORDS-1) downto 1+(32*NUMBER_WORDS-1));
-  inboundData <= inboundSymbol_i(32*NUMBER_WORDS-1 downto 0);
   Receiver: RioReceiver
     generic map(NUMBER_WORDS=>NUMBER_WORDS)
     port map(
@@ -462,8 +507,8 @@ begin
       portInitialized_i=>portInitialized_i,
       rxEmpty_i=>inboundSymbolEmpty_i,
       rxRead_o=>inboundSymbolRead_o,
-      rxType_i=>inboundType,
-      rxData_i=>inboundData, 
+      rxType_i=>inboundSymbolType_i,
+      rxData_i=>inboundSymbol_i, 
       txControlWrite_o=>txControlWrite,
       txControlSymbol_o=>txControlWriteSymbol, 
       rxControlWrite_o=>rxControlWrite,
@@ -474,7 +519,7 @@ begin
       writeFrame_o=>writeFrame_o,
       writeFrameAbort_o=>writeFrameAbort_o, 
       writeContent_o=>writeContent_o,
-      writeContentWords_o=>open,
+      writeContentWords_o=>writeContentData_o(32*NUMBER_WORDS+1 downto 32*NUMBER_WORDS),
       writeContentData_o=>writeContentData_o(32*NUMBER_WORDS-1 downto 0));
         
 end architecture;
@@ -488,6 +533,7 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.rio_common.all;
+use work.rioserial_common.all;
 
 
 -------------------------------------------------------------------------------
@@ -523,12 +569,12 @@ entity RioTransmitter is
 
     -- Control symbols aimed to the transmitter.
     txControlEmpty_i : in std_logic_vector(NUMBER_WORDS-1 downto 0);
-    txControlSymbol_i : in std_logic_vector(12*NUMBER_WORDS downto 0);
+    txControlSymbol_i : in std_logic_vector(13*NUMBER_WORDS-1 downto 0);
     txControlUpdate_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
 
     -- Control symbols from the receiver to send.
     rxControlEmpty_i : in std_logic_vector(NUMBER_WORDS-1 downto 0);
-    rxControlSymbol_i : in std_logic_vector(12*NUMBER_WORDS downto 0);
+    rxControlSymbol_i : in std_logic_vector(13*NUMBER_WORDS-1 downto 0);
     rxControlUpdate_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
 
     -- Internal signalling from the receiver part.
@@ -575,17 +621,17 @@ architecture RioTransmitterImpl of RioTransmitter is
       portInitialized_i : in std_logic;
       txFull_i : in std_logic;
       txWrite_o : out std_logic;
-      txType_o : out std_logic_vector(2*NUMBER_WORDS-1 downto 0);
-      txData_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0);
+      txType_o : out std_logic_vector(1 downto 0);
+      txData_o : out std_logic_vector(31 downto 0);
 
       -- Control symbols aimed to the transmitter.
       txControlEmpty_i : in std_logic;
-      txControlSymbol_i : in std_logic_vector(13*NUMBER_WORDS-1 downto 0);
+      txControlSymbol_i : in std_logic_vector(12 downto 0);
       txControlUpdate_o : out std_logic;
 
       -- Control symbols from the receiver to send.
       rxControlEmpty_i : in std_logic;
-      rxControlSymbol_i : in std_logic_vector(13*NUMBER_WORDS-1 downto 0);
+      rxControlSymbol_i : in std_logic_vector(12 downto 0);
       rxControlUpdate_o : out std_logic;
 
       -- Internal signalling from the receiver part.
@@ -593,42 +639,16 @@ architecture RioTransmitterImpl of RioTransmitter is
       linkInitialized_i : in std_logic;
       ackIdStatus_i : in std_logic_vector(4 downto 0);
 
-      -- Internal core variables for cascading.
+      -- Timeout signals.
       timeSentSet_o : out std_logic;
       timeSentReset_o : out std_logic;
       timeSentExpired_i : in std_logic;
-      operational_i : in std_logic;
-      operational_o : out std_logic;
-      ackId_i : in std_logic_vector(4 downto 0);
-      ackId_o : out std_logic_vector(4 downto 0);
-      bufferStatus_i : in std_logic_vector(4 downto 0);
-      bufferStatus_o : out std_logic_vector(4 downto 0);
-      statusReceived_i : in std_logic;
-      statusReceived_o : out std_logic;
-      numberSentLinkRequests_i : in std_logic_vector(1 downto 0);
-      numberSentLinkRequests_o : out std_logic_vector(1 downto 0);
-      outputErrorStopped_i : in std_logic;
-      outputErrorStopped_o : out std_logic;
-      fatalError_i : in std_logic;
-      fatalError_o : out std_logic;
-      recoverActive_i : in std_logic;
-      recoverActive_o : out std_logic;
-      recoverCounter_i : in std_logic_vector(4 downto 0);
-      recoverCounter_o : out std_logic_vector(4 downto 0);
-      ackIdWindow_i : in std_logic_vector(4 downto 0);
-      ackIdWindow_o : out std_logic_vector(4 downto 0);
-      frameState_i : in std_logic_vector(3 downto 0);
-      frameState_o : out std_logic_vector(3 downto 0);
-      frameWordCounter_i : in std_logic_vector(1 downto 0);
-      frameWordCounter_o : out std_logic_vector(1 downto 0);
-      frameContent_i : in std_logic_vector(63 downto 0);
-      frameContent_o : out std_logic_vector(63 downto 0);
-      counter_i : in std_logic_vector(3 downto 0);
-      counter_o : out std_logic_vector(3 downto 0);
-      symbolsTransmitted_i : in std_logic_vector(7 downto 0);
-      symbolsTransmitted_o : out std_logic_vector(7 downto 0);
-      maintenanceClass_i : in std_logic;
-      maintenanceClass_o : out std_logic;
+
+      -- Internal core variables for cascading.
+      frameLock_i : in std_logic;
+      frameLock_o : out std_logic;
+      internalState_i : in TxInternalType;
+      internalState_o : out TxInternalType;
       
       -- Frame buffer interface.
       readFrameEmpty_i : in std_logic;
@@ -671,24 +691,12 @@ architecture RioTransmitterImpl of RioTransmitter is
   signal timeSentWriteAddress : std_logic_vector(4 downto 0); 
   signal timeSentReadAddress : std_logic_vector(4 downto 0);  
   signal timeSentReadData : std_logic_vector(TIMEOUT_WIDTH downto 0); 
-  
-  signal operationalCurrent, operationalNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
-  signal ackIdCurrent, ackIdNext : std_logic_vector(5*NUMBER_WORDS-1 downto 0);
-  signal bufferStatusCurrent, bufferStatusNext : std_logic_vector(5*NUMBER_WORDS-1 downto 0);
-  signal statusReceivedCurrent, statusReceivedNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
-  signal numberSentLinkRequestsCurrent, numberSentLinkRequestsNext : std_logic_vector(2*NUMBER_WORDS-1 downto 0);
-  signal outputErrorStoppedCurrent, outputErrorStoppedNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
-  signal fatalErrorCurrent, fatalErrorNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
-  signal recoverActiveCurrent, recoverActiveNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
-  signal recoverCounterCurrent, recoverCounterNext : std_logic_vector(5*NUMBER_WORDS-1 downto 0);
-  signal ackIdWindowCurrent, ackIdWindowNext : std_logic_vector(5*NUMBER_WORDS-1 downto 0);
-  signal frameStateCurrent, frameStateNext : std_logic_vector(4*NUMBER_WORDS-1 downto 0);
-  signal frameWordCounterCurrent, frameWordCounterNext : std_logic_vector(2*NUMBER_WORDS-1 downto 0);
-  signal frameContentCurrent, frameContentNext : std_logic_vector(64*NUMBER_WORDS-1 downto 0);
-  signal counterCurrent, counterNext : std_logic_vector(4*NUMBER_WORDS-1 downto 0);
-  signal symbolsTransmittedCurrent, symbolsTransmittedNext : std_logic_vector(8*NUMBER_WORDS-1 downto 0);
-  signal maintenanceClassCurrent, maintenanceClassNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
 
+  signal frameLock : std_logic_vector(NUMBER_WORDS downto 0);
+  
+  signal internalStateCurrent, internalStateNext : TxInternalType;
+  signal internalState : TxInternalArrayType(NUMBER_WORDS downto 0);
+  
   signal readFrame : std_logic_vector(NUMBER_WORDS-1 downto 0);
   signal readFrameRestart : std_logic_vector(NUMBER_WORDS-1 downto 0);
   signal readWindowReset : std_logic_vector(NUMBER_WORDS-1 downto 0);
@@ -754,9 +762,11 @@ begin
   timeSentExpired <= timeSentDelta(TIMEOUT_WIDTH);
   
   timeSentEnable <= (not txFull_i) and (timeSentSet or timeSentReset);
-  timeSentWriteAddress <= ackIdWindowCurrent when timeSentSet = '1' else
-                          ackIdCurrent;
-  timeSentReadAddress <= ackIdCurrent;
+  timeSentWriteAddress <= (others=>'0');
+  timeSentReadAddress <= (others=>'0');
+  -- REMARK: Fix this...
+  --timeSentWriteAddress <= ackIdWindowCurrent when timeSentSet = '1' else ackIdCurrent;
+  --timeSentReadAddress <= ackIdCurrent;
   
   TimeoutMemory: MemorySimpleDualPortAsync
     generic map(ADDRESS_WIDTH=>5, DATA_WIDTH=>TIMEOUT_WIDTH+1, INIT_VALUE=>'0')
@@ -771,44 +781,32 @@ begin
   process(areset_n, clk)
   begin
     if (areset_n = '0') then
-      operationalCurrent <= (others=>'0');
-      ackIdCurrent <= (others=>'0');
-      bufferStatusCurrent <= (others=>'0');
-      statusReceivedCurrent <= (others=>'0');
-      numberSentLinkRequestsCurrent <= (others=>'0');
-      outputErrorStoppedCurrent <= (others=>'0');
-      fatalErrorCurrent <= (others=>'0');
-      recoverActiveCurrent <= (others=>'0');
-      recoverCounterCurrent <= (others=>'0');
-      ackIdWindowCurrent <= (others=>'0');
-      frameStateCurrent <= (others=>'0');
-      frameWordCounterCurrent <= (others=>'0');
-      frameContentCurrent <= (others=>'0');
-      counterCurrent <= (others=>'0');
-      symbolsTransmittedCurrent <= (others=>'0');
-      maintenanceClassCurrent <= (others=>'0');
+      internalStateCurrent <= (operational=>'0',
+                               ackId=>(others=>'0'),
+                               bufferStatus=>(others=>'0'),
+                               statusReceived=>'0',
+                               numberSentLinkRequests=>(others=>'0'),
+                               outputErrorStopped=>'0',
+                               fatalError=>'0',
+                               recoverActive=>'0',
+                               recoverCounter=>(others=>'0'),
+                               ackIdWindow=>(others=>'0'),
+                               frameState=>(others=>'0'),
+                               frameWordCounter=>(others=>'0'),
+                               frameContent=>(others=>'0'),
+                               counter=>(others=>'0'),
+                               symbolsTransmitted=>(others=>'0'),
+                               maintenanceClass=>'0');
     elsif (clk'event and clk = '1') then
       if (txFull_i = '0') then
-        operationalCurrent <= operationalNext;
-        ackIdCurrent <= ackIdNext;
-        bufferStatusCurrent <= bufferStatusNext;
-        statusReceivedCurrent <= statusReceivedNext;
-        numberSentLinkRequestsCurrent <= numberSentLinkRequestsNext;
-        outputErrorStoppedCurrent <= outputErrorStoppedNext;
-        fatalErrorCurrent <= fatalErrorNext;
-        recoverActiveCurrent <= recoverActiveNext;
-        recoverCounterCurrent <= recoverCounterNext;
-        ackIdWindowCurrent <= ackIdWindowNext;
-        frameStateCurrent <= frameStateNext;
-        frameWordCounterCurrent <= frameWordCounterNext;
-        frameContentCurrent <= frameContentNext;
-        counterCurrent <= counterNext;
-        symbolsTransmittedCurrent <= symbolsTransmittedNext;
-        maintenanceClassCurrent <= maintenanceClassNext;
+        internalStateCurrent <= internalStateNext;
       end if;
     end if;
   end process;
 
+  frameLock(0) <= '0';
+  internalState(0) <= internalStateCurrent;
+  internalStateNext <= internalState(NUMBER_WORDS);
   CoreGeneration: for i in 0 to NUMBER_WORDS-1 generate
     TxCore: RioTransmitterCore 
       generic map(NUMBER_WORDS=>NUMBER_WORDS)
@@ -818,8 +816,8 @@ begin
         portInitialized_i=>portInitialized_i, 
         txFull_i=>txFull_i,
         txWrite_o=>txWrite_o,
-        txType_o=>txType_o,
-        txData_o=>txData_o, 
+        txType_o=>txType_o(2*(i+1)-1 downto 2*i),
+        txData_o=>txData_o(32*(i+1)-1 downto 32*i),
         txControlEmpty_i=>txControlEmpty_i(i), 
         txControlSymbol_i=>txControlSymbol_i(13*(i+1)-1 downto 13*i), 
         txControlUpdate_o=>txControlUpdate_o(i), 
@@ -832,38 +830,10 @@ begin
         timeSentSet_o=>timeSentSet, 
         timeSentReset_o=>timeSentReset,
         timeSentExpired_i=>timeSentExpired,
-        operational_i=>operationalCurrent(i),
-        operational_o=>operationalNext(i), 
-        ackId_i=>ackIdCurrent(5*(i+1)-1 downto 5*i),
-        ackId_o=>ackIdNext(5*(i+1)-1 downto 5*i), 
-        bufferStatus_i=>bufferStatusCurrent(5*(i+1)-1 downto 5*i),
-        bufferStatus_o=>bufferStatusNext(5*(i+1)-1 downto 5*i), 
-        statusReceived_i=>statusReceivedCurrent(i),
-        statusReceived_o=>statusReceivedNext(i), 
-        numberSentLinkRequests_i=>numberSentLinkRequestsCurrent(2*(i+1)-1 downto 2*i),
-        numberSentLinkRequests_o=>numberSentLinkRequestsNext(2*(i+1)-1 downto 2*i), 
-        outputErrorStopped_i=>outputErrorStoppedCurrent(i),
-        outputErrorStopped_o=>outputErrorStoppedNext(i), 
-        fatalError_i=>fatalErrorCurrent(i),
-        fatalError_o=>fatalErrorNext(i),
-        recoverActive_i=>recoverActiveCurrent(i),
-        recoverActive_o=>recoverActiveNext(i), 
-        recoverCounter_i=>recoverCounterCurrent(5*(i+1)-1 downto 5*i),
-        recoverCounter_o=>recoverCounterNext(5*(i+1)-1 downto 5*i), 
-        ackIdWindow_i=>ackIdWindowCurrent(5*(i+1)-1 downto 5*i),
-        ackIdWindow_o=>ackIdWindowNext(5*(i+1)-1 downto 5*i), 
-        frameState_i=>frameStateCurrent(4*(i+1)-1 downto 4*i),
-        frameState_o=>frameStateNext(4*(i+1)-1 downto 4*i), 
-        frameWordCounter_i=>frameWordCounterCurrent(2*(i+1)-1 downto 2*i),
-        frameWordCounter_o=>frameWordCounterNext(2*(i+1)-1 downto 2*i), 
-        frameContent_i=>frameContentCurrent(64*(i+1)-1 downto 64*i),
-        frameContent_o=>frameContentNext(64*(i+1)-1 downto 64*i), 
-        counter_i=>counterCurrent(4*(i+1)-1 downto 4*i),
-        counter_o=>counterNext(4*(i+1)-1 downto 4*i), 
-        symbolsTransmitted_i=>symbolsTransmittedCurrent(8*(i+1)-1 downto 8*i),
-        symbolsTransmitted_o=>symbolsTransmittedNext(8*(i+1)-1 downto 8*i),
-        maintenanceClass_i=>maintenanceClassCurrent(i),
-        maintenanceClass_o=>maintenanceClassNext(i),
+        frameLock_i=>frameLock(i),
+        frameLock_o=>frameLock(i+1),
+        internalState_i=>internalState(i),
+        internalState_o=>internalState(i+1),
         readFrameEmpty_i=>readFrameEmpty_i, 
         readFrame_o=>readFrame(i), 
         readFrameRestart_o=>readFrameRestart(i), 
@@ -889,6 +859,7 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.rio_common.all;
+use work.rioserial_common.all;
 
 -------------------------------------------------------------------------------
 -- Entity for RioTransmitterCore.
@@ -908,17 +879,17 @@ entity RioTransmitterCore is
     portInitialized_i : in std_logic;
     txFull_i : in std_logic;
     txWrite_o : out std_logic;
-    txType_o : out std_logic_vector(2*NUMBER_WORDS-1 downto 0);
-    txData_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0);
+    txType_o : out std_logic_vector(1 downto 0);
+    txData_o : out std_logic_vector(31 downto 0);
 
     -- Control symbols aimed to the transmitter.
     txControlEmpty_i : in std_logic;
-    txControlSymbol_i : in std_logic_vector(13*NUMBER_WORDS-1 downto 0);
+    txControlSymbol_i : in std_logic_vector(12 downto 0);
     txControlUpdate_o : out std_logic;
 
     -- Control symbols from the receiver to send.
     rxControlEmpty_i : in std_logic;
-    rxControlSymbol_i : in std_logic_vector(13*NUMBER_WORDS-1 downto 0);
+    rxControlSymbol_i : in std_logic_vector(12 downto 0);
     rxControlUpdate_o : out std_logic;
 
     -- Internal signalling from the receiver part.
@@ -932,38 +903,10 @@ entity RioTransmitterCore is
     timeSentExpired_i : in std_logic;
     
     -- Internal core variables for cascading.
-    operational_i : in std_logic;
-    operational_o : out std_logic;
-    ackId_i : in std_logic_vector(4 downto 0);
-    ackId_o : out std_logic_vector(4 downto 0);
-    bufferStatus_i : in std_logic_vector(4 downto 0);
-    bufferStatus_o : out std_logic_vector(4 downto 0);
-    statusReceived_i : in std_logic;
-    statusReceived_o : out std_logic;
-    numberSentLinkRequests_i : in std_logic_vector(1 downto 0);
-    numberSentLinkRequests_o : out std_logic_vector(1 downto 0);
-    outputErrorStopped_i : in std_logic;
-    outputErrorStopped_o : out std_logic;
-    fatalError_i : in std_logic;
-    fatalError_o : out std_logic;
-    recoverActive_i : in std_logic;
-    recoverActive_o : out std_logic;
-    recoverCounter_i : in std_logic_vector(4 downto 0);
-    recoverCounter_o : out std_logic_vector(4 downto 0);
-    ackIdWindow_i : in std_logic_vector(4 downto 0);
-    ackIdWindow_o : out std_logic_vector(4 downto 0);
-    frameState_i : in std_logic_vector(3 downto 0);
-    frameState_o : out std_logic_vector(3 downto 0);
-    frameWordCounter_i : in std_logic_vector(1 downto 0);
-    frameWordCounter_o : out std_logic_vector(1 downto 0);
-    frameContent_i : in std_logic_vector(63 downto 0);
-    frameContent_o : out std_logic_vector(63 downto 0);
-    counter_i : in std_logic_vector(3 downto 0);
-    counter_o : out std_logic_vector(3 downto 0);
-    symbolsTransmitted_i : in std_logic_vector(7 downto 0);
-    symbolsTransmitted_o : out std_logic_vector(7 downto 0);
-    maintenanceClass_i : in std_logic;
-    maintenanceClass_o : out std_logic;
+    frameLock_i : in std_logic;
+    frameLock_o : out std_logic;
+    internalState_i : in TxInternalType;
+    internalState_o : out TxInternalType;
     
     -- Frame buffer interface.
     readFrameEmpty_i : in std_logic;
@@ -1045,7 +988,8 @@ architecture RioTransmitterCoreImpl of RioTransmitterCore is
 
 begin
 
-  linkInitialized_o <= operational_i;
+
+  linkInitialized_o <= internalState_i.operational;
                        
   -----------------------------------------------------------------------------
   -- Assign control symbol from fifo signals.
@@ -1061,12 +1005,28 @@ begin
 
   -----------------------------------------------------------------------------
   -- First pipeline stage.
-  -- Receive stuff from link-partner and timeout supervision.
+  -- Receive control-symbols from link-partner and supervise timeouts.
   -- Input: ackId, ackIdWindow, timeoutExpired
   -- Output: sendLinkRequest, sendRestartFromRetry, ackId,
   -----------------------------------------------------------------------------
 
   txControlUpdate_o <= txControlUpdateOut and (not txFull_i);
+
+  -- REMARK: Use this to be able to use a synchronous memory in the fifo to
+  -- enhance the timing... What to do with the rxSymbol???
+  --txControlRead_o <= txControlRead;
+  --process(clk, areset_n)
+  --begin
+  --  if (areset_n = '0') then
+  --    txControlRead <= '0';
+  --    txControlValid <= '0';
+  --  elsif (clk'event and clk = '1') then
+  --    if (txFull_i = '0') then
+  --      txControlRead <= not txControlEmpty_i;
+  --      txControlValid <= txControlRead;
+  --    end if;
+  --  end if;
+  --end process;
   
   process(clk, areset_n)
   begin
@@ -1087,23 +1047,19 @@ begin
     end if;
   end process;
   
-  process(outputErrorStopped_i, recoverActive_i, recoverCounter_i,
-          ackId_i, ackIdWindow_i, bufferStatus_i, statusReceived_i,
-          numberSentLinkRequests_i,
-          operational_i,
+  process(internalState_i,
           txControlEmpty_i, txControlStype0,
           txControlParameter0, txControlParameter1,
-          timeSentExpired_i,
-          fatalError_i)
+          timeSentExpired_i)
   begin
-    outputErrorStopped_o <= outputErrorStopped_i;
-    fatalError_o <= fatalError_i;
-    recoverActive_o <= recoverActive_i;
-    recoverCounter_o <= recoverCounter_i;
-    ackId_o <= ackId_i;
-    bufferStatus_o <= bufferStatus_i;
-    statusReceived_o <= statusReceived_i;
-    numberSentLinkRequests_o <= numberSentLinkRequests_i;
+    internalState_o.outputErrorStopped <= internalState_i.outputErrorStopped;
+    internalState_o.fatalError <= internalState_i.fatalError;
+    internalState_o.recoverActive <= internalState_i.recoverActive;
+    internalState_o.recoverCounter <= internalState_i.recoverCounter;
+    internalState_o.ackId <= internalState_i.ackId;
+    internalState_o.bufferStatus <= internalState_i.bufferStatus;
+    internalState_o.statusReceived <= internalState_i.statusReceived;
+    internalState_o.numberSentLinkRequests <= internalState_i.numberSentLinkRequests;
 
     timeSentReset_o <= '0';
     txControlUpdateOut <= '0';
@@ -1112,19 +1068,19 @@ begin
     sendRestartFromRetryOut <= '0';
     sendLinkRequestOut <= '0';
 
-    if (fatalError_i = '1') then
-      outputErrorStopped_o <= '0';
-      fatalError_o <= '0';
-    elsif (recoverActive_i = '1') then
-      if (ackId_i /= recoverCounter_i) then
-        ackId_o <= std_logic_vector(unsigned(ackId_i) + 1);
+    if (internalState_i.fatalError = '1') then
+      internalState_o.outputErrorStopped <= '0';
+      internalState_o.fatalError <= '0';
+    elsif (internalState_i.recoverActive = '1') then
+      if (internalState_i.ackId /= internalState_i.recoverCounter) then
+        internalState_o.ackId <= std_logic_vector(unsigned(internalState_i.ackId) + 1);
         readFrameOut <= '1';
       else
-        recoverActive_o <= '0';
-        outputErrorStopped_o <= '0';
+        internalState_o.recoverActive <= '0';
+        internalState_o.outputErrorStopped <= '0';
       end if;
     else
-      if (operational_i = '0') then
+      if (internalState_i.operational = '0') then
         -- Not operational mode.
 
         -- Check if any new symbol has been received from the link-partner.
@@ -1135,10 +1091,10 @@ begin
           if (txControlStype0 = STYPE0_STATUS) then
             -- A status-control symbol has been received.
             -- Update variables from the input status control symbol.
-            ackId_o <= txControlParameter0;
-            bufferStatus_o <= txControlParameter1;
-            outputErrorStopped_o <= '0';
-            statusReceived_o <= '1';
+            internalState_o.ackId <= txControlParameter0;
+            internalState_o.bufferStatus <= txControlParameter1;
+            internalState_o.outputErrorStopped <= '0';
+            internalState_o.statusReceived <= '1';
           else
             -- Discard all other received symbols in this state.
           end if;
@@ -1148,10 +1104,10 @@ begin
         -- Operational mode.
         
         -- Make sure to reset the status received flag.
-        statusReceived_o <= '0';
+        internalState_o.statusReceived <= '0';
 
         -- Check if the oldest frame timeout has expired.
-        if ((ackId_i /= ackIdWindow_i) and
+        if ((internalState_i.ackId /= internalState_i.ackIdWindow) and
             (timeSentExpired_i = '1')) then
           -- There has been a timeout on a transmitted frame.
 
@@ -1160,27 +1116,27 @@ begin
           timeSentReset_o <= '1';
 
           -- Check if we are in the output-error-stopped state.
-          if (outputErrorStopped_i = '1') then
+          if (internalState_i.outputErrorStopped = '1') then
             -- In the output-error-stopped state.
             
             -- Count the number of link-requests that has been sent and abort if
             -- there has been no reply for too many times.
-            if (unsigned(numberSentLinkRequests_i) /= 0) then
+            if (unsigned(internalState_i.numberSentLinkRequests) /= 0) then
               -- Not sent link-request too many times.
               -- Send another link-request.
               sendLinkRequestOut <= '1';
-              numberSentLinkRequests_o <= std_logic_vector(unsigned(numberSentLinkRequests_i) - 1);
+              internalState_o.numberSentLinkRequests <= std_logic_vector(unsigned(internalState_i.numberSentLinkRequests) - 1);
             else
               -- No response for too many times.
               -- Indicate that a fatal error has occurred.
-              fatalError_o <= '1';
+              internalState_o.fatalError <= '1';
             end if;
           else
             -- Not in output-error-stopped and there is a timeout.
             -- Enter output-error-stopped state and send a link-request.
             sendLinkRequestOut <= '1';
-            numberSentLinkRequests_o <= NUMBER_LINK_RESPONSE_RETRIES;
-            outputErrorStopped_o <= '1';
+            internalState_o.numberSentLinkRequests <= NUMBER_LINK_RESPONSE_RETRIES;
+            internalState_o.outputErrorStopped <= '1';
           end if;
         else
           -- There has been no timeout.
@@ -1194,46 +1150,46 @@ begin
             case txControlStype0 is
               
               when STYPE0_STATUS =>
-                if (outputErrorStopped_i = '0') then
+                if (internalState_i.outputErrorStopped = '0') then
                   -- Save the number of buffers in the link partner.
-                  bufferStatus_o <= txControlParameter1;
+                  internalState_o.bufferStatus <= txControlParameter1;
                 end if;
                 
               when STYPE0_PACKET_ACCEPTED =>
                 -- The link partner is accepting a frame.
 
-                if (outputErrorStopped_i = '0') then
+                if (internalState_i.outputErrorStopped = '0') then
                   -- Save the number of buffers in the link partner.
-                  bufferStatus_o <= txControlParameter1;
+                  internalState_o.bufferStatus <= txControlParameter1;
                   
                   -- Check if expecting this type of reply and that the ackId is
                   -- expected.
-                  if ((ackId_i /= ackIdWindow_i) and
-                      (ackId_i = txControlParameter0)) then
+                  if ((internalState_i.ackId /= internalState_i.ackIdWindow) and
+                      (internalState_i.ackId = txControlParameter0)) then
                     -- The packet-accepted is expected and the ackId is the expected.
                     -- The frame has been accepted by the link partner.
                     
                     -- Update to a new buffer and increment the ackId.
                     readFrameOut <= '1';
-                    ackId_o <= std_logic_vector(unsigned(ackId_i) + 1);
+                    internalState_o.ackId <= std_logic_vector(unsigned(internalState_i.ackId) + 1);
                   else
                     -- Unexpected packet-accepted or packet-accepted for
                     -- unexpected ackId.
                     sendLinkRequestOut <= '1';
-                    numberSentLinkRequests_o <= NUMBER_LINK_RESPONSE_RETRIES;
-                    outputErrorStopped_o <= '1';
+                    internalState_o.numberSentLinkRequests <= NUMBER_LINK_RESPONSE_RETRIES;
+                    internalState_o.outputErrorStopped <= '1';
                   end if;
                 end if;
                 
               when STYPE0_PACKET_RETRY =>
                 -- The link partner has asked for a frame retransmission.
 
-                if (outputErrorStopped_i = '0') then
+                if (internalState_i.outputErrorStopped = '0') then
                   -- Save the number of buffers in the link partner.
-                  bufferStatus_o <= txControlParameter1;
+                  internalState_o.bufferStatus <= txControlParameter1;
 
                   -- Check if the ackId is the one expected.
-                  if (ackId_i = txControlParameter0) then
+                  if (internalState_i.ackId = txControlParameter0) then
                     -- The ackId to retry is expected.
                     -- Go to the output-retry-stopped state.
                     -- Note that the output-retry-stopped state is equivalent
@@ -1242,33 +1198,33 @@ begin
                   else
                     -- Unexpected ackId to retry.
                     sendLinkRequestOut <= '1';
-                    numberSentLinkRequests_o <= NUMBER_LINK_RESPONSE_RETRIES;
-                    outputErrorStopped_o <= '1';
+                    internalState_o.numberSentLinkRequests <= NUMBER_LINK_RESPONSE_RETRIES;
+                    internalState_o.outputErrorStopped <= '1';
                   end if;
                 end if;
                 
               when STYPE0_PACKET_NOT_ACCEPTED =>
-                if (outputErrorStopped_i = '0') then
+                if (internalState_i.outputErrorStopped = '0') then
                   -- Packet was rejected by the link-partner.
                   sendLinkRequestOut <= '1';
-                  numberSentLinkRequests_o <= NUMBER_LINK_RESPONSE_RETRIES;
-                  outputErrorStopped_o <= '1';
+                  internalState_o.numberSentLinkRequests <= NUMBER_LINK_RESPONSE_RETRIES;
+                  internalState_o.outputErrorStopped <= '1';
                 end if;
                 
               when STYPE0_LINK_RESPONSE =>
-                if (outputErrorStopped_i = '1') then
+                if (internalState_i.outputErrorStopped = '1') then
                   -- Check if the link partner return value is acceptable.
-                  if ((unsigned(txControlParameter0) - unsigned(ackId_i)) <=
-                      (unsigned(ackIdWindow_i) - unsigned(ackId_i))) then
+                  if ((unsigned(txControlParameter0) - unsigned(internalState_i.ackId)) <=
+                      (unsigned(internalState_i.ackIdWindow) - unsigned(internalState_i.ackId))) then
                     -- Recoverable error.
                     -- Use the received ackId and recover by removing packets
                     -- that has been received by the link-partner.
-                    recoverCounter_o <= txControlParameter0;
-                    recoverActive_o <= '1';
+                    internalState_o.recoverCounter <= txControlParameter0;
+                    internalState_o.recoverActive <= '1';
                   else
                     -- Totally out of sync.
                     -- Indicate that a fatal error has occurred.
-                    fatalError_o <= '1';
+                    internalState_o.fatalError <= '1';
                   end if;
                 else
                   -- Dont expect or need a link-response in this state.
@@ -1337,23 +1293,23 @@ begin
   
   -- This process decide which stype1-part of a control symbols to send as well
   -- as all data symbols.
-  process(readWindowEmpty_i, bufferStatus_i,
-          recoverActive_i, ackId_i, operational_i, outputErrorStopped_i, portEnable_i, readContentData_i, readContentWords_i, readContentEnd_i,
-          frameState_i, frameWordCounter_i, frameContent_i, maintenanceClass_i,
-          ackIdWindow_i,
-          sendRestartFromRetry, sendLinkRequest,
-          fatalError_i)
+  process(readWindowEmpty_i,
+          internalState_i,
+          portEnable_i, readContentData_i, readContentWords_i, readContentEnd_i,
+          sendRestartFromRetry, sendLinkRequest)
   begin
     readFrameRestartOut <= '0';
     readWindowResetOut <= '0';
     readWindowNextOut <= '0';
     readContentOut <= '0';
 
-    frameState_o <= frameState_i;
-    frameWordCounter_o <= frameWordCounter_i;
-    frameContent_o <= frameContent_i;
-    ackIdWindow_o <= ackIdWindow_i;
-    maintenanceClass_o <= maintenanceClass_i;
+    frameLock_o <= frameLock_i;
+
+    internalState_o.frameState <= internalState_i.frameState;
+    internalState_o.frameWordCounter <= internalState_i.frameWordCounter;
+    internalState_o.frameContent <= internalState_i.frameContent;
+    internalState_o.ackIdWindow <= internalState_i.ackIdWindow;
+    internalState_o.maintenanceClass <= internalState_i.maintenanceClass;
     
     timeSentSet_o <= '0';
 
@@ -1364,22 +1320,20 @@ begin
     symbolDataOut <= '0';
     symbolDataContentOut <= (others => '0');
 
-    if (fatalError_i = '1') then
-      readWindowResetOut <= '1';
-    elsif (recoverActive_i = '1') then
-      ackIdWindow_o <= ackId_i;
-      frameState_o <= FRAME_IDLE;
+    if ((internalState_i.fatalError = '1') or (internalState_i.recoverActive = '1')) then
+      internalState_o.frameState <= FRAME_IDLE;
+      internalState_o.ackIdWindow <= internalState_i.ackId;
       readWindowResetOut <= '1';
     else
-      if (operational_i = '0') then
+      if (internalState_i.operational = '0') then
         -----------------------------------------------------------------------
         -- This state is entered at startup. A port that is not initialized
         -- should only transmit idle sequences.
         -----------------------------------------------------------------------
         
         -- Initialize framing before entering the operational state.
-        frameState_o <= FRAME_IDLE;
-        ackIdWindow_o <= ackId_i;
+        internalState_o.frameState <= FRAME_IDLE;
+        internalState_o.ackIdWindow <= internalState_i.ackId;
         readWindowResetOut <= '1';
       else
         -------------------------------------------------------------------
@@ -1397,8 +1351,8 @@ begin
           timeSentSet_o <= '1';
 
           -- Restart the frame transmission.
-          ackIdWindow_o <= ackId_i;
-          frameState_o <= FRAME_IDLE;
+          internalState_o.ackIdWindow <= internalState_i.ackId;
+          internalState_o.frameState <= FRAME_IDLE;
           readWindowResetOut <= '1';
         end if;
 
@@ -1414,11 +1368,11 @@ begin
         end if;
         
         if ((sendRestartFromRetry = '0') and (sendLinkRequest = '0')  and
-            (outputErrorStopped_i = '0')) then
+            (internalState_i.outputErrorStopped = '0')) then
           -- Check if a frame transfer is in progress.
           -- REMARK: Hold any data symbol if there is a pending symbol from the
           -- receiver side...
-          case frameState_i is
+          case internalState_i.frameState is
             
             when FRAME_IDLE =>
               ---------------------------------------------------------------
@@ -1430,11 +1384,10 @@ begin
                 -- Update the output from the frame buffer to contain the
                 -- data when it is read later.
                 readContentOut <= '1';
-                frameContent_o <=
-                  frameContent_i(31 downto 0) & readContentData_i;
 
                 -- Proceed to start the transmission of the packet.
-                frameState_o <= FRAME_BUFFER;
+                internalState_o.frameState <= FRAME_BUFFER;
+                frameLock_o <= '1';
               end if;
 
             when FRAME_BUFFER =>
@@ -1443,18 +1396,29 @@ begin
               -- content temporarily.
               -----------------------------------------------------------------
 
-              readContentOut <= '1';
-              frameContent_o <=
-                frameContent_i(31 downto 0) & readContentData_i;
+              if (frameLock_i = '0') then
+                if (readContentEnd_i = '0') then
+                  -- REMARK: Need a flag here to know in the next state if the
+                  -- new content should be added to the number of valid words
+                  -- in the content...
+                  readContentOut <= '1';
+                end if;
+                
+                internalState_o.frameContent <= internalState_i.frameContent(31 downto 0) & readContentData_i;
+                internalState_o.frameWordCounter <= readContentWords_i;
 
-              if (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS) then
-                maintenanceClass_o <= '1';
-              else
-                maintenanceClass_o <= '0';
+                -- REMARK: Index here will be wrong if the content is larger
+                -- than one word...
+                if (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS) then
+                  internalState_o.maintenanceClass <= '1';
+                else
+                  internalState_o.maintenanceClass <= '0';
+                end if;
+
+                internalState_o.frameState <= FRAME_START;
+                frameLock_o <= '1';
               end if;
-
-              frameState_o <= FRAME_START;
-              
+                
             when FRAME_START | FRAME_END =>
               -------------------------------------------------------
               -- Check if we are allowed to transmit this packet.
@@ -1463,51 +1427,57 @@ begin
               -- sent when only maintenance is allowed. The link-partner can be
               -- busy, i.e. not having enough buffers to receive the new packet
               -- in or the number of outstanding packets may be too large.
-              -- REMARK: Only update readContent_o in the last instance
-              -- if cascaded...
 
-              -- Check if the packet is allowed.
-              if ((portEnable_i = '1') or (maintenanceClass_i = '1')) then
-                -- Packet is allowed.
+              if (frameLock_i = '0') then
+                
+                -- Check if the packet is allowed.
+                if ((portEnable_i = '1') or (internalState_i.maintenanceClass = '1')) then
+                  -- Packet is allowed.
 
-                -- Check if the link is able to accept the new frame.
-                if ((readWindowEmpty_i = '0') and
-                    (bufferStatus_i /= "00000") and
-                    ((unsigned(ackIdWindow_i)+1) /= unsigned(ackId_i))) then
-                  -- New data is available for transmission and there
-                  -- is room to receive it at the other side.
-                  -- The packet may be transmitted.
+                  -- Check if the link is able to accept the new frame.
+                  if ((readWindowEmpty_i = '0') and
+                      (internalState_i.bufferStatus /= "00000") and
+                      ((unsigned(internalState_i.ackIdWindow)+1) /= unsigned(internalState_i.ackId))) then
+                    -- New data is available for transmission and there
+                    -- is room to receive it at the other side.
+                    -- The packet may be transmitted.
 
-                  -- Send a control symbol to start the packet and a status to
-                  -- complete the symbol.
-                  symbolControlStartOut <= '1';
-                  
-                  -- Indicate that a control symbol has been sent to start the
-                  -- transmission of the frame.
-                  frameContent_o <=
-                    frameContent_i(31 downto 0) & readContentData_i;
-                  readContentOut <= '1';
-                  
-                  -- Proceed to send the first packet data symbol containing
-                  -- the ackId.
-                  frameState_o <= FRAME_FIRST;
+                    -- Send a control symbol to start the packet and a status to
+                    -- complete the symbol.
+                    symbolControlStartOut <= '1';
+                    
+                    -- Indicate that a control symbol has been sent to start the
+                    -- transmission of the frame.
+                    -- REMARK: Fix size of frameContent...
+                    internalState_o.frameContent <= internalState_i.frameContent(31 downto 0) & readContentData_i;
+
+                    if (readContentEnd_i = '0') then
+                      internalState_o.frameWordCounter <= std_logic_vector(unsigned(internalState_i.frameWordCounter) +
+                                                             unsigned(readContentWords_i));
+                      readContentOut <= '1';
+                    end if;
+                    
+                    -- Proceed to send the first packet data symbol containing
+                    -- the ackId.
+                    internalState_o.frameState <= FRAME_FIRST;
+                  else
+                    -- The link cannot accept the packet.
+                    -- Wait in this state and dont do anything.
+                    if (internalState_i.frameState = FRAME_END) then
+                      symbolControlEndOut <= '1';
+                    end if;
+                    readFrameRestartOut <= '1';
+                    internalState_o.frameState <= FRAME_IDLE;
+                  end if;
                 else
-                  -- The link cannot accept the packet.
-                  -- Wait in this state and dont do anything.
-                  if (frameState_i = FRAME_END) then
+                  -- The packet is not allowed.
+                  -- Discard it.
+                  if (internalState_i.frameState = FRAME_END) then
                     symbolControlEndOut <= '1';
                   end if;
-                  readFrameRestartOut <= '1';
-                  frameState_o <= FRAME_IDLE;
+                  --readFrameRestartOut <= '1';
+                  internalState_o.frameState <= FRAME_DISCARD;
                 end if;
-              else
-                -- The packet is not allowed.
-                -- Discard it.
-                if (frameState_i = FRAME_END) then
-                  symbolControlEndOut <= '1';
-                end if;
-                --readFrameRestartOut <= '1';
-                frameState_o <= FRAME_DISCARD;
               end if;
 
             when FRAME_FIRST =>
@@ -1519,18 +1489,26 @@ begin
               -- Write a new data symbol and fill in our ackId on the
               -- packet.
               symbolDataOut <= '1';
-              symbolDataContentOut <= std_logic_vector(ackIdWindow_i) & "0" &
-                                      frameContent_i(57 downto 32);
-              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
-              
+              symbolDataContentOut <= std_logic_vector(internalState_i.ackIdWindow) & "0" &
+                                      internalState_i.frameContent(57 downto 32);
+
               -- Check if the frame is ending.
               if (readContentEnd_i = '1') then
                 -- The frame is ending.
                 readWindowNextOut <= '1';
-                frameState_o <= FRAME_LAST_0;
+                internalState_o.frameState <= FRAME_LAST_0;
+                frameLock_o <= '1';
               else
                 readContentOut <= '1';
-                frameState_o <= FRAME_MIDDLE;
+                internalState_o.frameState <= FRAME_MIDDLE;
+              end if;
+
+              if (internalState_i.frameWordCounter = "00") then
+                internalState_o.frameContent <= internalState_i.frameContent(31 downto 0) & readContentData_i;
+                internalState_o.frameWordCounter <= readContentWords_i;
+              else
+                internalState_o.frameContent <= internalState_i.frameContent(31 downto 0) & readContentData_i;
+                internalState_o.frameWordCounter <= std_logic_vector(unsigned(internalState_i.frameWordCounter) - 1);
               end if;
               
             when FRAME_MIDDLE =>
@@ -1542,16 +1520,24 @@ begin
               
               -- Write a new data symbol.
               symbolDataOut <= '1';
-              symbolDataContentOut <= frameContent_i(63 downto 32);
-              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
+              symbolDataContentOut <= internalState_i.frameContent(63 downto 32);
 
               -- Check if the frame is ending.
               if (readContentEnd_i = '1') then
                 -- The frame is ending.
                 readWindowNextOut <= '1';
-                frameState_o <= FRAME_LAST_0;
+                internalState_o.frameState <= FRAME_LAST_0;
+                frameLock_o <= '1';
               else
                 readContentOut <= '1';
+              end if;
+
+              if (internalState_i.frameWordCounter = "00") then
+                internalState_o.frameContent <= internalState_i.frameContent(31 downto 0) & readContentData_i;
+                internalState_o.frameWordCounter <= readContentWords_i;
+              else
+                internalState_o.frameContent <= internalState_i.frameContent(31 downto 0) & readContentData_i;
+                internalState_o.frameWordCounter <= std_logic_vector(unsigned(internalState_i.frameWordCounter) - 1);
               end if;
               
             when FRAME_LAST_0 =>
@@ -1560,38 +1546,62 @@ begin
               -----------------------------------------------------------------
 
               symbolDataOut <= '1';
-              symbolDataContentOut <= frameContent_i(63 downto 32);
-              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
-              if (readWindowEmpty_i = '0') then
-                readContentOut <= '1';
-              end if;
-              frameState_o <= FRAME_LAST_1;
+              symbolDataContentOut <= internalState_i.frameContent(63 downto 32);
 
+              if (frameLock_i = '0') then
+                if (readWindowEmpty_i = '0') then
+                  readContentOut <= '1';
+                  frameLock_o <= '1';
+                end if;
+                internalState_o.frameState <= FRAME_LAST_1;
+              end if;
+
+              if (internalState_i.frameWordCounter = "00") then
+                internalState_o.frameContent <= internalState_i.frameContent(31 downto 0) & readContentData_i;
+                internalState_o.frameWordCounter <= readContentWords_i;
+              else
+                internalState_o.frameContent <= internalState_i.frameContent(31 downto 0) & readContentData_i;
+                internalState_o.frameWordCounter <= std_logic_vector(unsigned(internalState_i.frameWordCounter) - 1);
+              end if;
+              
             when FRAME_LAST_1 =>
               -----------------------------------------------------------------
               -- 
               -----------------------------------------------------------------
 
               symbolDataOut <= '1';
-              symbolDataContentOut <= frameContent_i(63 downto 32);
-              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
-              if (readWindowEmpty_i = '0') then
-                if (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS) then
-                  maintenanceClass_o <= '1';
-                else
-                  maintenanceClass_o <= '0';
-                end if;
-                readContentOut <= '1';
+              symbolDataContentOut <= internalState_i.frameContent(63 downto 32);
+
+              if (internalState_i.frameWordCounter = "00") then
+                internalState_o.frameContent <= internalState_i.frameContent(31 downto 0) & readContentData_i;
+                internalState_o.frameWordCounter <= readContentWords_i;
+              else
+                internalState_o.frameContent <= internalState_i.frameContent(31 downto 0) & readContentData_i;
+                internalState_o.frameWordCounter <= std_logic_vector(unsigned(internalState_i.frameWordCounter) - 1);
               end if;
+              
+              if (frameLock_i = '0') then
+                if (internalState_i.frameWordCounter = "00") then
+                  if (readWindowEmpty_i = '0') then
+                    if (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS) then
+                      internalState_o.maintenanceClass <= '1';
+                    else
+                      internalState_o.maintenanceClass <= '0';
+                    end if;
+                    readContentOut <= '1';
+                    frameLock_o <= '1';
+                  end if;
 
-              -- Update the window ackId.
-              ackIdWindow_o <= std_logic_vector(unsigned(ackIdWindow_i) + 1);
+                  -- Update the window ackId.
+                  internalState_o.ackIdWindow <= std_logic_vector(unsigned(internalState_i.ackIdWindow) + 1);
 
-              -- Start timeout supervision for transmitted frame.
-              timeSentSet_o <= '1';
+                  -- Start timeout supervision for transmitted frame.
+                  timeSentSet_o <= '1';
 
-              -- Proceed to end the frame or start a new one.
-              frameState_o <= FRAME_END;
+                  -- Proceed to end the frame or start a new one.
+                  internalState_o.frameState <= FRAME_END;
+                end if;
+              end if;
 
             when FRAME_DISCARD =>
               ---------------------------------------------------------------
@@ -1602,13 +1612,13 @@ begin
 
               -- Check that there are no outstanding packets that
               -- has not been acknowledged.
-              if(unsigned(ackIdWindow_i) = unsigned(ackId_i)) then
+              if(unsigned(internalState_i.ackIdWindow) = unsigned(internalState_i.ackId)) then
                 -- No unacknowledged packets.
                 -- It is now safe to remove the unallowed frame.
                 -- REMARK: Discard packet; readFrameOut <= '1';
 
                 -- Go back and send a new frame.
-                frameState_o <= FRAME_IDLE;
+                internalState_o.frameState <= FRAME_IDLE;
               end if;
               
             when others =>
@@ -1632,7 +1642,7 @@ begin
   -- before the operational-state is entered.
   -- Input:  symbolControlStart, symbolControlEnd, symbolControlRestart,
   --         symbolControlLinkRequest, symbolData, symbolDataContent
-  -- Output: symbolsTransmitted_o, operational_o, 
+  -- Output: symbolsTransmitted, operationalNext, 
   --         symbolControl, stype0, parameter0, parameter1, stype1, cmd,
   --         symbolData1, symbolData1Content
   -----------------------------------------------------------------------------
@@ -1683,15 +1693,14 @@ begin
     symbolControlStart or symbolControlEnd;
   
   process(linkInitialized_i, ackIdStatus_i, portInitialized_i,
-          operational_i, counter_i, statusReceived_i, symbolsTransmitted_i,
+          internalState_i,
           rxControlEmpty_i,
           symbolControlStype1, symbolData,
-          rxControlStype0, rxControlParameter0, rxControlParameter1,
-          fatalError_i)
+          rxControlStype0, rxControlParameter0, rxControlParameter1)
   begin
-    operational_o <= operational_i;
-    counter_o <= counter_i;
-    symbolsTransmitted_o <= symbolsTransmitted_i;
+    internalState_o.operational <= internalState_i.operational;
+    internalState_o.counter <= internalState_i.counter;
+    internalState_o.symbolsTransmitted <= internalState_i.symbolsTransmitted;
     rxControlUpdateOut <= '0';
     
     controlValidOut <= '0';
@@ -1699,13 +1708,13 @@ begin
     parameter0Out <= ackIdStatus_i;
     parameter1Out <= "11111";
     
-    if (fatalError_i = '1') then
-      operational_o <= '0';
-      counter_o <= NUMBER_STATUS_TRANSMIT;
-      symbolsTransmitted_o <= (others=>'0');
+    if (internalState_i.fatalError = '1') then
+      internalState_o.operational <= '0';
+      internalState_o.counter <= NUMBER_STATUS_TRANSMIT;
+      internalState_o.symbolsTransmitted <= (others=>'0');
     else
       -- Check the operational state.
-      if (operational_i = '0') then
+      if (internalState_i.operational = '0') then
         -----------------------------------------------------------------------
         -- This state is entered at startup. A port that is not initialized
         -- should only transmit idle sequences.
@@ -1725,41 +1734,46 @@ begin
 
           -- Check if we are ready to change state to operational.
           if ((linkInitialized_i = '1') and
-              (unsigned(counter_i) = 0)) then
+              (unsigned(internalState_i.counter) = 0)) then
             -- Receiver has received enough error free status symbols and we
             -- have transmitted enough.
             
             -- Considder ourselfs operational.
-            operational_o <= '1';
+            internalState_o.operational <= '1';
           else
             -- Not ready to change state to operational.
             -- Dont do anything.
           end if;
           
           -- Check if idle sequence or a status symbol should be transmitted.
-          if (((statusReceived_i = '0') and (symbolsTransmitted_i = x"ff")) or
-              ((statusReceived_i = '1') and (symbolsTransmitted_i > x"0f"))) then
+          if (((internalState_i.statusReceived = '0') and
+               (internalState_i.symbolsTransmitted = x"ff")) or
+              ((internalState_i.statusReceived = '1') and
+               (internalState_i.symbolsTransmitted > x"0f"))) then
             -- A status symbol should be transmitted.
             
             -- Send a status control symbol to the link partner.
             controlValidOut <= '1';
 
             -- Reset idle sequence transmission counter.
-            symbolsTransmitted_o <= (others=>'0');
+            internalState_o.symbolsTransmitted <= (others=>'0');
 
             -- Check if the number of transmitted statuses should be updated.
-            if (statusReceived_i = '1') and (unsigned(counter_i) /= 0) then
-              counter_o <= std_logic_vector(unsigned(counter_i) - 1);
+            if ((internalState_i.statusReceived = '1') and
+                (unsigned(internalState_i.counter) /= 0)) then
+              internalState_o.counter <=
+                std_logic_vector(unsigned(internalState_i.counter) - 1);
             end if;
           else
             -- Increment the idle sequence transmission counter.
-            symbolsTransmitted_o <= std_logic_vector(unsigned(symbolsTransmitted_i) + 1);
+            internalState_o.symbolsTransmitted <=
+              std_logic_vector(unsigned(internalState_i.symbolsTransmitted) + 1);
           end if;
         else
           -- The port is not initialized.
           -- Reset initialization variables.
-          counter_o <= NUMBER_STATUS_TRANSMIT;
-          symbolsTransmitted_o <= (others=>'0');
+          internalState_o.counter <= NUMBER_STATUS_TRANSMIT;
+          internalState_o.symbolsTransmitted <= (others=>'0');
         end if;
       else
         ---------------------------------------------------------------------
@@ -1778,13 +1792,13 @@ begin
           -- is sent before another symbol stored in the rx-control fifo???
           if (((symbolControlStype1 = '1') and (rxControlEmpty_i = '1')) or
               ((symbolControlStype1 = '0') and (symbolData = '0') and
-               (symbolsTransmitted_i = x"ff"))) then
+               (internalState_i.symbolsTransmitted = x"ff"))) then
             -- A control symbol is about to be sent without pending symbol from
             -- receiver or too many idle symbols has been sent.
 
             -- Force the sending of a status containing the bufferStatus.
             controlValidOut <= '1';
-            symbolsTransmitted_o <= (others=>'0');
+            internalState_o.symbolsTransmitted <= (others=>'0');
           elsif ((symbolData = '0') and (rxControlEmpty_i = '0')) then
             -- A control symbol is about to be sent and there is a pending
             -- symbol from the receiver.
@@ -1803,22 +1817,22 @@ begin
             if ((rxControlStype0 = STYPE0_PACKET_ACCEPTED) or
                 (rxControlStype0 = STYPE0_PACKET_RETRY)) then
               -- A symbol containing the bufferStatus has been sent.
-              symbolsTransmitted_o <= (others=>'0');
+              internalState_o.symbolsTransmitted <= (others=>'0');
             else
               -- A symbol not containing the bufferStatus has been sent.
-              symbolsTransmitted_o <= std_logic_vector(unsigned(symbolsTransmitted_i) + 1);
+              internalState_o.symbolsTransmitted <= std_logic_vector(unsigned(internalState_i.symbolsTransmitted) + 1);
             end if;
           else
             -- A symbol not containing the bufferStatus has been sent.
             controlValidOut <= '0';
-            symbolsTransmitted_o <= std_logic_vector(unsigned(symbolsTransmitted_i) + 1);
+            internalState_o.symbolsTransmitted <= std_logic_vector(unsigned(internalState_i.symbolsTransmitted) + 1);
           end if;
         else
           -- The port is not initialized anymore.
           -- Change the operational state.
-          operational_o <= '0';
-          counter_o <= NUMBER_STATUS_TRANSMIT;
-          symbolsTransmitted_o <= (others=>'0');
+          internalState_o.operational <= '0';
+          internalState_o.counter <= NUMBER_STATUS_TRANSMIT;
+          internalState_o.symbolsTransmitted <= (others=>'0');
         end if;          
       end if;
     end if;
@@ -1898,9 +1912,9 @@ entity RioReceiver is
     rxData_i : in std_logic_vector(32*NUMBER_WORDS-1 downto 0);
     
     txControlWrite_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
-    txControlSymbol_o : out std_logic_vector(12*NUMBER_WORDS downto 0);
+    txControlSymbol_o : out std_logic_vector(13*NUMBER_WORDS-1 downto 0);
     rxControlWrite_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
-    rxControlSymbol_o : out std_logic_vector(12*NUMBER_WORDS downto 0);
+    rxControlSymbol_o : out std_logic_vector(13*NUMBER_WORDS-1 downto 0);
     
     ackIdStatus_o : out std_logic_vector(4 downto 0);
     linkInitialized_o : out std_logic;
@@ -1995,17 +2009,20 @@ architecture RioReceiverImpl of RioReceiver is
   signal ackIdCurrent, ackIdNext : unsigned(5*NUMBER_WORDS-1 downto 0);
   signal frameIndexCurrent, frameIndexNext : std_logic_vector(7*NUMBER_WORDS-1 downto 0);
   signal frameWordCounterCurrent, frameWordCounterNext : std_logic_vector(2*NUMBER_WORDS-1 downto 0);
-  signal frameContentCurrent, frameContentNext : std_logic_vector(32*NUMBER_WORDS-1 downto 0);
+  signal frameContentCurrent, frameContentNext : std_logic_vector(32*NUMBER_WORDS*NUMBER_WORDS-1 downto 0);
   signal crcCurrent, crcNext : std_logic_vector(16*NUMBER_WORDS-1 downto 0);
 
   signal txControlWrite : std_logic_vector(NUMBER_WORDS-1 downto 0);
   signal rxControlWrite : std_logic_vector(NUMBER_WORDS-1 downto 0);
   
+  signal internalStateCurrent, internalStateNext : RxInternalType;
+  signal internalState : RxInternalArrayType(NUMBER_WORDS downto 0);
+
   signal writeFrame : std_logic_vector(NUMBER_WORDS-1 downto 0);
   signal writeFrameAbort : std_logic_vector(NUMBER_WORDS-1 downto 0);
   signal writeContent : std_logic_vector(NUMBER_WORDS-1 downto 0);
   signal writeContentWords : std_logic_vector(2*NUMBER_WORDS-1 downto 0);
-  signal writeContentData : std_logic_vector(32*NUMBER_WORDS-1 downto 0);
+  signal writeContentData : std_logic_vector(32*NUMBER_WORDS*NUMBER_WORDS-1 downto 0);
 
 begin
 
@@ -2032,7 +2049,7 @@ begin
       if ((writeContent(i) = '1') and (enable(i) = '1')) then
         writeContent_o <= '1';
         writeContentWords_o <= writeContentWords(2*(i+1)-1 downto 2*i);
-        writeContentData_o <= writeContentData(32*(i+1)-1 downto 32*i);
+        writeContentData_o <= writeContentData(32*NUMBER_WORDS*(i+1)-1 downto 32*NUMBER_WORDS*i);
       end if;
     end loop;
   end process;
@@ -2043,28 +2060,23 @@ begin
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      operationalCurrent <= (others=>'0');
-      inputRetryStoppedCurrent <= (others=>'0');
-      inputErrorStoppedCurrent <= (others=>'0');
-      ackIdCurrent <= (others=>'0');
-      frameIndexCurrent <= (others => '0');
-      frameWordCounterCurrent <= (others=>'0');
-      frameContentCurrent <= (others=>'0');
-      crcCurrent <= (others=>'0');
+      internalStateCurrent <= (operational=>'0',
+                               inputRetryStopped=>'0',
+                               inputErrorStopped=>'0',
+                               ackId=>(others=>'0'),
+                               frameIndex=>(others=>'0'),
+                               frameWordCounter=>(others=>'0'),
+                               frameContent=>(others=>'0'),
+                               crc=>(others=>'0'));
     elsif (clk'event and clk = '1') then
       if (enable(0) = '1') then
-        operationalCurrent <= operationalNext;
-        inputRetryStoppedCurrent <= inputRetryStoppedNext;
-        inputErrorStoppedCurrent <= inputErrorStoppedNext;
-        ackIdCurrent <= ackIdNext;
-        frameIndexCurrent <= frameIndexNext;
-        frameWordCounterCurrent <= frameWordCounterNext;
-        frameContentCurrent <= frameContentNext;
-        crcCurrent <= crcNext;
+        internalStateCurrent <= internalStateNext;
       end if;
     end if;
   end process;
 
+  internalState(0) <= internalStateCurrent;
+  internalStateNext <= internalState(NUMBER_WORDS);
   CoreGeneration: for i in 0 to NUMBER_WORDS-1 generate
     txControlWrite_o(i) <= txControlWrite(i) and enable(i);
     rxControlWrite_o(i) <= rxControlWrite(i);
@@ -2081,8 +2093,8 @@ begin
         portInitialized_i=>portInitialized_i,
         rxEmpty_i=>rxEmpty_i,
         rxRead_o=>rxRead_o,
-        rxType_i=>rxType_i,
-        rxData_i=>rxData_i,
+        rxType_i=>rxType_i(2*(i+1)-1 downto 2*i),
+        rxData_i=>rxData_i(32*(i+1)-1 downto 32*i),
         txControlWrite_o=>txControlWrite(i),
         txControlSymbol_o=>txControlSymbol_o(13*(i+1)-1 downto 13*i),
         rxControlWrite_o=>rxControlWrite(i),
@@ -2090,28 +2102,14 @@ begin
         ackIdStatus_o=>ackIdStatus_o,
         linkInitialized_o=>linkInitialized_o,
         enable_o=>enable(i),
-        operational_i=>operationalCurrent(i),
-        operational_o=>operationalNext(i),
-        inputRetryStopped_i=>inputRetryStoppedCurrent(i),
-        inputRetryStopped_o=>inputRetryStoppedNext(i),
-        inputErrorStopped_i=>inputErrorStoppedCurrent(i),
-        inputErrorStopped_o=>inputErrorStoppedNext(i),
-        ackId_i=>ackIdCurrent(5*(i+1)-1 downto 5*i),
-        ackId_o=>ackIdNext(5*(i+1)-1 downto 5*i),
-        frameIndex_i=>frameIndexCurrent(7*(i+1)-1 downto 7*i),
-        frameIndex_o=>frameIndexNext(7*(i+1)-1 downto 7*i),
-        frameWordCounter_i=>frameWordCounterCurrent(2*(i+1)-1 downto 2*i),
-        frameWordCounter_o=>frameWordCounterNext(2*(i+1)-1 downto 2*i),
-        frameContent_i=>frameContentCurrent(32*(i+1)-1 downto 32*i),
-        frameContent_o=>frameContentNext(32*(i+1)-1 downto 32*i),
-        crc_i=>crcCurrent(16*(i+1)-1 downto 16*i),
-        crc_o=>crcNext(16*(i+1)-1 downto 16*i),
+        internalState_i=>internalState(i),
+        internalState_o=>internalState(i+1),
         writeFrameFull_i=>writeFrameFull_i,
         writeFrame_o=>writeFrame(i),
         writeFrameAbort_o=>writeFrameAbort(i),
         writeContent_o=>writeContent(i),
-        writeContentWords_o=>writeContentWords(2*(i+1)-1 downto 2*i),
-        writeContentData_o=>writeContentData(32*(i+1)-1 downto 32*i));
+        writeContentData_o=>writeContentData(32*NUMBER_WORDS*(i+1)-1 downto 32*NUMBER_WORDS*i),
+        writeContentWords_o=>writeContentWords(2*(i+1)-1 downto 2*i));
   end generate;
   
 end architecture;
@@ -2172,22 +2170,8 @@ entity RioReceiverCore is
 
     -- Core->Core cascading signals.
     enable_o : out std_logic;
-    operational_i : in std_logic;
-    operational_o : out std_logic;
-    inputRetryStopped_i : in std_logic;
-    inputRetryStopped_o : out std_logic;
-    inputErrorStopped_i : in std_logic;
-    inputErrorStopped_o : out std_logic;
-    ackId_i : in unsigned(4 downto 0);
-    ackId_o : out unsigned(4 downto 0);
-    frameIndex_i : in std_logic_vector(6 downto 0);
-    frameIndex_o : out std_logic_vector(6 downto 0);
-    frameWordCounter_i : in std_logic_vector(1 downto 0);
-    frameWordCounter_o : out std_logic_vector(1 downto 0);
-    frameContent_i : in std_logic_vector(32*NUMBER_WORDS-1 downto 0);
-    frameContent_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0);
-    crc_i : in std_logic_vector(15 downto 0);
-    crc_o : out std_logic_vector(15 downto 0);
+    internalState_i : in RxInternalType;
+    internalState_o : in RxInternalType;
     
     -- Frame buffering interface.
     writeFrameFull_i : in std_logic;
@@ -2245,9 +2229,9 @@ architecture RioReceiverCoreImpl of RioReceiverCore is
   
 begin
 
-  linkInitialized_o <= operational_i;
-  ackIdStatus_o <= std_logic_vector(ackId_i);
-  inboundAckId_o <= std_logic_vector(ackId_i);
+  linkInitialized_o <= internalState_i.operational;
+  ackIdStatus_o <= std_logic_vector(internalState_i.ackId);
+  inboundAckId_o <= std_logic_vector(internalState_i.ackId);
 
   -----------------------------------------------------------------------------
   -- First pipeline stage.
@@ -2307,6 +2291,8 @@ begin
       
       symbolContent1 <= (others => '0');
     elsif (clk'event and clk = '1') then
+      txControlWrite_o <= '0';
+      
       if (symbolEnable0 = '1') then
         symbolEnable1 <= '1';
         symbolContent1 <= symbolContent0;
@@ -2392,12 +2378,14 @@ begin
   -- not first data-symbol->crc_o is product of crc_i and symbolContent1.
   -----------------------------------------------------------------------------
 
-  crc16Data(31 downto 26) <= "000000" when (unsigned(frameIndex_i) = 1) else
-                             symbolContent1(31 downto 26);
+  crc16Data(31 downto 26) <=
+    "000000" when (unsigned(internalState_i.frameIndex) = 1) else
+    symbolContent1(31 downto 26);
   crc16Data(25 downto 0) <= symbolContent1(25 downto 0);
 
-  crc16Current <= crc_i when (unsigned(frameIndex_i) /= 1) else
-                  (others => '1');
+  crc16Current <=
+    internalState_i.crc when (unsigned(internalState_i.frameIndex) /= 1) else
+    (others => '1');
 
   Crc16Msb: Crc16CITT
     port map(
@@ -2406,10 +2394,11 @@ begin
     port map(
       d_i=>crc16Data(15 downto 0), crc_i=>crc16Temp, crc_o=>crc16Next);
 
-  crc_o <= crc_i when (symbolData = '0') else
-           crc16Next;
+  internalState_o.crc <=
+    internalState_i.crc when (symbolData = '0') else
+    crc16Next;
 
-  crc16Valid <= '1' when (crc_i = x"0000") else '0';
+  crc16Valid <= '1' when (internalState_i.crc = x"0000") else '0';
 
   -----------------------------------------------------------------------------
   -- Update buffered data.
@@ -2417,42 +2406,40 @@ begin
 
   -- Append the new symbol content to the end of the
   -- current frame content if the symbol is a data symbol.
-  frameContentSingle:
+  frameContent:
   if (NUMBER_WORDS = 1) generate
     frameContent <= symbolContent1;
   end generate;
   frameContentMulti:
   if (NUMBER_WORDS > 1) generate
     frameContent <=
-      (frameContent_i((32*(NUMBER_WORDS-1))-1 downto 0) & symbolContent1) when (symbolData = '1') else
-      frameContent_i;
+      (internalState_i.frameContent((32*(NUMBER_WORDS-1))-1 downto 0) & symbolContent1) when (symbolData = '1') else
+      internalState_i.frameContent;
   end generate;
 
   -- Update outputs.
   enable_o <= symbolEnable1;
-  frameContent_o <= frameContent;
+  internalState_o.frameContent <= frameContent;
   writeContentData_o <= frameContent;
       
   -----------------------------------------------------------------------------
   -- Main inbound symbol handler.
   -----------------------------------------------------------------------------
   process(portInitialized_i, portEnable_i, writeFrameFull_i,
-          operational_i, ackId_i, frameIndex_i, frameWordCounter_i,
-          inputRetryStopped_i, inputErrorStopped_i,
+          internalState_i,
           symbolValid,
           stype0Status,
           stype1Start, stype1End, stype1Stomp, stype1Restart, stype1LinkRequest, 
           symbolData,       
           symbolContent1,
-          frameContent,
           crc16Valid)
   begin
-    operational_o <= operational_i;
-    ackId_o <= ackId_i;
-    frameIndex_o <= frameIndex_i;
-    frameWordCounter_o <= frameWordCounter_i;
-    inputRetryStopped_o <= inputRetryStopped_i;
-    inputErrorStopped_o <= inputErrorStopped_i;
+    internalState_o.operational <= internalState_i.operational;
+    internalState_o.ackId <= internalState_i.ackId;
+    internalState_o.frameIndex <= internalState_i.frameIndex;
+    internalState_o.frameWordCounter <= internalState_i.frameWordCounter;
+    internalState_o.inputRetryStopped <= internalState_i.inputRetryStopped;
+    internalState_o.inputErrorStopped <= internalState_i.inputErrorStopped;
     
     rxControlWrite <= '0';
     rxControlSymbol <= (others => '0');
@@ -2463,7 +2450,7 @@ begin
     writeContentWords_o <= (others => '0');
 
     -- Act on the current state.
-    if (operational_i = '0') then 
+    if (internalState_i.operational = '0') then 
       ---------------------------------------------------------------------
       -- The port is not operational and is waiting for status control
       -- symbols to be received on the link. Count the number
@@ -2486,19 +2473,20 @@ begin
             -- The symbol is a status.
             
             -- Check if enough status symbols have been received.
-            if (unsigned(frameIndex_i) = 7) then
+            if (unsigned(internalState_i.frameIndex) = 7) then
               -- Enough status symbols have been received.
 
               -- Reset all packets.
-              frameIndex_o <= (others => '0');
+              internalState_o.frameIndex <= (others => '0');
               writeFrameAbort_o <= '1';
 
               -- Set the link as initialized.
-              operational_o <= '1';
+              internalState_o.operational <= '1';
             else
               -- Increase the number of error-free status symbols that
               -- has been received.
-              frameIndex_o <= std_logic_vector(unsigned(frameIndex_i) + 1);
+              internalState_o.frameIndex <=
+                std_logic_vector(unsigned(internalState_i.frameIndex) + 1);
             end if;
           else
             -- The symbol is not a status.
@@ -2506,11 +2494,11 @@ begin
           end if;
         else
           -- A control symbol with CRC5 error was recevied.
-          frameIndex_o <= (others => '0');
+          internalState_o.frameIndex <= (others => '0');
         end if;
       else
         -- The port has become uninitialized.
-        frameIndex_o <= (others => '0');
+        internalState_o.frameIndex <= (others => '0');
       end if;
     else
       ---------------------------------------------------------------------
@@ -2528,23 +2516,24 @@ begin
           -- The symbol is correct.
 
           if ((stype1Start = '1') and
-              (inputRetryStopped_i = '0') and (inputErrorStopped_i = '0')) then
+              (internalState_i.inputRetryStopped = '0') and
+              (internalState_i.inputErrorStopped = '0')) then
             -------------------------------------------------------------
             -- Start the reception of a new frame or end a currently
             -- ongoing frame and start a new one.
             -------------------------------------------------------------
             
             -- Check if a frame has already been started.
-            if (unsigned(frameIndex_i) /= 0) then
+            if (unsigned(internalState_i.frameIndex) /= 0) then
               -- A frame is already started.
               -- Complete the last frame and start to ackumulate a new one
               -- and update the ackId.
               
-              if (unsigned(frameIndex_i) > 3) then
+              if (unsigned(internalState_i.frameIndex) > 3) then
 
                 -- Reset the frame index to indicate the frame is started.
-                frameIndex_o <= "0000001";
-                frameWordCounter_o <= (others=>'0');
+                internalState_o.frameIndex <= "0000001";
+                internalState_o.frameWordCounter <= (others=>'0');
                 
                 -- Check the CRC-16 and the length of the received frame.
                 if (crc16Valid = '1') then
@@ -2553,7 +2542,7 @@ begin
                   -- Check if there are any unwritten buffered packet content
                   -- and write it if there is.
                   -- REMARK: Multi-symbol support...
-                  if (unsigned(frameWordCounter_i) /= 0) then
+                  if (unsigned(internalState_i.frameWordCounter) /= 0) then
                     writeContent_o <= '1';
                   end if;  
                   
@@ -2562,14 +2551,14 @@ begin
                   writeFrame_o <= '1';
 
                   -- Update ackId.
-                  ackId_o <= ackId_i + 1;
+                  internalState_o.ackId <= internalState_i.ackId + 1;
 
                   -- Send packet-accepted.
                   -- The buffer status is appended by the transmitter
                   -- when sent to get the latest number.
                   rxControlWrite <= '1';
                   rxControlSymbol <= STYPE0_PACKET_ACCEPTED &
-                                     std_logic_vector(ackId_i) &
+                                     std_logic_vector(internalState_i.ackId) &
                                      "11111";
                 else
                   -- The CRC-16 is not ok.
@@ -2580,7 +2569,7 @@ begin
                   rxControlSymbol <= STYPE0_PACKET_NOT_ACCEPTED &
                                      "00000" &
                                      PACKET_NOT_ACCEPTED_CAUSE_PACKET_CRC;
-                  inputErrorStopped_o <= '1';
+                  internalState_o.inputErrorStopped <= '1';
                 end if;
               else
                 -- This packet is too small.
@@ -2590,29 +2579,30 @@ begin
                 rxControlSymbol <= STYPE0_PACKET_NOT_ACCEPTED &
                                    "00000" &
                                    PACKET_NOT_ACCEPTED_CAUSE_GENERAL_ERROR;
-                inputErrorStopped_o <= '1';
+                internalState_o.inputErrorStopped <= '1';
               end if;
             else
               -- No frame has been started.
               
               -- Reset the frame index to indicate the frame is started.
-              frameIndex_o <= "0000001";
-              frameWordCounter_o <= (others=>'0');
+              internalState_o.frameIndex <= "0000001";
+              internalState_o.frameWordCounter <= (others=>'0');
             end if;
           end if;
           
           if ((stype1End = '1') and
-              (inputRetryStopped_i = '0') and (inputErrorStopped_i = '0')) then
+              (internalState_i.inputRetryStopped = '0') and
+              (internalState_i.inputErrorStopped = '0')) then
             -------------------------------------------------------------
             -- End the reception of an old frame.
             -------------------------------------------------------------
             
             -- Check if a frame has already been started.
-            if (unsigned(frameIndex_i) > 3) then
+            if (unsigned(internalState_i.frameIndex) > 3) then
               -- A frame has been started and it is large enough.
               
               -- Reset frame reception to indicate that no frame is ongoing.
-              frameIndex_o <= (others => '0');
+              internalState_o.frameIndex <= (others => '0');
               
               -- Check the CRC-16 and the length of the received frame.
               if (crc16Valid = '1') then
@@ -2621,7 +2611,7 @@ begin
                 -- Check if there are any unwritten buffered packet content
                 -- and write it if there is.
                 -- REMARK: Multi-symbol support...
-                if (unsigned(frameWordCounter_i) /= 0) then
+                if (unsigned(internalState_i.frameWordCounter) /= 0) then
                   writeContent_o <= '1';
                 end if;  
                     
@@ -2630,14 +2620,14 @@ begin
                 writeFrame_o <= '1';
 
                 -- Update ackId.
-                ackId_o <= ackId_i + 1;
+                internalState_o.ackId <= internalState_i.ackId + 1;
 
                 -- Send packet-accepted.
                 -- The buffer status is appended by the transmitter
                 -- when sent to get the latest number.
                 rxControlWrite <= '1';
                 rxControlSymbol <= STYPE0_PACKET_ACCEPTED &
-                                   std_logic_vector(ackId_i) &
+                                   std_logic_vector(internalState_i.ackId) &
                                    "11111";
               else
                 -- The CRC-16 is not ok.
@@ -2648,7 +2638,7 @@ begin
                 rxControlSymbol <= STYPE0_PACKET_NOT_ACCEPTED &
                                    "00000" &
                                    PACKET_NOT_ACCEPTED_CAUSE_PACKET_CRC;
-                inputErrorStopped_o <= '1';
+                internalState_o.inputErrorStopped <= '1';
               end if;
             else
               -- This packet is too small.
@@ -2658,12 +2648,13 @@ begin
               rxControlSymbol <= STYPE0_PACKET_NOT_ACCEPTED &
                                  "00000" &
                                  PACKET_NOT_ACCEPTED_CAUSE_GENERAL_ERROR;
-              inputErrorStopped_o <= '1';
+              internalState_o.inputErrorStopped <= '1';
             end if;
           end if;
 
           if ((stype1Stomp = '1') and
-              (inputRetryStopped_i = '0') and (inputErrorStopped_i = '0')) then 
+              (internalState_i.inputRetryStopped = '0') and
+              (internalState_i.inputErrorStopped = '0')) then 
             -------------------------------------------------------------
             -- Restart the reception of an old frame.
             -------------------------------------------------------------
@@ -2673,26 +2664,26 @@ begin
             -- that the packet cannot be accepted.
             rxControlWrite <= '1';
             rxControlSymbol <= STYPE0_PACKET_RETRY &
-                               std_logic_vector(ackId_i) &
+                               std_logic_vector(internalState_i.ackId) &
                                "11111";
             
             -- Enter the input retry-stopped state.
-            inputRetryStopped_o <= '1';
+            internalState_o.inputRetryStopped <= '1';
           end if;
 
           if (stype1Restart = '1') then
-            if (inputRetryStopped_i = '1') then
+            if (internalState_i.inputRetryStopped = '1') then
               -------------------------------------------------------------
               -- The receiver indicates a restart from a retry sent
               -- from us.
               -------------------------------------------------------------
 
               -- Abort the frame and reset frame reception.
-              frameIndex_o <= (others => '0');
+              internalState_o.frameIndex <= (others => '0');
               writeFrameAbort_o <= '1';
               
               -- Go back to the normal operational state.
-              inputRetryStopped_o <= '0';
+              internalState_o.inputRetryStopped <= '0';
             else
               -------------------------------------------------------------
               -- The receiver indicates a restart from a retry sent
@@ -2708,7 +2699,7 @@ begin
               rxControlSymbol <= STYPE0_PACKET_NOT_ACCEPTED &
                                  "00000" &
                                  PACKET_NOT_ACCEPTED_CAUSE_GENERAL_ERROR;
-              inputErrorStopped_o <= '1';
+              internalState_o.inputErrorStopped <= '1';
             end if;
           end if;
 
@@ -2723,21 +2714,21 @@ begin
               -- This functions as a link-request(restart-from-error)
               -- control symbol under error situations.
 
-              if (inputErrorStopped_i = '1') then 
+              if (internalState_i.inputErrorStopped = '1') then 
                 rxControlWrite <= '1';
                 rxControlSymbol <= STYPE0_LINK_RESPONSE &
-                                   std_logic_vector(ackId_i) &
+                                   std_logic_vector(internalState_i.ackId) &
                                    "00101";
-              elsif (inputRetryStopped_i = '1') then 
+              elsif (internalState_i.inputRetryStopped = '1') then 
                 rxControlWrite <= '1';
                 rxControlSymbol <= STYPE0_LINK_RESPONSE &
-                                   std_logic_vector(ackId_i) &
+                                   std_logic_vector(internalState_i.ackId) &
                                    "00100";
               else
                 -- Send a link response containing an ok reply.
                 rxControlWrite <= '1';
                 rxControlSymbol <= STYPE0_LINK_RESPONSE &
-                                   std_logic_vector(ackId_i) &
+                                   std_logic_vector(internalState_i.ackId) &
                                    "10000";
               end if;
             else
@@ -2746,20 +2737,21 @@ begin
             end if;
             
             -- Abort the frame and reset frame reception.
-            inputRetryStopped_o <= '0';
-            inputErrorStopped_o <= '0';
-            frameIndex_o <= (others=>'0');
+            internalState_o.inputRetryStopped <= '0';
+            internalState_o.inputErrorStopped <= '0';
+            internalState_o.frameIndex <= (others=>'0');
             writeFrameAbort_o <= '1';
           end if;
 
           if ((symbolData = '1')  and
-              (inputRetryStopped_i = '0') and (inputErrorStopped_i = '0')) then
+              (internalState_i.inputRetryStopped = '0') and
+              (internalState_i.inputErrorStopped = '0')) then
             -------------------------------------------------------------
             -- This is a data symbol.
             -------------------------------------------------------------
             -- REMARK: Add check for in-the-middle-crc here...
 
-            case frameIndex_i is
+            case internalState_i.frameIndex is
               when "0000000" | "1000110" =>
                 -- A frame has not been started or is too long.
                 -- Send packet-not-accepted.
@@ -2767,9 +2759,9 @@ begin
                 rxControlSymbol <= STYPE0_PACKET_NOT_ACCEPTED &
                                    "00000" &
                                    PACKET_NOT_ACCEPTED_CAUSE_GENERAL_ERROR;
-                inputErrorStopped_o <= '1';
+                internalState_o.inputErrorStopped <= '1';
               when "0000001" =>
-                if (unsigned(symbolContent1(31 downto 27)) = ackId_i) then
+                if (unsigned(symbolContent1(31 downto 27)) = internalState_i.ackId) then
                   if ((portEnable_i = '1') or
                       (symbolContent1(19 downto 16) = FTYPE_MAINTENANCE_CLASS)) then
 
@@ -2782,25 +2774,27 @@ begin
                       -- Check if the buffer entry is ready to be written
                       -- into the packet buffer.
                       -- REMARK: Multi-symbol support...
-                      if (unsigned(frameWordCounter_i) = (NUMBER_WORDS-1)) then
+                      if (unsigned(internalState_i.frameWordCounter) = (NUMBER_WORDS-1)) then
                         -- Write the data to the frame FIFO.
-                        frameWordCounter_o <= (others=>'0');
+                        internalState_o.frameWordCounter <= (others=>'0');
                         writeContent_o <= '1';
-                        writeContentWords_o <= frameWordCounter_i;
+                        writeContentWords_o <= internalState_i.frameWordCounter;
                       else
-                        frameWordCounter_o <= std_logic_vector(unsigned(frameWordCounter_i) + 1);
+                        internalState_o.frameWordCounter <=
+                          std_logic_vector(unsigned(internalState_i.frameWordCounter) + 1);
                       end if;
                       
                       -- Increment the number of received data symbols.
-                      frameIndex_o <= std_logic_vector(unsigned(frameIndex_i) + 1);
+                      internalState_o.frameIndex <=
+                        std_logic_vector(unsigned(internalState_i.frameIndex) + 1);
                     else
                       -- The packet buffer is full.
                       -- Let the link-partner resend the packet.
                       rxControlWrite <= '1';
                       rxControlSymbol <= STYPE0_PACKET_RETRY &
-                                         std_logic_vector(ackId_i) &
+                                         std_logic_vector(internalState_i.ackId) &
                                          "11111";
-                      inputRetryStopped_o <= '1';
+                      internalState_o.inputRetryStopped <= '1';
                     end if;
                   else
                     -- A non-maintenance packets are not allowed.
@@ -2809,7 +2803,7 @@ begin
                     rxControlSymbol <= STYPE0_PACKET_NOT_ACCEPTED &
                                        "00000" &
                                        PACKET_NOT_ACCEPTED_CAUSE_NON_MAINTENANCE_STOPPED;
-                    inputErrorStopped_o <= '1';
+                    internalState_o.inputErrorStopped <= '1';
                   end if;
                 else
                   -- The ackId is unexpected.
@@ -2818,24 +2812,26 @@ begin
                   rxControlSymbol <= STYPE0_PACKET_NOT_ACCEPTED &
                                      "00000" &
                                      PACKET_NOT_ACCEPTED_CAUSE_UNEXPECTED_ACKID;
-                  inputErrorStopped_o <= '1';
+                  internalState_o.inputErrorStopped <= '1';
                 end if;
               when others =>
                 -- A frame has been started and is not too long.
                 -- Check if the buffer entry is ready to be written
                 -- into the packet buffer.
                 -- REMARK: Multi-symbol support...
-                if (unsigned(frameWordCounter_i) = (NUMBER_WORDS-1)) then
+                if (unsigned(internalState_i.frameWordCounter) = (NUMBER_WORDS-1)) then
                   -- Write the data to the frame FIFO.
-                  frameWordCounter_o <= (others=>'0');
+                  internalState_o.frameWordCounter <= (others=>'0');
                   writeContent_o <= '1';
-                  writeContentWords_o <= frameWordCounter_i;
+                  writeContentWords_o <= internalState_i.frameWordCounter;
                 else
-                  frameWordCounter_o <= std_logic_vector(unsigned(frameWordCounter_i) + 1);
+                  internalState_o.frameWordCounter <=
+                    std_logic_vector(unsigned(internalState_i.frameWordCounter) + 1);
                 end if;                        
 
                 -- Increment the number of received data symbols.
-                frameIndex_o <= std_logic_vector(unsigned(frameIndex_i) + 1);
+                internalState_o.frameIndex <=
+                  std_logic_vector(unsigned(internalState_i.frameIndex) + 1);
             end case;
           end if;
         else
@@ -2847,12 +2843,12 @@ begin
           rxControlSymbol <= STYPE0_PACKET_NOT_ACCEPTED &
                              "00000" &
                              PACKET_NOT_ACCEPTED_CAUSE_CONTROL_CRC;
-          inputErrorStopped_o <= '1';
+          internalState_o.inputErrorStopped <= '1';
         end if;
       else
         -- The port has become uninitialized.
         -- Go back to the uninitialized state.
-        operational_o <= '0';
+        internalState_o.operational <= '0';
       end if;
     end if;
   end process;
