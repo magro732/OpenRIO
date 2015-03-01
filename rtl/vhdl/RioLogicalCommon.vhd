@@ -80,10 +80,12 @@
 -- 1: src(15:0);transaction(3:0)
 -- shifter: 16 (48 empty)
 
+-------------------------------------------------------------------------------
+-- RioLogicalCommonIngress.
+-------------------------------------------------------------------------------
 library ieee;
-use ieee.numeric_std.all;
 use ieee.std_logic_1164.all;
-use ieee.std_logic_unsigned.all;
+use ieee.numeric_std.all;
 use work.rio_common.all;
 
 -------------------------------------------------------------------------------
@@ -271,16 +273,356 @@ begin
 end architecture;
 
 
+-------------------------------------------------------------------------------
+-- RioLogicalCommonEgress.
+-- Only 8-bit and 16-bit deviceId are supported. The first write must contain
+-- the 16-bit header, the second write must contain the destination address and
+-- the third must contain the source address.
+-- CRC is calculated during the transfer and inserted at byte 81 and 82 and
+-- appended to the packet when it ends.
+-- slaveSelect_i - four bits indicating valid bytes in slaveData_i.
+-------------------------------------------------------------------------------
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+use work.rio_common.all;
+
+-------------------------------------------------------------------------------
+-- Entity for RioLogicalCommonEgress.
+-------------------------------------------------------------------------------
+entity RioLogicalCommonEgress is
+  port(
+    clk : in std_logic;
+    areset_n : in std_logic;
+
+    writeFrameFull_i : in std_logic;
+    writeFrame_o : out std_logic;
+    writeFrameAbort_o : out std_logic;
+    writeContent_o : out std_logic;
+    writeContentData_o : out std_logic_vector(31 downto 0);
+
+    slaveCyc_i : in std_logic;
+    slaveStb_i : in std_logic;
+    slaveSel_i : in std_logic_vector(3 downto 0);
+    slaveDat_i : in std_logic_vector(31 downto 0);
+    slaveAck_o : out std_logic);
+end entity;
+
+
+-------------------------------------------------------------------------------
+-- Architecture for RioLogicalCommonEgress.
+-------------------------------------------------------------------------------
+architecture RioLogicalCommonEgress of RioLogicalCommonEgress is
+
+  component Crc16CITT is
+    port(
+      d_i : in  std_logic_vector(15 downto 0);
+      crc_i : in  std_logic_vector(15 downto 0);
+      crc_o : out std_logic_vector(15 downto 0));
+  end component;
+
+  signal crc16Current, crc16Temp, crc16Next: std_logic_vector(15 downto 0);
+
+begin
+
+  process(clk, areset_n)
+  begin
+    if (areset_n = '0') then
+      crc16Current <= x"0000";
+      writeContentData <= (others=>'0');
+    elsif (clk'event and clk = '1') then
+      writeContent_o <= '0';
+      writeFrame_o <= '0';
+      
+      case state is
+        when IDLE =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          if (writeFrameFull_i = '0') then
+            state <= HEADER_GET;
+            packetPosition <= 0;
+            crc16Current <= x"ffff";
+          end if;
+
+        when GET_HEADER =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
+            -- REMARK: Only support the header in one position?
+            if (slaveSelect_i = "1100") then
+              header <= slaveData_i(31 downto 16);
+              tt <= slaveData_i(21 downto 20);
+            elsif (slaveSelect_i = "0110") then
+              header <= slaveData_i(23 downto 8);
+              tt <= slaveData_i(13 downto 12);
+            elsif (slaveSelect_i = "0011") then
+              header <= slaveData_i(15 downto 0);
+              tt <= slaveData_i(5 downto 4);
+            else
+              -- Not supported.
+            end if;
+            
+            slaveAck_o <= '1';
+
+            state <= HEADER_ACK;
+          else
+            state <= RESTART_FRAME;
+          end if;
+
+        when HEADER_ACK =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          slaveAck_o <= '0';
+          state <= DESTINATION_GET;
+
+        when DESTINATION_GET =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          
+          if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
+            -- REMARK: Only support the destination in one position?
+            if (slaveSelect_i = "1000") and (tt = "00") then
+              dstAddr <= slaveData_i(31 downto 24);
+            elsif (slaveSelect_i = "0100") and (tt = "00") then
+              dstAddr <= slaveData_i(23 downto 16);
+            elsif (slaveSelect_i = "0010") and (tt = "00") then
+              dstAddr <= slaveData_i(15 downto 8);
+            elsif (slaveSelect_i = "0001") and (tt = "00") then
+              dstAddr <= slaveData_i(7 downto 0);
+            elsif (slaveSelect_i = "1100") and (tt = "01") then
+              writeContent_o <= '1';
+              writeContentData <= header & slaveData_i(31 downto 16);
+              packetPosition <= packetPosition + 1;
+            elsif (slaveSelect_i = "0110") and (tt = "01") then
+              writeContent_o <= '1';
+              writeContentData <= header & slaveData_i(24 downto 8);
+              packetPosition <= packetPosition + 1;
+            elsif (slaveSelect_i = "0011") and (tt = "01") then
+              writeContent_o <= '1';
+              writeContentData <= header & slaveData_i(15 downto 0);
+              packetPosition <= packetPosition + 1;
+            else
+              -- REMARK: Not supported.
+            end if;
+            
+            slaveAck_o <= '1';
+
+            state <= DESTINATION_ACK;
+          else
+            state <= RESTART_FRAME;
+          end if;
+        
+        when DESTINATION_ACK =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          slaveAck_o <= '0';
+          state <= SOURCE_GET;
+
+        when SOURCE_GET =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          
+          if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
+            -- REMARK: Only support the source in one position?
+            if (slaveSelect_i = "1000") and (tt = "00") then
+              halfWordPending <= '0';
+              writeContent_o <= '1';
+              writeContentData <= header & dstAddr & slaveData_i(31 downto 24);
+              packetPosition <= packetPosition + 1;
+            elsif (slaveSelect_i = "0100") and (tt = "00") then
+              halfWordPending <= '0';
+              writeContent_o <= '1';
+              writeContentData <= header & dstAddr & slaveData_i(23 downto 16);
+              packetPosition <= packetPosition + 1;
+            elsif (slaveSelect_i = "0010") and (tt = "00") then
+              halfWordPending <= '0';
+              writeContent_o <= '1';
+              writeContentData <= header & dstAddr & slaveData_i(15 downto 8);
+              packetPosition <= packetPosition + 1;
+            elsif (slaveSelect_i = "0001") and (tt = "00") then
+              halfWordPending <= '0';
+              writeContent_o <= '1';
+              writeContentData <= header & dstAddr & slaveData_i(7 downto 0);
+              packetPosition <= packetPosition + 1;
+            elsif (slaveSelect_i = "1100") and (tt = "01") then
+              halfWordPending <= '1';
+              halfWord <= slaveData_i(31 downto 16);
+            elsif (slaveSelect_i = "0110") and (tt = "01") then
+              halfWordPending <= '1';
+              halfWord <= slaveData_i(24 downto 8);
+            elsif (slaveSelect_i = "0011") and (tt = "01") then
+              halfWordPending <= '1';
+              halfWord <= slaveData_i(15 downto 0);
+            else
+              -- REMARK: Not supported.
+            end if;
+            
+            slaveAck_o <= '1';
+
+            state <= SOURCE_ACK;
+          else
+            state <= RESTART_FRAME;
+          end if;
+        
+        when SOURCE_ACK =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          slaveAck_o <= '0';
+
+          if (tt = "00") then
+            crcCurrent <= crcNext;
+          end if;
+          
+          state <= CONTENT_GET;
+          
+        when CONTENT_GET =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
+            -- REMARK: Only support full writes? Not possible with the last
+            -- access though.
+            if (slaveSelect_i = "1111") then
+              if (halfWordPending = '0') then
+                writeContent_o <= '1';
+                writeContentData <= slaveData_i;
+                packetPosition <= packetPosition + 1;
+              else
+                writeContent_o <= '1';
+                writeContentData <= halfWord & slaveData_i(31 downto 16);
+                packetPosition <= packetPosition + 1;
+                halfWord <= slaveData_i(15 downto 0);
+              end if;
+            elsif (slaveSelect_i = "1100") then
+              if (halfWordPending = '0') then
+                halfWordPending <= '1';
+                halfWord <= slaveData_i(31 downto 16);
+              else
+                writeContent_o <= '1';
+                writeContentData <= halfWord & slaveData_i(31 downto 16);
+                packetPosition <= packetPosition + 1;
+                halfWordPending <= '0';
+              end if;
+            elsif (slaveSelect_i = "0011") then
+              if (halfWordPending = '0') then
+                halfWordPending <= '1';
+                halfWord <= slaveData_i(15 downto 0);
+              else
+                writeContent_o <= '1';
+                writeContentData <= halfWord & slaveData_i(15 downto 0);
+                packetPosition <= packetPosition + 1;
+                halfWordPending <= '0';
+              end if;
+            end if;
+            
+            slaveAck_o <= '1';
+
+            state <= CONTENT_ACK;
+          else
+            state <= CRC_APPEND;
+          end if;
+
+        when CONTENT_ACK =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          slaveAck_o <= '0';
+          
+          crc16Current <= crc16Next;
+
+          if (packetPosition = 20) then
+            if (halfWordPending = '0') then
+              halfWordPending <= '1';
+              halfWord <= crc16Next;
+            else
+              -- REMARK: The current CRC has to be updated when this is written.
+              writeContent_o <= '1';
+              writeContentData <= halfWord & crc16Next;
+              packetPosition <= packetPosition + 1;
+              halfWordPending <= '0';
+              halfWord <= crc16Next;
+            end if;
+          end if;
+          
+          state <= CONTENT_GET;
+
+        when CRC_APPEND =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          if (halfWordPending = '0') then
+            writeContent_o <= '1';
+            writeContentData <= crc16Current & x"0000";
+            packetPosition <= packetPosition + 1;
+          else
+            writeContent_o <= '1';
+            writeContentData <= halfWord & crc16Current;
+            packetPosition <= packetPosition + 1;
+          end if;
+
+          state <= SEND_FRAME;
+
+        when SEND_FRAME =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          writeFrame_o <= '1';
+          state <= WAIT_UPDATE;
+
+        when RESTART_FRAME =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          writeFrameAbort_o <= '1';
+          state <= WAIT_UPDATE;
+
+        when WAIT_UPDATE =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+          state <= IDLE;
+          
+        when others =>
+          ---------------------------------------------------------------------
+          -- 
+          ---------------------------------------------------------------------
+      end case;
+    end if;
+  end process;
+
+  -----------------------------------------------------------------------------
+  -- Packet CRC calculation.
+  -----------------------------------------------------------------------------
+
+  Crc16High: Crc16CITT
+    port map(
+      d_i=>writeContentData(31 downto 16), crc_i=>crc16Current, crc_o=>crc16Temp);
+  Crc16Low: Crc16CITT
+    port map(
+      d_i=>writeContentData(15 downto 0), crc_i=>crc16Temp, crc_o=>crc16Next);
+
+
+end architecture;
+
+
+
 
 
 -------------------------------------------------------------------------------
 -- RioLogicalMaintenanceRequest
+-- This logical layer module handles ingress maintenance requests.
 -- Addresses: 0x80 (maint read request) and 0x81 (maint write request).
 -------------------------------------------------------------------------------
 library ieee;
-use ieee.numeric_std.ALL;
 use ieee.std_logic_1164.all;
-use ieee.std_logic_unsigned.all;
+use ieee.numeric_std.all;
 use work.rio_common.all;
 
 -------------------------------------------------------------------------------
@@ -301,9 +643,15 @@ entity RioLogicalMaintenanceRequest is
 
     slaveCyc_i : in std_logic;
     slaveStb_i : in std_logic;
-    slaveAddress_i : in std_logic_vector(7 downto 0);
-    slaveData_i : in std_logic_vector(31 downto 0);
-    slaveAck_o : out std_logic);
+    slaveAdr_i : in std_logic_vector(7 downto 0);
+    slaveDat_i : in std_logic_vector(31 downto 0);
+    slaveAck_o : out std_logic;
+
+    masterCyc_o : out std_logic;
+    masterStb_o : out std_logic;
+    masterSel_o : out std_logic_vector(3 downto 0);
+    masterDat_o : out std_logic_vector(31 downto 0);
+    masterAck_i : in std_logic);
 end entity;
 
 architecture RioLogicalMaintenanceRequest of RioLogicalMaintenanceRequest is
@@ -321,6 +669,23 @@ begin
       elsif (slaveStb_i = '1') then
         if (slaveAck = '0') then
           if (slaveAddress_i = x"80") then
+            -- Maintenance read request.
+            case (packetIndex) is
+              when 0 =>
+                -- x"0000" & ackid & vc & crf & prio & tt & ftype
+              when 1 =>
+                -- destId
+              when 2 =>
+                -- srcId
+              when 3 =>
+                -- transaction & rdsize & srcTID & hop & config_offset(20:13)
+              when 4 =>
+                -- config_offset(12:0) & wdptr & rsrv & crc(15:0)
+              when others =>
+                -- REMARK: Larger packets not supported.
+            end case;
+          elsif (slaveAddress_i = x"81") then
+            -- Maintenance write request.
             case (packetIndex) is
               when 0 =>
                 -- x"0000" & ackid & vc & crf & prio & tt & ftype
@@ -336,21 +701,6 @@ begin
                 -- double-word(47:16)
               when 6 =>
                 -- double-word(15:0) & crc(15:0)
-              when others =>
-                -- REMARK: Larger packets not supported.
-            end case;
-          elsif (slaveAddress_i = x"81") then
-            case (packetIndex) is
-              when 0 =>
-                -- x"0000" & ackid & vc & crf & prio & tt & ftype
-              when 1 =>
-                -- destId
-              when 2 =>
-                -- srcId
-              when 3 =>
-                -- transaction & rdsize & srcTID & hop & config_offset(20:13)
-              when 4 =>
-                -- config_offset(12:0) & wdptr & rsrv & crc(15:0)
               when others =>
                 -- REMARK: Larger packets not supported.
             end case;
