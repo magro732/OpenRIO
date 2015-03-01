@@ -269,6 +269,12 @@ package rio_common is
   function byteToString(constant byte : std_logic_vector(7 downto 0))
     return string;
 
+  -----------------------------------------------------------------------------
+  -- Function to print a std_logic_vector.
+  -----------------------------------------------------------------------------
+  function to_string(constant value : std_logic_vector)
+    return string;
+    
   ---------------------------------------------------------------------------
   -- Procedure to print to report file and output
   ---------------------------------------------------------------------------
@@ -290,8 +296,44 @@ package rio_common is
   procedure PrintE( constant str : string );
 
   ---------------------------------------------------------------------------
-  -- Procedure to end a test.
+  -- Procedures for test control.
   ---------------------------------------------------------------------------
+
+  procedure TestWarning(constant tag : in string);
+  procedure TestError(constant tag : in string;
+                      constant stopAtError : in boolean := true);
+  procedure TestCompare(constant expression : in boolean;
+                        constant tag : in string := "";
+                        constant stopAtError : in boolean := true);
+  procedure TestCompare(constant got : in std_logic;
+                        constant expected : in std_logic;
+                        constant tag : in string := "";
+                        constant stopAtError : in boolean := true);
+  procedure TestCompare(constant got : in std_logic_vector;
+                        constant expected : in std_logic_vector;
+                        constant tag : in string := "";
+                        constant stopAtError : in boolean := true);
+  procedure TestCompare(constant got : in natural;
+                        constant expected : in natural;
+                        constant tag : in string := "";
+                        constant stopAtError : in boolean := true);
+  procedure TestCompare(constant got : in time;
+                        constant expected : in time;
+                        constant tag : in string := "";
+                        constant stopAtError : in boolean := true);
+  
+  procedure TestWait(signal waitSignal : in std_logic;
+                     constant waitValue : in std_logic;
+                     constant tag : in string := "";
+                     constant waitTime : in time := 1 ms;
+                     constant stopAtError : in boolean := true);
+  procedure TestWait(signal waitSignal : in std_logic;
+                     constant waitValue : in std_logic;
+                     signal ackSignal : inout std_logic;
+                     constant tag : in string := "";
+                     constant waitTime : in time := 1 ms;
+                     constant stopAtError : in boolean := true);
+
   procedure TestEnd;
 
 end package;
@@ -688,6 +730,48 @@ package body rio_common is
     return returnValue;
   end function;
   
+  -----------------------------------------------------------------------------
+  -- Function to print std_logic_vector.
+  -----------------------------------------------------------------------------
+  function to_string(constant value : std_logic) return string is
+    variable s : string(1 to 1);
+  begin
+    if (value = '0') then
+      s(1) := '0';
+    elsif (value = '1') then
+      s(1) := '1';
+    elsif (value = 'U') then
+      s(1) := 'U';
+    elsif (value = 'X') then
+      s(1) := 'X';
+    else
+      s(1) := '?';
+    end if;
+    return s;
+  end function;
+  function to_string(constant value : std_logic_vector) return string is
+    variable s : string(1 to value'length);
+    variable index : positive;
+    variable i : natural;
+  begin
+    index := 1;
+    for i in value'range loop
+      if (value(i) = '0') then
+        s(index) := '0';
+      elsif (value(i) = '1') then
+        s(index) := '1';
+      elsif (value(i) = 'U') then
+        s(index) := 'U';
+      elsif (value(i) = 'X') then
+        s(index) := 'X';
+      else
+        s(index) := '?';
+      end if;
+      index := index + 1;
+    end loop;
+    return s;
+  end function;
+  
   ---------------------------------------------------------------------------
   -- Procedure to print test report
   ---------------------------------------------------------------------------
@@ -745,14 +829,216 @@ package body rio_common is
   end PrintE;
 
   ---------------------------------------------------------------------------
-  -- Procedure to end a test.
+  -- Procedures to handle tests.
   ---------------------------------------------------------------------------
-  procedure TestEnd is
+
+  procedure TestWarning(constant tag : in string) is
+    variable writeBuffer : line;
   begin
-    assert false report "Test complete." severity failure;
-    wait;
-  end TestEnd;
+    write(writeBuffer, now);
+    write(writeBuffer, string'(":WARNING:"));
+    write(writeBuffer, tag);
+    writeline(OUTPUT, writeBuffer);
+  end procedure;
   
+  procedure TestError(constant tag : in string;
+                      constant stopAtError : in boolean := true) is
+    variable writeBuffer : line;
+  begin
+    write(writeBuffer, now);
+    write(writeBuffer, string'(":FAILED:"));
+    write(writeBuffer, tag);
+    writeline(OUTPUT, writeBuffer);
+    
+    if (stopAtError) then
+      std.env.stop(0);
+    end if;
+  end procedure;
+  
+  procedure TestCompare(constant expression : in boolean;
+                        constant tag : in string := "";
+                        constant stopAtError : in boolean := true) is
+    variable writeBuffer : line;
+  begin
+    write(writeBuffer, now);
+    if (not expression) then
+      write(writeBuffer, string'(":FAILED:"));
+    else
+      write(writeBuffer, string'(":PASSED:"));
+    end if;
+    write(writeBuffer, tag);
+    writeline(OUTPUT, writeBuffer);
+    
+    if (stopAtError) and (not expression) then
+      std.env.stop(0);
+    end if;
+  end procedure;
+  
+  procedure TestCompare(constant got : in std_logic;
+                        constant expected : in std_logic;
+                        constant tag : in string := "";
+                        constant stopAtError : in boolean := true) is
+    variable writeBuffer : line;
+  begin
+    write(writeBuffer, now);
+    if (expected /= got) then
+      write(writeBuffer, string'(":FAILED:"));
+      write(writeBuffer, tag);
+      write(writeBuffer, ":got=" & to_string(got));
+      write(writeBuffer, ":expected=" & to_string(expected));
+    else
+      write(writeBuffer, string'(":PASSED:"));
+      write(writeBuffer, tag);
+    end if;
+    writeline(OUTPUT, writeBuffer);
+
+    if (stopAtError) and (expected /= got) then
+      std.env.stop(0);
+    end if;
+  end procedure;
+  
+  procedure TestCompare(constant got : in std_logic_vector;
+                        constant expected : in std_logic_vector;
+                        constant tag : in string := "";
+                        constant stopAtError : in boolean := true) is
+    variable writeBuffer : line;
+  begin
+    write(writeBuffer, now);
+    if (expected /= got) then
+      write(writeBuffer, string'(":FAILED:"));
+      write(writeBuffer, tag);
+      write(writeBuffer, ":got=" & to_string(got));
+      write(writeBuffer, ":expected=" & to_string(expected));
+    else
+      write(writeBuffer, string'(":PASSED:"));
+      write(writeBuffer, tag);
+    end if;
+    writeline(OUTPUT, writeBuffer);
+
+    if (stopAtError) and (expected /= got) then
+      std.env.stop(0);
+    end if;
+  end procedure;
+  
+  procedure TestCompare(constant got : in natural;
+                        constant expected : in natural;
+                        constant tag : in string := "";
+                        constant stopAtError : in boolean := true) is
+    variable writeBuffer : line;
+  begin
+    write(writeBuffer, now);
+    if (expected /= got) then
+      write(writeBuffer, string'(":FAILED:"));
+      write(writeBuffer, tag);
+      write(writeBuffer, ":got=" & integer'image(got));
+      write(writeBuffer, ":expected=" & integer'image(expected));
+    else
+      write(writeBuffer, string'(":PASSED:"));
+      write(writeBuffer, tag);
+    end if;
+    writeline(OUTPUT, writeBuffer);
+
+    if (stopAtError) and (expected /= got) then
+      std.env.stop(0);
+    end if;
+  end procedure;
+  
+  procedure TestCompare(constant got : in time;
+                        constant expected : in time;
+                        constant tag : in string := "";
+                        constant stopAtError : in boolean := true) is
+    variable writeBuffer : line;
+  begin
+    write(writeBuffer, now);
+    if (expected /= got) then
+      write(writeBuffer, string'(":FAILED:"));
+      write(writeBuffer, tag);
+      write(writeBuffer, string'(":got="));
+      write(writeBuffer, got);
+      write(writeBuffer, string'(":expected="));
+      write(writeBuffer, expected);
+    else
+      write(writeBuffer, string'(":PASSED:"));
+      write(writeBuffer, tag);
+    end if;
+    writeline(OUTPUT, writeBuffer);
+
+    if (stopAtError) and (expected /= got) then
+      std.env.stop(0);
+    end if;
+  end procedure;
+
+  procedure TestWait(signal waitSignal : in std_logic;
+                     constant waitValue : in std_logic;
+                     constant tag : in string := "";
+                     constant waitTime : in time := 1 ms;
+                     constant stopAtError : in boolean := true) is
+    variable writeBuffer : line;
+  begin
+    if (waitSignal /= waitValue) then
+      wait until waitSignal = waitValue for waitTime;
+      if (waitSignal /= waitValue) then
+        write(writeBuffer, now);
+        write(writeBuffer, string'(":FAILED:"));
+        write(writeBuffer, tag);
+        writeline(OUTPUT, writeBuffer);
+        
+        if (stopAtError) then
+          std.env.stop(0);
+        end if;
+      end if;
+    end if;
+  end procedure;
+  
+  procedure TestWait(signal waitSignal : in std_logic;
+                     constant waitValue : in std_logic;
+                     signal ackSignal : inout std_logic;
+                     constant tag : in string := "";
+                     constant waitTime : in time := 1 ms;
+                     constant stopAtError : in boolean := true) is
+    variable writeBuffer : line;
+  begin
+    if (waitSignal /= waitValue) then
+
+      wait until waitSignal = waitValue for waitTime;
+      
+      if (waitSignal /= waitValue) then
+        write(writeBuffer, now);
+        write(writeBuffer, string'(":FAILED:"));
+        write(writeBuffer, tag);
+        writeline(OUTPUT, writeBuffer);
+        
+        if (stopAtError) then
+          std.env.stop(0);
+        end if;
+      end if;
+    end if;
+    
+    ackSignal <= not ackSignal;
+      
+    wait until waitSignal /= waitValue for waitTime;
+      
+    if (waitSignal = waitValue) then
+      write(writeBuffer, now);
+      write(writeBuffer, string'(":FAILED:"));
+      write(writeBuffer, tag);
+      writeline(OUTPUT, writeBuffer);
+        
+      if (stopAtError) then
+        std.env.stop(0);
+      end if;
+    end if;
+  end procedure;
+
+  procedure TestEnd is
+    variable writeBuffer : line;
+  begin
+    write(writeBuffer, now);
+    write(writeBuffer, string'(":COMPLETED"));
+    writeline(OUTPUT, writeBuffer);
+    std.env.stop(0);
+  end TestEnd;
+
 end rio_common;
 
 

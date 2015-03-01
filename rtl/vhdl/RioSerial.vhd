@@ -180,7 +180,7 @@
 -- the window-pins and the normal-pins... Add another singlememory...
 -- REMARK: Make the pipe-line stages into block-statements to make the code more readable...
 -- REMARK: Be consistent, tx->outbound and rx->inbound or egress/ingress...
--- REMARK: Add enable to fifo:s...
+-- REMARK: Always send status after a link-response?
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -264,6 +264,7 @@ architecture RioSerialImpl of RioSerial is
     port(
       clk : in std_logic;
       areset_n : in std_logic;
+      enable : in std_logic;
 
       empty_o : out std_logic;
       read_i : in std_logic;
@@ -435,7 +436,7 @@ begin
     TxSymbolFifo: RioFifo
       generic map(DEPTH_WIDTH=>5, DATA_WIDTH=>13)
       port map(
-        clk=>clk, areset_n=>areset_n,
+        clk=>clk, areset_n=>areset_n, enable=>enable,
         empty_o=>txControlReadEmpty(i),
         read_i=>txControlRead(i),
         data_o=>txControlReadSymbol(12*(i+1) downto 12*i),
@@ -445,7 +446,7 @@ begin
     RxSymbolFifo: RioFifo
       generic map(DEPTH_WIDTH=>5, DATA_WIDTH=>13)
       port map(
-        clk=>clk, areset_n=>areset_n,
+        clk=>clk, areset_n=>areset_n, enable=>enable,
         empty_o=>rxControlReadEmpty(i),
         read_i=>rxControlRead(i),
         data_o=>rxControlReadSymbol(12*(i+1) downto 12*i),
@@ -727,14 +728,16 @@ begin
       timeSentDelta <= (others=>'0');
       timeCurrent <= (others=>'0');
     elsif (clk'event and clk = '1') then
-      if (timeSentEnable = '0') then
-        timeSentElapsed <= unsigned(timeCurrent) - unsigned(timeSentReadData);
-        timeSentDelta <= unsigned('0' & portLinkTimeout_i) - timeSentElapsed;
-      else
-        timeSentElapsed <= (others=>'0');
-        timeSentDelta <= (others=>'0');
+      if (enable = '1') then
+        if (timeSentEnable = '0') then
+          timeSentElapsed <= unsigned(timeCurrent) - unsigned(timeSentReadData);
+          timeSentDelta <= unsigned('0' & portLinkTimeout_i) - timeSentElapsed;
+        else
+          timeSentElapsed <= (others=>'0');
+          timeSentDelta <= (others=>'0');
+        end if;
+        timeCurrent <= std_logic_vector(unsigned(timeCurrent) + 1);
       end if;
-      timeCurrent <= std_logic_vector(unsigned(timeCurrent) + 1);
     end if;
   end process;
   
@@ -1079,10 +1082,13 @@ begin
     sendRestartFromRetryOut <= '0';
     sendLinkRequestOut <= '0';
 
+    -- Check the current state of the transmitter.
     if (fatalError_i = '1') then
+      -- Fatal error has been encountered.
       outputErrorStopped_o <= '0';
       fatalError_o <= '0';
     elsif (recoverActive_i = '1') then
+      -- Controlled recovering due to an earlier error is ongoing.
       if (ackId_i /= recoverCounter_i) then
         ackId_o <= std_logic_vector(unsigned(ackId_i) + 1);
         readFrameOut <= '1';
@@ -1091,6 +1097,9 @@ begin
         outputErrorStopped_o <= '0';
       end if;
     else
+      -- No fatal error or recovering active.
+
+      -- Check if operational.
       if (operational_i = '0') then
         -- Not operational mode.
 
@@ -1215,6 +1224,8 @@ begin
                 end if;
                 
               when STYPE0_PACKET_NOT_ACCEPTED =>
+                -- The link partner has rejected a packet.
+
                 if (outputErrorStopped_i = '0') then
                   -- Packet was rejected by the link-partner.
                   sendLinkRequestOut <= '1';
@@ -1223,6 +1234,7 @@ begin
                 end if;
                 
               when STYPE0_LINK_RESPONSE =>
+                
                 if (outputErrorStopped_i = '1') then
                   -- Check if the link partner return value is acceptable.
                   if ((unsigned(txControlParameter0) - unsigned(ackId_i)) <=
@@ -1748,7 +1760,7 @@ begin
       end if;
     end if;
   end process;
-  
+
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
@@ -1803,32 +1815,36 @@ begin
       sendStatusRequired <= '0';
       symbolCounter <= (others=>'0');
     elsif (clk'event and clk = '1') then
-      if (portInitialized_i = '0') then
-        sendStatusRequired <= '0';
-        symbolCounter <=
-          std_logic_vector(to_unsigned(TICKS_SEND_STATUS_STARTUP,
-                                       SYMBOL_COUNTER_WIDTH));
-      elsif (enable = '1') then
-        if ((controlValid = '1') and
-            ((stype0 = STYPE0_STATUS) or
-             (stype0 = STYPE0_PACKET_ACCEPTED) or
-             (stype0 = STYPE0_PACKET_RETRY))) then
-          if (operational_i = '0') then
-            symbolCounter <=
-              std_logic_vector(to_unsigned(TICKS_SEND_STATUS_STARTUP,
-                                           SYMBOL_COUNTER_WIDTH));
+      if (enable = '1') then
+        if (portInitialized_i = '0') then
+          sendStatusRequired <= '0';
+          symbolCounter <=
+            std_logic_vector(to_unsigned(TICKS_SEND_STATUS_STARTUP,
+                                         SYMBOL_COUNTER_WIDTH));
+        elsif (enable = '1') then
+          -- REMARK: Rewrite this, the status-control-symbols are output with a
+          -- slightly longer period than required...
+          if ((controlValid = '1') and
+              ((stype0 = STYPE0_STATUS) or
+               (stype0 = STYPE0_PACKET_ACCEPTED) or
+               (stype0 = STYPE0_PACKET_RETRY))) then
+            if (operational_i = '0') then
+              symbolCounter <=
+                std_logic_vector(to_unsigned(TICKS_SEND_STATUS_STARTUP,
+                                             SYMBOL_COUNTER_WIDTH));
+            else
+              symbolCounter <= 
+                std_logic_vector(to_unsigned(TICKS_SEND_STATUS_OPERATIONAL,
+                                             SYMBOL_COUNTER_WIDTH));
+            end if;
           else
-            symbolCounter <= 
-              std_logic_vector(to_unsigned(TICKS_SEND_STATUS_OPERATIONAL,
-                                           SYMBOL_COUNTER_WIDTH));
-          end if;
-        else
-          if (unsigned(symbolCounter) = 0) then
-            sendStatusRequired <= '1';
-            symbolCounter <= std_logic_vector(unsigned(symbolCounter) - 1);
-          else
-            sendStatusRequired <= '0';
-            symbolCounter <= std_logic_vector(unsigned(symbolCounter) - 1);
+            if (unsigned(symbolCounter) = 0) then
+              sendStatusRequired <= '1';
+              symbolCounter <= std_logic_vector(unsigned(symbolCounter) - 1);
+            else
+              sendStatusRequired <= '0';
+              symbolCounter <= std_logic_vector(unsigned(symbolCounter) - 1);
+            end if;
           end if;
         end if;
       end if;
@@ -2317,6 +2333,14 @@ begin
           else
             stype1LinkRequest <= '0';
           end if;
+        else
+          txControlWrite_o <= '0';
+          stype0Status <= '0';
+          stype1Start <= '0';
+          stype1End <= '0';
+          stype1Stomp <= '0';
+          stype1RestartFromRetry <= '0';
+          stype1LinkRequest <= '0';
         end if;
       end if;
     end if;
@@ -2330,12 +2354,6 @@ begin
   -- Generate reply symbols to the link-partner.
   -----------------------------------------------------------------------------
 
-  -- Set the output to save when writing new frame content.
-  writeFrame_o <= writeFrameOut and enable;
-  writeFrameAbort_o <= writeFrameAbortOut and enable;
-  writeContent_o <= writeContentOut and enable;
-  writeContentData_o <= symbolDataContent1;
-  
   -- Create the new input depending on the current frame position.
   crc16Data(31 downto 26) <= "000000" when (unsigned(frameIndex_i) = 1) else
                              symbolDataContent1(31 downto 26);
@@ -2460,8 +2478,7 @@ begin
         if (symbolControlCrcValid1 = '1') then
           -- The symbol is correct.
 
-          -- Check if a packet is starting or ending.
-          if (((stype1Start = '1') or (stype1End = '1')) and
+          if ((stype1Start = '1') and
               (inputRetryStopped_i = '0') and (inputErrorStopped_i = '0')) then
             -------------------------------------------------------------
             -- Start the reception of a new frame or end a currently
@@ -2469,18 +2486,15 @@ begin
             -------------------------------------------------------------
             
             -- Check if a frame has already been started.
-            if ((unsigned(frameIndex_i) /= 0) or (stype1End = '1')) then
-              -- A frame is already started or is ending.
+            if (unsigned(frameIndex_i) /= 0) then
+              -- A frame is already started.
               -- Complete the last frame and start to ackumulate a new one
               -- and update the ackId.
 
-              -- Check if the frame is too short.
+              -- Check if the frame is large enough.
               if (unsigned(frameIndex_i) > 3) then
-                -- The frame is not too short.
+                -- The frame is large enough.
 
-                -- Reset the frame index to indicate the frame is started.
-                frameIndex_o <= "0000001";
-                
                 -- Check the CRC-16 and the length of the received frame.
                 if (crc16Valid = '1') then
                   -- The CRC-16 is ok.
@@ -2495,8 +2509,6 @@ begin
                   -- Send packet-accepted.
                   -- The buffer status is appended by the transmitter
                   -- when sent to get the latest number.
-                  -- REMARK: Move this out of this process and into pipeline
-                  -- stage 4.
                   rxControlWriteOut <= '1';
                   rxControlSymbolOut <= STYPE0_PACKET_ACCEPTED &
                                         std_logic_vector(ackId_i) &
@@ -2513,7 +2525,7 @@ begin
                   inputErrorStopped_o <= '1';
                 end if;
               else
-                -- The packet is too short.
+                -- This packet is too small.
                 -- Make the transmitter send a packet-not-accepted to indicated
                 -- that the received packet was too small.
                 rxControlWriteOut <= '1';
@@ -2522,16 +2534,66 @@ begin
                                       PACKET_NOT_ACCEPTED_CAUSE_GENERAL_ERROR;
                 inputErrorStopped_o <= '1';
               end if;
-            else
-              -- No frame has been started.
-              -- This is the normal case when there was no frame started
-              -- before. 
-              
-              -- Reset the frame index to indicate the frame is started.
-              frameIndex_o <= "0000001";
             end if;
+              
+            -- Reset the frame index to indicate the frame is started.
+            frameIndex_o <= "0000001";
           end if;
           
+          if ((stype1End = '1') and
+              (inputRetryStopped_i = '0') and (inputErrorStopped_i = '0')) then
+            -------------------------------------------------------------
+            -- End the reception of an old frame.
+            -------------------------------------------------------------
+            
+            -- Check if a frame has already been started.
+            if (unsigned(frameIndex_i) > 3) then
+              -- A frame has been started and it is large enough.
+              
+              -- Check the CRC-16 and the length of the received frame.
+              if (crc16Valid = '1') then
+                -- The CRC-16 is ok.
+
+                -- Update the frame buffer to indicate that the frame has
+                -- been completly received.
+                writeFrameOut <= '1';
+
+                -- Update ackId.
+                ackId_o <= ackId_i + 1;
+
+                -- Send packet-accepted.
+                -- The buffer status is appended by the transmitter
+                -- when sent to get the latest number.
+                rxControlWriteOut <= '1';
+                rxControlSymbolOut <= STYPE0_PACKET_ACCEPTED &
+                                      std_logic_vector(ackId_i) &
+                                      "11111";
+              else
+                -- The CRC-16 is not ok.
+
+                -- Make the transmitter send a packet-not-accepted to indicate
+                -- that the received packet contained a CRC error.
+                rxControlWriteOut <= '1';
+                rxControlSymbolOut <= STYPE0_PACKET_NOT_ACCEPTED &
+                                      "00000" &
+                                      PACKET_NOT_ACCEPTED_CAUSE_PACKET_CRC;
+                inputErrorStopped_o <= '1';
+              end if;
+            else
+              -- This packet is too small.
+              -- Make the transmitter send a packet-not-accepted to indicate
+              -- that the received packet was too small.
+              rxControlWriteOut <= '1';
+              rxControlSymbolOut <= STYPE0_PACKET_NOT_ACCEPTED &
+                                    "00000" &
+                                    PACKET_NOT_ACCEPTED_CAUSE_GENERAL_ERROR;
+              inputErrorStopped_o <= '1';
+            end if;
+
+            -- Reset frame reception to indicate that no frame is ongoing.
+            frameIndex_o <= "0000000";
+          end if;
+
           if ((stype1Stomp = '1') and
               (inputRetryStopped_i = '0') and (inputErrorStopped_i = '0')) then 
             -------------------------------------------------------------
@@ -2558,7 +2620,7 @@ begin
               -------------------------------------------------------------
 
               -- Abort the frame and reset frame reception.
-              frameIndex_o <= (others => '0');
+              frameIndex_o <= (others=>'0');
               writeFrameAbortOut <= '1';
               
               -- Go back to the normal operational state.
@@ -2568,7 +2630,7 @@ begin
               -- The receiver indicates a restart from a retry sent
               -- from us.
               -------------------------------------------------------------
-              -- See 5.10 in the standard.
+              -- See 5.10 in the 2.2 standard.
               -- Protocol error, this symbol should not be received here since
               -- we should have been in input-retry-stopped. 
               
@@ -2588,7 +2650,7 @@ begin
             -------------------------------------------------------------
             
             -- Check the command part.
-            if (symbolControlContent1(15 downto 13) = "100") then
+            if (symbolControlContent1(7 downto 5) = "100") then
               -- Return input port status command.
               -- This functions as a link-request(restart-from-error)
               -- control symbol under error situations.
@@ -2714,16 +2776,23 @@ begin
     end if;
   end process;
 
-  -- REMARK: Add writeContentXXX-registers...
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
       rxControlWrite_o <= '0';
       rxControlSymbol_o <= (others=>'0');
+      writeFrame_o <= '0';
+      writeFrameAbort_o <= '0';
+      writeContent_o <= '0';
+      writeContentData_o <= (others=>'0');
     elsif (clk'event and clk = '1') then
       if (enable = '1') then
-        rxControlWrite_o <= rxControlWriteOut and symbolControlValid1;
+        rxControlWrite_o <= rxControlWriteOut and (symbolControlValid1 or symbolDataValid1);
         rxControlSymbol_o <= rxControlSymbolOut;
+        writeFrame_o <= writeFrameOut;
+        writeFrameAbort_o <= writeFrameAbortOut;
+        writeContent_o <= writeContentOut;
+        writeContentData_o <= symbolDataContent1;
       end if;
     end if;
   end process;
@@ -2751,6 +2820,7 @@ entity RioFifo is
   port(
     clk : in std_logic;
     areset_n : in std_logic;
+    enable : in std_logic;
 
     empty_o : out std_logic;
     read_i : in std_logic;
@@ -2784,6 +2854,8 @@ architecture RioFifoImpl of RioFifo is
   signal empty : std_logic;
   signal full : std_logic;
 
+  signal writeEnable : std_logic;
+  
   signal readAddress : std_logic_vector(DEPTH_WIDTH-1 downto 0);
   signal readAddressInc : std_logic_vector(DEPTH_WIDTH-1 downto 0);
   signal writeAddress : std_logic_vector(DEPTH_WIDTH-1 downto 0);
@@ -2803,45 +2875,49 @@ begin
       readAddress <= (others=>'0');
       writeAddress <= (others=>'0');
     elsif (clk'event and clk = '1') then
-      if (empty = '1') then
-        if (write_i = '1') then
-          empty <= '0';
-          writeAddress <= writeAddressInc;
-        end if;
-      end if;
-      if (full = '1') then
-        if (read_i = '1') then
-          full <= '0';
-          readAddress <= readAddressInc;
-        end if;
-      end if;
-      if (empty = '0') and (full = '0') then
-        if (write_i = '1') and (read_i = '0') then
-          writeAddress <= writeAddressInc;
-          if (writeAddressInc = readAddress) then
-            full <= '1';
+      if (enable = '1') then
+        if (empty = '1') then
+          if (write_i = '1') then
+            empty <= '0';
+            writeAddress <= writeAddressInc;
           end if;
         end if;
-        if (write_i = '0') and (read_i = '1') then
-          readAddress <= readAddressInc;
-          if (readAddressInc = writeAddress) then
-            empty <= '1';
+        if (full = '1') then
+          if (read_i = '1') then
+            full <= '0';
+            readAddress <= readAddressInc;
           end if;
         end if;
-        if (write_i = '1') and (read_i = '1') then
-          writeAddress <= writeAddressInc;
-          readAddress <= readAddressInc;
+        if (empty = '0') and (full = '0') then
+          if (write_i = '1') and (read_i = '0') then
+            writeAddress <= writeAddressInc;
+            if (writeAddressInc = readAddress) then
+              full <= '1';
+            end if;
+          end if;
+          if (write_i = '0') and (read_i = '1') then
+            readAddress <= readAddressInc;
+            if (readAddressInc = writeAddress) then
+              empty <= '1';
+            end if;
+          end if;
+          if (write_i = '1') and (read_i = '1') then
+            writeAddress <= writeAddressInc;
+            readAddress <= readAddressInc;
+          end if;
         end if;
       end if;
     end if;
   end process;
+
+  writeEnable <= enable and write_i;
   
   Memory: MemorySimpleDualPortAsync
     generic map(ADDRESS_WIDTH=>DEPTH_WIDTH,
                 DATA_WIDTH=>DATA_WIDTH,
                 INIT_VALUE=>'0')
     port map(
-      clkA_i=>clk, enableA_i=>write_i,
+      clkA_i=>clk, enableA_i=>writeEnable,
       addressA_i=>writeAddress, dataA_i=>data_i,
       addressB_i=>readAddress, dataB_o=>data_o);
 end architecture;
