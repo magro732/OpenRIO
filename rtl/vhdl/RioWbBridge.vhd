@@ -47,9 +47,8 @@
 -------------------------------------------------------------------------------
 -- REMARK: Add support for EXTENDED_ADDRESS...
 library ieee;
-use ieee.numeric_std.ALL;
 use ieee.std_logic_1164.all;
-use ieee.std_logic_unsigned.all;
+use ieee.numeric_std.all;
 use work.rio_common.all;
 
 -------------------------------------------------------------------------------
@@ -1310,7 +1309,7 @@ begin
                       masterDat_o <= "0000" & "0000" & tid_i & x"0000";
                       state <= WAIT_COMPLETE;
                     else
-                      masterDat_o <= "1000" & "0000" & tid_i & memoryDataRead(63 downto 48);;
+                      masterDat_o <= "1000" & "0000" & tid_i & memoryDataRead(63 downto 48);
                     end if;
                   else
                     masterDat_o <= "0000" & "0111" & tid_i & x"0000";
