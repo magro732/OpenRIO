@@ -621,8 +621,8 @@ architecture RioTransmitterImpl of RioTransmitter is
       frameState_o : out std_logic_vector(3 downto 0);
       frameWordCounter_i : in std_logic_vector(1 downto 0);
       frameWordCounter_o : out std_logic_vector(1 downto 0);
-      frameContent_i : in std_logic_vector(63 downto 0);
-      frameContent_o : out std_logic_vector(63 downto 0);
+      frameContent_i : in std_logic_vector(31 downto 0);
+      frameContent_o : out std_logic_vector(31 downto 0);
       counter_i : in std_logic_vector(3 downto 0);
       counter_o : out std_logic_vector(3 downto 0);
       symbolsTransmitted_i : in std_logic_vector(7 downto 0);
@@ -682,7 +682,7 @@ architecture RioTransmitterImpl of RioTransmitter is
   signal ackIdWindowCurrent, ackIdWindowNext : std_logic_vector(5*NUMBER_WORDS-1 downto 0);
   signal frameStateCurrent, frameStateNext : std_logic_vector(4*NUMBER_WORDS-1 downto 0);
   signal frameWordCounterCurrent, frameWordCounterNext : std_logic_vector(2*NUMBER_WORDS-1 downto 0);
-  signal frameContentCurrent, frameContentNext : std_logic_vector(64*NUMBER_WORDS-1 downto 0);
+  signal frameContentCurrent, frameContentNext : std_logic_vector(32*NUMBER_WORDS-1 downto 0);
   signal counterCurrent, counterNext : std_logic_vector(4*NUMBER_WORDS-1 downto 0);
   signal symbolsTransmittedCurrent, symbolsTransmittedNext : std_logic_vector(8*NUMBER_WORDS-1 downto 0);
 
@@ -851,8 +851,8 @@ begin
         frameState_o=>frameStateNext(4*(i+1)-1 downto 4*i), 
         frameWordCounter_i=>frameWordCounterCurrent(2*(i+1)-1 downto 2*i),
         frameWordCounter_o=>frameWordCounterNext(2*(i+1)-1 downto 2*i), 
-        frameContent_i=>frameContentCurrent(64*(i+1)-1 downto 64*i),
-        frameContent_o=>frameContentNext(64*(i+1)-1 downto 64*i), 
+        frameContent_i=>frameContentCurrent(32*(i+1)-1 downto 32*i),
+        frameContent_o=>frameContentNext(32*(i+1)-1 downto 32*i), 
         counter_i=>counterCurrent(4*(i+1)-1 downto 4*i),
         counter_o=>counterNext(4*(i+1)-1 downto 4*i), 
         symbolsTransmitted_i=>symbolsTransmittedCurrent(8*(i+1)-1 downto 8*i),
@@ -949,8 +949,8 @@ entity RioTransmitterCore is
     frameState_o : out std_logic_vector(3 downto 0);
     frameWordCounter_i : in std_logic_vector(1 downto 0);
     frameWordCounter_o : out std_logic_vector(1 downto 0);
-    frameContent_i : in std_logic_vector(63 downto 0);
-    frameContent_o : out std_logic_vector(63 downto 0);
+    frameContent_i : in std_logic_vector(31 downto 0);
+    frameContent_o : out std_logic_vector(31 downto 0);
     counter_i : in std_logic_vector(3 downto 0);
     counter_o : out std_logic_vector(3 downto 0);
     symbolsTransmitted_i : in std_logic_vector(7 downto 0);
@@ -980,15 +980,16 @@ architecture RioTransmitterCoreImpl of RioTransmitterCore is
   constant NUMBER_STATUS_TRANSMIT : std_logic_vector := "1111";
   constant NUMBER_LINK_RESPONSE_RETRIES : std_logic_vector := "10";
 
-  constant FRAME_IDLE : std_logic_vector(3 downto 0) :=   "0000";
+  constant FRAME_IDLE : std_logic_vector(3 downto 0) := "0000";
   constant FRAME_BUFFER : std_logic_vector(3 downto 0) := "0001";
-  constant FRAME_START : std_logic_vector(3 downto 0) :=  "0010";
-  constant FRAME_FIRST : std_logic_vector(3 downto 0) :=  "0011";
+  constant FRAME_START : std_logic_vector(3 downto 0) := "0010";
+  constant FRAME_FIRST : std_logic_vector(3 downto 0) := "0011";
   constant FRAME_MIDDLE : std_logic_vector(3 downto 0) := "0100";
-  constant FRAME_LAST_0 : std_logic_vector(3 downto 0) := "0101";
-  constant FRAME_LAST_1 : std_logic_vector(3 downto 0) := "0110";
-  constant FRAME_END : std_logic_vector(3 downto 0) :=    "0111";
-  constant FRAME_DISCARD : std_logic_vector(3 downto 0) :="1000";
+  constant FRAME_INSERT_IDLE : std_logic_vector(3 downto 0) := "0101";
+  constant FRAME_LAST : std_logic_vector(3 downto 0) := "0110";
+  constant FRAME_START_CONTINUE : std_logic_vector(3 downto 0) := "0111";
+  constant FRAME_END : std_logic_vector(3 downto 0) := "1000";
+  constant FRAME_DISCARD : std_logic_vector(3 downto 0) := "1001";
   
   component Crc5ITU is
     port(
@@ -1055,7 +1056,7 @@ begin
   -- First pipeline stage.
   -- Receive stuff from link-partner and timeout supervision.
   -- Input: ackId, ackIdWindow, timeoutExpired
-  -- Output: sendLinkRequest, sendRestartFromRetry, ackId,
+  -- Output: sendLinkRequest, sendRestartFromRetry, ackId
   -----------------------------------------------------------------------------
 
   txControlUpdate_o <= txControlUpdateOut and (not txFull_i);
@@ -1413,10 +1414,9 @@ begin
           -- Write the current timer value.
           timeSentSet_o <= '1';
         elsif ((sendRestartFromRetry = '0') and (sendLinkRequest = '0')  and
-               (outputErrorStopped_i = '0') and (rxControlEmpty_i = '1')) then
-          -- There is no pending control symbol to send to the link-partner
-          -- and no symbol to send from our receiver.
-          -- Proceed to send any pending packets.
+               (outputErrorStopped_i = '0')) then
+          -- No control-symbol is required to be sent to the link-partner.
+          -- Proceed to send a pending packet.
 
           -- Check the current state of the frame transfer.
           case frameState_i is
@@ -1431,7 +1431,7 @@ begin
                 -- Update the output from the frame buffer to contain the
                 -- data when it is read later.
                 readContentOut <= '1';
-                frameState_i <= FRAME_START;
+                frameState_o <= FRAME_START;
               end if;
 
             when FRAME_START | FRAME_START_CONTINUE =>
@@ -1496,7 +1496,7 @@ begin
               -- packet.
               symbolDataOut <= '1';
               symbolDataContentOut <=
-                std_logic_vector(ackIdWindow_i) & "0" & frameContent_i(57 downto 32);
+                std_logic_vector(ackIdWindow_i) & "0" & frameContent_i(25 downto 0);
 
               -- Read the next frame content and go to next state to send it.
               readContentOut <= '1';
@@ -1520,10 +1520,23 @@ begin
                 -- The packet is ending.
                 readWindowNextOut <= '1';
                 frameState_o <= FRAME_LAST;
+              elsif (rxControlEmpty_i = '0') then
+                -- There is a pending control-symbol from the receiver.
+                frameState_o <= FRAME_INSERT_IDLE;
               else
                 -- The packet is not ending.
                 readContentOut <= '1';
               end if;
+
+            when FRAME_INSERT_IDLE =>
+              -----------------------------------------------------------------
+              -- Dont send a data-symbol this tick to allow for a pending 
+              -- control-symbol from the receiver to be inserted into the stream.
+              -----------------------------------------------------------------
+
+              symbolDataOut <= '0';
+              readContentOut <= '1';
+              frameState_o <= FRAME_MIDDLE;
               
             when FRAME_LAST =>
               -----------------------------------------------------------------
