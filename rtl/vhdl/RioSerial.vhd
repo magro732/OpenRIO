@@ -177,6 +177,12 @@
 --   information that should be forwarded. Should be active for one tick.
 -- inboundSymbol_i - The inbound symbol. See outboundSymbol_o for formating.
 -------------------------------------------------------------------------------
+-- REMARK: Multi-symbol support is not fully supported yet...
+-- REMARK: Optimize the piggy-backing of symbols from the receiver, use the
+-- number of words that remain to determine when to insert a control-symbol
+-- into a stream of data-symbols...
+-- REMARK: Optimize the transmitter better, too low performance...
+
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -233,11 +239,11 @@ entity RioSerial is
 
     -- PCS layer signals.
     portInitialized_i : in std_logic;
-    outboundSymbolEmpty_o : out std_logic;
-    outboundSymbolRead_i : in std_logic;
+    outboundSymbolFull_i : in std_logic;
+    outboundSymbolWrite_o : out std_logic;
     outboundSymbol_o : out std_logic_vector(((2+32)*NUMBER_WORDS-1) downto 0);
-    inboundSymbolFull_o : out std_logic;
-    inboundSymbolWrite_i : in std_logic;
+    inboundSymbolEmpty_i : in std_logic;
+    inboundSymbolRead_o : out std_logic;
     inboundSymbol_i : in std_logic_vector(((2+32)*NUMBER_WORDS-1) downto 0));
 end entity;
 
@@ -247,20 +253,21 @@ end entity;
 -------------------------------------------------------------------------------
 architecture RioSerialImpl of RioSerial is
 
-  component RioFifo1 is
+  component RioFifo is
     generic(
-      WIDTH : natural);
+      DEPTH_WIDTH : natural;
+      DATA_WIDTH : natural);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
 
       empty_o : out std_logic;
       read_i : in std_logic;
-      data_o : out std_logic_vector(WIDTH-1 downto 0);
+      data_o : out std_logic_vector(DATA_WIDTH-1 downto 0);
 
       full_o : out std_logic;
       write_i : in std_logic;
-      data_i : in std_logic_vector(WIDTH-1 downto 0));
+      data_i : in std_logic_vector(DATA_WIDTH-1 downto 0));
   end component;
   
   component RioTransmitter is
@@ -284,15 +291,15 @@ architecture RioSerialImpl of RioSerial is
       portInitialized_i : in std_logic;
       txFull_i : in std_logic;
       txWrite_o : out std_logic;
-      txType_o : out std_logic_vector(1 downto 0);
-      txData_o : out std_logic_vector(31 downto 0);
+      txType_o : out std_logic_vector(2*NUMBER_WORDS-1 downto 0);
+      txData_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0);
 
-      txControlEmpty_i : in std_logic;
-      txControlSymbol_i : in std_logic_vector(12 downto 0);
-      txControlUpdate_o : out std_logic;
-      rxControlEmpty_i : in std_logic;
-      rxControlSymbol_i : in std_logic_vector(12 downto 0);
-      rxControlUpdate_o : out std_logic;
+      txControlEmpty_i : in std_logic_vector(NUMBER_WORDS-1 downto 0);
+      txControlSymbol_i : in std_logic_vector(12*NUMBER_WORDS downto 0);
+      txControlUpdate_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
+      rxControlEmpty_i : in std_logic_vector(NUMBER_WORDS-1 downto 0);
+      rxControlSymbol_i : in std_logic_vector(12*NUMBER_WORDS downto 0);
+      rxControlUpdate_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
 
       linkInitialized_i : in std_logic;
       linkInitialized_o : out std_logic;
@@ -363,17 +370,11 @@ architecture RioSerialImpl of RioSerial is
   signal rxControlRead : std_logic_vector(NUMBER_WORDS-1 downto 0);
   signal rxControlReadSymbol : std_logic_vector(12*NUMBER_WORDS downto 0);
 
-  signal outboundFull : std_logic;
-  signal outboundWrite : std_logic;
   signal outboundType : std_logic_vector(1 downto 0);
   signal outboundData : std_logic_vector(32*NUMBER_WORDS-1 downto 0);
-  signal outboundSymbol : std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
-  signal inboundEmpty : std_logic;
-  signal inboundRead : std_logic;
   signal inboundType : std_logic_vector(1 downto 0);
   signal inboundData : std_logic_vector(32*NUMBER_WORDS-1 downto 0);
-  signal inboundSymbol : std_logic_vector(((2+32)*NUMBER_WORDS-1) downto 0);
 
 begin
 
@@ -384,6 +385,7 @@ begin
   -- Serial layer modules.
   -----------------------------------------------------------------------------
   
+  outboundSymbol_o <= outboundType & outboundData;
   Transmitter: RioTransmitter
     generic map(
       TIMEOUT_WIDTH=>TIMEOUT_WIDTH,
@@ -399,26 +401,35 @@ begin
       outstandingAckId_o=>outstandingAckId_o, 
       outboundAckId_o=>outboundAckId_o, 
       portInitialized_i=>portInitialized_i,
-      txFull_i=>outboundFull, txWrite_o=>outboundWrite,
-      txType_o=>outboundType, txData_o=>outboundData, 
-      txControlEmpty_i=>txControlReadEmpty(0), txControlSymbol_i=>txControlReadSymbol,
-      txControlUpdate_o=>txControlRead(0), 
-      rxControlEmpty_i=>rxControlReadEmpty(0), rxControlSymbol_i=>rxControlReadSymbol,
-      rxControlUpdate_o=>rxControlRead(0),
+      txFull_i=>outboundSymbolFull_i,
+      txWrite_o=>outboundsymbolWrite_o,
+      txType_o=>outboundType,
+      txData_o=>outboundData, 
+      txControlEmpty_i=>txControlReadEmpty,
+      txControlSymbol_i=>txControlReadSymbol,
+      txControlUpdate_o=>txControlRead, 
+      rxControlEmpty_i=>rxControlReadEmpty,
+      rxControlSymbol_i=>rxControlReadSymbol,
+      rxControlUpdate_o=>rxControlRead,
       linkInitialized_o=>linkInitializedTx,
-      linkInitialized_i=>linkInitializedRx, ackIdStatus_i=>ackIdStatus, 
-      readFrameEmpty_i=>readFrameEmpty_i, readFrame_o=>readFrame_o, 
-      readFrameRestart_o=>readFrameRestart_o, readFrameAborted_i=>readFrameAborted_i,
+      linkInitialized_i=>linkInitializedRx,
+      ackIdStatus_i=>ackIdStatus, 
+      readFrameEmpty_i=>readFrameEmpty_i,
+      readFrame_o=>readFrame_o, 
+      readFrameRestart_o=>readFrameRestart_o,
+      readFrameAborted_i=>readFrameAborted_i,
       readWindowEmpty_i=>readWindowEmpty_i,
-      readWindowReset_o=>readWindowReset_o, readWindowNext_o=>readWindowNext_o,
-      readContentEmpty_i=>readContentEmpty_i, readContent_o=>readContent_o, 
+      readWindowReset_o=>readWindowReset_o,
+      readWindowNext_o=>readWindowNext_o,
+      readContentEmpty_i=>readContentEmpty_i,
+      readContent_o=>readContent_o, 
       readContentEnd_i=>readContentEnd_i,
       readContentWords_i=>readContentData_i(2+(32*NUMBER_WORDS-1) downto 1+(32*NUMBER_WORDS-1)),
       readContentData_i=>readContentData_i(32*NUMBER_WORDS-1 downto 0));
 
   SymbolFifo: for i in 0 to NUMBER_WORDS-1 generate
-    TxSymbolFifo: RioFifo1
-      generic map(WIDTH=>13)
+    TxSymbolFifo: RioFifo
+      generic map(DEPTH_WIDTH=>5, DATA_WIDTH=>13)
       port map(
         clk=>clk, areset_n=>areset_n,
         empty_o=>txControlReadEmpty(i),
@@ -428,8 +439,8 @@ begin
         write_i=>txControlWrite(i),
         data_i=>txControlWriteSymbol(12*(i+1) downto 12*i));
 
-    RxSymbolFifo: RioFifo1
-      generic map(WIDTH=>13)
+    RxSymbolFifo: RioFifo
+      generic map(DEPTH_WIDTH=>5, DATA_WIDTH=>13)
       port map(
         clk=>clk, areset_n=>areset_n,
         empty_o=>rxControlReadEmpty(i),
@@ -440,6 +451,8 @@ begin
         data_i=>rxControlWriteSymbol(12*(i+1) downto 12*i));
   end generate;
     
+  inboundType <= inboundSymbol_i(2+(32*NUMBER_WORDS-1) downto 1+(32*NUMBER_WORDS-1));
+  inboundData <= inboundSymbol_i(32*NUMBER_WORDS-1 downto 0);
   Receiver: RioReceiver
     generic map(NUMBER_WORDS=>NUMBER_WORDS)
     port map(
@@ -449,38 +462,22 @@ begin
       inboundAckId_i=>inboundAckId_i, 
       inboundAckId_o=>inboundAckId_o, 
       portInitialized_i=>portInitialized_i,
-      rxEmpty_i=>inboundEmpty, rxRead_o=>inboundRead,
-      rxType_i=>inboundType, rxData_i=>inboundData, 
-      txControlWrite_o=>txControlWrite, txControlSymbol_o=>txControlWriteSymbol, 
-      rxControlWrite_o=>rxControlWrite, rxControlSymbol_o=>rxControlWriteSymbol, 
+      rxEmpty_i=>inboundSymbolEmpty_i,
+      rxRead_o=>inboundSymbolRead_o,
+      rxType_i=>inboundType,
+      rxData_i=>inboundData, 
+      txControlWrite_o=>txControlWrite,
+      txControlSymbol_o=>txControlWriteSymbol, 
+      rxControlWrite_o=>rxControlWrite,
+      rxControlSymbol_o=>rxControlWriteSymbol, 
       ackIdStatus_o=>ackIdStatus, 
       linkInitialized_o=>linkInitializedRx,
       writeFrameFull_i=>writeFrameFull_i,
-      writeFrame_o=>writeFrame_o, writeFrameAbort_o=>writeFrameAbort_o, 
+      writeFrame_o=>writeFrame_o,
+      writeFrameAbort_o=>writeFrameAbort_o, 
       writeContent_o=>writeContent_o,
       writeContentWords_o=>writeContentData_o(2+(32*NUMBER_WORDS-1) downto 1+(32*NUMBER_WORDS-1)),
       writeContentData_o=>writeContentData_o(32*NUMBER_WORDS-1 downto 0));
-
-  -----------------------------------------------------------------------------
-  -- PCS layer FIFO interface.
-  -----------------------------------------------------------------------------
-  
-  outboundSymbol <= outboundType & outboundData;
-  OutboundSymbolFifo: RioFifo1
-    generic map(WIDTH=>2+32*NUMBER_WORDS)
-    port map(
-      clk=>clk, areset_n=>areset_n,
-      empty_o=>outboundSymbolEmpty_o, read_i=>outboundSymbolRead_i, data_o=>outboundSymbol_o,
-      full_o=>outboundFull, write_i=>outboundWrite, data_i=>outboundSymbol);
-  
-  inboundType <= inboundSymbol(2+(32*NUMBER_WORDS-1) downto 1+(32*NUMBER_WORDS-1));
-  inboundData <= inboundSymbol(32*NUMBER_WORDS-1 downto 0);
-  InboundSymbolFifo: RioFifo1
-    generic map(WIDTH=>2+32*NUMBER_WORDS)
-    port map(
-      clk=>clk, areset_n=>areset_n,
-      empty_o=>inboundEmpty, read_i=>inboundRead, data_o=>inboundSymbol,
-      full_o=>inboundSymbolFull_o, write_i=>inboundSymbolWrite_i, data_i=>inboundSymbol_i);
         
 end architecture;
 
@@ -527,14 +524,14 @@ entity RioTransmitter is
     txData_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0);
 
     -- Control symbols aimed to the transmitter.
-    txControlEmpty_i : in std_logic;
-    txControlSymbol_i : in std_logic_vector(12 downto 0);
-    txControlUpdate_o : out std_logic;
+    txControlEmpty_i : in std_logic_vector(NUMBER_WORDS-1 downto 0);
+    txControlSymbol_i : in std_logic_vector(12*NUMBER_WORDS downto 0);
+    txControlUpdate_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
 
     -- Control symbols from the receiver to send.
-    rxControlEmpty_i : in std_logic;
-    rxControlSymbol_i : in std_logic_vector(12 downto 0);
-    rxControlUpdate_o : out std_logic;
+    rxControlEmpty_i : in std_logic_vector(NUMBER_WORDS-1 downto 0);
+    rxControlSymbol_i : in std_logic_vector(12*NUMBER_WORDS downto 0);
+    rxControlUpdate_o : out std_logic_vector(NUMBER_WORDS-1 downto 0);
 
     -- Internal signalling from the receiver part.
     linkInitialized_o : out std_logic;
@@ -622,16 +619,18 @@ architecture RioTransmitterImpl of RioTransmitter is
       recoverCounter_o : out std_logic_vector(4 downto 0);
       ackIdWindow_i : in std_logic_vector(4 downto 0);
       ackIdWindow_o : out std_logic_vector(4 downto 0);
-      frameState_i : in std_logic_vector(6 downto 0);
-      frameState_o : out std_logic_vector(6 downto 0);
+      frameState_i : in std_logic_vector(3 downto 0);
+      frameState_o : out std_logic_vector(3 downto 0);
       frameWordCounter_i : in std_logic_vector(1 downto 0);
       frameWordCounter_o : out std_logic_vector(1 downto 0);
-      frameContent_i : in std_logic_vector(32*NUMBER_WORDS-1 downto 0);
-      frameContent_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0);
+      frameContent_i : in std_logic_vector(63 downto 0);
+      frameContent_o : out std_logic_vector(63 downto 0);
       counter_i : in std_logic_vector(3 downto 0);
       counter_o : out std_logic_vector(3 downto 0);
       symbolsTransmitted_i : in std_logic_vector(7 downto 0);
       symbolsTransmitted_o : out std_logic_vector(7 downto 0);
+      maintenanceClass_i : in std_logic;
+      maintenanceClass_o : out std_logic;
       
       -- Frame buffer interface.
       readFrameEmpty_i : in std_logic;
@@ -675,24 +674,67 @@ architecture RioTransmitterImpl of RioTransmitter is
   signal timeSentReadAddress : std_logic_vector(4 downto 0);  
   signal timeSentReadData : std_logic_vector(TIMEOUT_WIDTH downto 0); 
   
-  signal operationalCurrent, operationalNext : std_logic;
-  signal ackIdCurrent, ackIdNext : std_logic_vector(4 downto 0);
-  signal bufferStatusCurrent, bufferStatusNext : std_logic_vector(4 downto 0);
-  signal statusReceivedCurrent, statusReceivedNext : std_logic;
-  signal numberSentLinkRequestsCurrent, numberSentLinkRequestsNext : std_logic_vector(1 downto 0);
-  signal outputErrorStoppedCurrent, outputErrorStoppedNext : std_logic;
-  signal fatalErrorCurrent, fatalErrorNext : std_logic;
-  signal recoverActiveCurrent, recoverActiveNext : std_logic;
-  signal recoverCounterCurrent, recoverCounterNext : std_logic_vector(4 downto 0);
-  signal ackIdWindowCurrent, ackIdWindowNext : std_logic_vector(4 downto 0);
-  signal frameStateCurrent, frameStateNext : std_logic_vector(6 downto 0);
-  signal frameWordCounterCurrent, frameWordCounterNext : std_logic_vector(1 downto 0);
-  signal frameContentCurrent, frameContentNext : std_logic_vector(32*NUMBER_WORDS-1 downto 0);
-  signal counterCurrent, counterNext : std_logic_vector(3 downto 0);
-  signal symbolsTransmittedCurrent, symbolsTransmittedNext : std_logic_vector(7 downto 0);
+  signal operationalCurrent, operationalNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
+  signal ackIdCurrent, ackIdNext : std_logic_vector(5*NUMBER_WORDS-1 downto 0);
+  signal bufferStatusCurrent, bufferStatusNext : std_logic_vector(5*NUMBER_WORDS-1 downto 0);
+  signal statusReceivedCurrent, statusReceivedNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
+  signal numberSentLinkRequestsCurrent, numberSentLinkRequestsNext : std_logic_vector(2*NUMBER_WORDS-1 downto 0);
+  signal outputErrorStoppedCurrent, outputErrorStoppedNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
+  signal fatalErrorCurrent, fatalErrorNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
+  signal recoverActiveCurrent, recoverActiveNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
+  signal recoverCounterCurrent, recoverCounterNext : std_logic_vector(5*NUMBER_WORDS-1 downto 0);
+  signal ackIdWindowCurrent, ackIdWindowNext : std_logic_vector(5*NUMBER_WORDS-1 downto 0);
+  signal frameStateCurrent, frameStateNext : std_logic_vector(4*NUMBER_WORDS-1 downto 0);
+  signal frameWordCounterCurrent, frameWordCounterNext : std_logic_vector(2*NUMBER_WORDS-1 downto 0);
+  signal frameContentCurrent, frameContentNext : std_logic_vector(64*NUMBER_WORDS-1 downto 0);
+  signal counterCurrent, counterNext : std_logic_vector(4*NUMBER_WORDS-1 downto 0);
+  signal symbolsTransmittedCurrent, symbolsTransmittedNext : std_logic_vector(8*NUMBER_WORDS-1 downto 0);
+  signal maintenanceClassCurrent, maintenanceClassNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
 
+  signal readFrame : std_logic_vector(NUMBER_WORDS-1 downto 0);
+  signal readFrameRestart : std_logic_vector(NUMBER_WORDS-1 downto 0);
+  signal readWindowReset : std_logic_vector(NUMBER_WORDS-1 downto 0);
+  signal readWindowNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
+  signal readContent : std_logic_vector(NUMBER_WORDS-1 downto 0);
 begin
 
+  -----------------------------------------------------------------------------
+  -- Output generation to packet buffer.
+  -----------------------------------------------------------------------------
+  process(readFrame, readFrameRestart,
+          readWindowReset, readWindowNext, readContent)
+  begin
+    readFrame_o <= '0';
+    readFrameRestart_o <= '0';
+    readWindowReset_o <= '0';
+    readWindowNext_o <= '0';
+    readContent_o <= '0';    
+    for i in 0 to NUMBER_WORDS-1 loop
+      if (readFrame(i) = '1') then
+        readFrame_o <= '1';
+      end if;
+        
+      if (readFrameRestart(i) = '1') then
+        readFrameRestart_o <= '1';
+      end if;
+
+      if (readWindowReset(i) = '1') then
+        readWindowReset_o <= '1';
+      end if;
+
+      if (readWindowNext(i) = '1') then
+        readWindowNext_o <= '1';
+      end if;
+
+      if (readContent(i) = '1') then
+        readContent_o <= '1';
+      end if;
+    end loop;
+  end process;
+
+  -----------------------------------------------------------------------------
+  -- Timeout logic.
+  -----------------------------------------------------------------------------
   process(areset_n, clk)
   begin
     if (areset_n = '0') then
@@ -705,7 +747,7 @@ begin
   timeSentElapsed <= unsigned(timeCurrent) - unsigned(timeSentReadData);
   timeSentDelta <= unsigned('0' & portLinkTimeout_i) - timeSentElapsed;
   timeSentExpired <= timeSentDelta(TIMEOUT_WIDTH);
-
+  
   timeSentEnable <= (not txFull_i) and (timeSentSet or timeSentReset);
   timeSentWriteAddress <= ackIdWindowCurrent when timeSentSet = '1' else
                           ackIdCurrent;
@@ -717,18 +759,21 @@ begin
       clkA_i=>clk, enableA_i=>timeSentEnable,
       addressA_i=>timeSentWriteAddress, dataA_i=>timeCurrent,
       addressB_i=>timeSentReadAddress, dataB_o=>timeSentReadData);
-    
+
+  -----------------------------------------------------------------------------
+  -- Protocol core and synchronization.
+  -----------------------------------------------------------------------------
   process(areset_n, clk)
   begin
     if (areset_n = '0') then
-      operationalCurrent <= '0';
+      operationalCurrent <= (others=>'0');
       ackIdCurrent <= (others=>'0');
       bufferStatusCurrent <= (others=>'0');
-      statusReceivedCurrent <= '0';
+      statusReceivedCurrent <= (others=>'0');
       numberSentLinkRequestsCurrent <= (others=>'0');
-      outputErrorStoppedCurrent <= '0';
-      fatalErrorCurrent <= '0';
-      recoverActiveCurrent <= '0';
+      outputErrorStoppedCurrent <= (others=>'0');
+      fatalErrorCurrent <= (others=>'0');
+      recoverActiveCurrent <= (others=>'0');
       recoverCounterCurrent <= (others=>'0');
       ackIdWindowCurrent <= (others=>'0');
       frameStateCurrent <= (others=>'0');
@@ -736,6 +781,7 @@ begin
       frameContentCurrent <= (others=>'0');
       counterCurrent <= (others=>'0');
       symbolsTransmittedCurrent <= (others=>'0');
+      maintenanceClassCurrent <= (others=>'0');
     elsif (clk'event and clk = '1') then
       if (txFull_i = '0') then
         operationalCurrent <= operationalNext;
@@ -753,60 +799,80 @@ begin
         frameContentCurrent <= frameContentNext;
         counterCurrent <= counterNext;
         symbolsTransmittedCurrent <= symbolsTransmittedNext;
+        maintenanceClassCurrent <= maintenanceClassNext;
       end if;
     end if;
   end process;
-  
-  TxCore: RioTransmitterCore 
-    generic map(NUMBER_WORDS=>NUMBER_WORDS)
-    port map(
-      clk=>clk, areset_n=>areset_n, 
-      portEnable_i=>portEnable_i, 
-      portInitialized_i=>portInitialized_i, 
-      txFull_i=>txFull_i, txWrite_o=>txWrite_o, txType_o=>txType_o, txData_o=>txData_o, 
-      txControlEmpty_i=>txControlEmpty_i, 
-      txControlSymbol_i=>txControlSymbol_i, 
-      txControlUpdate_o=>txControlUpdate_o, 
-      rxControlEmpty_i=>rxControlEmpty_i, 
-      rxControlSymbol_i=>rxControlSymbol_i, 
-      rxControlUpdate_o=>rxControlUpdate_o, 
-      linkInitialized_o=>linkInitialized_o, 
-      linkInitialized_i=>linkInitialized_i, 
-      ackIdStatus_i=>ackIdStatus_i, 
 
-      timeSentSet_o=>timeSentSet, 
-      timeSentReset_o=>timeSentReset,
-      timeSentExpired_i=>timeSentExpired,
-      
-      operational_i=>operationalCurrent, operational_o=>operationalNext, 
-      ackId_i=>ackIdCurrent, ackId_o=>ackIdNext, 
-      bufferStatus_i=>bufferStatusCurrent, bufferStatus_o=>bufferStatusNext, 
-      statusReceived_i=>statusReceivedCurrent, statusReceived_o=>statusReceivedNext, 
-      numberSentLinkRequests_i=>numberSentLinkRequestsCurrent, numberSentLinkRequests_o=>numberSentLinkRequestsNext, 
-      outputErrorStopped_i=>outputErrorStoppedCurrent, outputErrorStopped_o=>outputErrorStoppedNext, 
-      fatalError_i=>fatalErrorCurrent, fatalError_o=>fatalErrorNext,
-      recoverActive_i=>recoverActiveCurrent, recoverActive_o=>recoverActiveNext, 
-      recoverCounter_i=>recoverCounterCurrent, recoverCounter_o=>recoverCounterNext, 
-      ackIdWindow_i=>ackIdWindowCurrent, ackIdWindow_o=>ackIdWindowNext, 
-      frameState_i=>frameStateCurrent, frameState_o=>frameStateNext, 
-      frameWordCounter_i=>frameWordCounterCurrent, frameWordCounter_o=>frameWordCounterNext, 
-      frameContent_i=>frameContentCurrent, frameContent_o=>frameContentNext, 
-      counter_i=>counterCurrent, counter_o=>counterNext, 
-      symbolsTransmitted_i=>symbolsTransmittedCurrent, symbolsTransmitted_o=>symbolsTransmittedNext, 
-
-      readFrameEmpty_i=>readFrameEmpty_i, 
-      readFrame_o=>readFrame_o, 
-      readFrameRestart_o=>readFrameRestart_o, 
-      readFrameAborted_i=>readFrameAborted_i, 
-      readWindowEmpty_i=>readWindowEmpty_i, 
-      readWindowReset_o=>readWindowReset_o, 
-      readWindowNext_o=>readWindowNext_o, 
-      readContentEmpty_i=>readContentEmpty_i, 
-      readContent_o=>readContent_o, 
-      readContentEnd_i=>readContentEnd_i, 
-      readContentWords_i=>readContentWords_i, 
-      readContentData_i=>readContentData_i);
-
+  CoreGeneration: for i in 0 to NUMBER_WORDS-1 generate
+    TxCore: RioTransmitterCore 
+      generic map(NUMBER_WORDS=>NUMBER_WORDS)
+      port map(
+        clk=>clk, areset_n=>areset_n, 
+        portEnable_i=>portEnable_i, 
+        portInitialized_i=>portInitialized_i, 
+        txFull_i=>txFull_i,
+        txWrite_o=>txWrite_o,
+        txType_o=>txType_o,
+        txData_o=>txData_o, 
+        txControlEmpty_i=>txControlEmpty_i(i), 
+        txControlSymbol_i=>txControlSymbol_i(13*(i+1)-1 downto 13*i), 
+        txControlUpdate_o=>txControlUpdate_o(i), 
+        rxControlEmpty_i=>rxControlEmpty_i(i), 
+        rxControlSymbol_i=>rxControlSymbol_i(13*(i+1)-1 downto 13*i), 
+        rxControlUpdate_o=>rxControlUpdate_o(i), 
+        linkInitialized_o=>linkInitialized_o, 
+        linkInitialized_i=>linkInitialized_i, 
+        ackIdStatus_i=>ackIdStatus_i, 
+        timeSentSet_o=>timeSentSet, 
+        timeSentReset_o=>timeSentReset,
+        timeSentExpired_i=>timeSentExpired,
+        operational_i=>operationalCurrent(i),
+        operational_o=>operationalNext(i), 
+        ackId_i=>ackIdCurrent(5*(i+1)-1 downto 5*i),
+        ackId_o=>ackIdNext(5*(i+1)-1 downto 5*i), 
+        bufferStatus_i=>bufferStatusCurrent(5*(i+1)-1 downto 5*i),
+        bufferStatus_o=>bufferStatusNext(5*(i+1)-1 downto 5*i), 
+        statusReceived_i=>statusReceivedCurrent(i),
+        statusReceived_o=>statusReceivedNext(i), 
+        numberSentLinkRequests_i=>numberSentLinkRequestsCurrent(2*(i+1)-1 downto 2*i),
+        numberSentLinkRequests_o=>numberSentLinkRequestsNext(2*(i+1)-1 downto 2*i), 
+        outputErrorStopped_i=>outputErrorStoppedCurrent(i),
+        outputErrorStopped_o=>outputErrorStoppedNext(i), 
+        fatalError_i=>fatalErrorCurrent(i),
+        fatalError_o=>fatalErrorNext(i),
+        recoverActive_i=>recoverActiveCurrent(i),
+        recoverActive_o=>recoverActiveNext(i), 
+        recoverCounter_i=>recoverCounterCurrent(5*(i+1)-1 downto 5*i),
+        recoverCounter_o=>recoverCounterNext(5*(i+1)-1 downto 5*i), 
+        ackIdWindow_i=>ackIdWindowCurrent(5*(i+1)-1 downto 5*i),
+        ackIdWindow_o=>ackIdWindowNext(5*(i+1)-1 downto 5*i), 
+        frameState_i=>frameStateCurrent(4*(i+1)-1 downto 4*i),
+        frameState_o=>frameStateNext(4*(i+1)-1 downto 4*i), 
+        frameWordCounter_i=>frameWordCounterCurrent(2*(i+1)-1 downto 2*i),
+        frameWordCounter_o=>frameWordCounterNext(2*(i+1)-1 downto 2*i), 
+        frameContent_i=>frameContentCurrent(64*(i+1)-1 downto 64*i),
+        frameContent_o=>frameContentNext(64*(i+1)-1 downto 64*i), 
+        counter_i=>counterCurrent(4*(i+1)-1 downto 4*i),
+        counter_o=>counterNext(4*(i+1)-1 downto 4*i), 
+        symbolsTransmitted_i=>symbolsTransmittedCurrent(8*(i+1)-1 downto 8*i),
+        symbolsTransmitted_o=>symbolsTransmittedNext(8*(i+1)-1 downto 8*i),
+        maintenanceClass_i=>maintenanceClassCurrent(i),
+        maintenanceClass_o=>maintenanceClassNext(i),
+        readFrameEmpty_i=>readFrameEmpty_i, 
+        readFrame_o=>readFrame(i), 
+        readFrameRestart_o=>readFrameRestart(i), 
+        readFrameAborted_i=>readFrameAborted_i, 
+        readWindowEmpty_i=>readWindowEmpty_i, 
+        readWindowReset_o=>readWindowReset(i), 
+        readWindowNext_o=>readWindowNext(i), 
+        readContentEmpty_i=>readContentEmpty_i, 
+        readContent_o=>readContent(i), 
+        readContentEnd_i=>readContentEnd_i, 
+        readContentWords_i=>readContentWords_i, 
+        readContentData_i=>readContentData_i);
+    end generate;
+    
 end architecture;
 
 
@@ -855,11 +921,12 @@ entity RioTransmitterCore is
     linkInitialized_i : in std_logic;
     ackIdStatus_i : in std_logic_vector(4 downto 0);
 
-    -- Internal core variables for cascading.
+    -- Timeout signals.
     timeSentSet_o : out std_logic;
     timeSentReset_o : out std_logic;
     timeSentExpired_i : in std_logic;
     
+    -- Internal core variables for cascading.
     operational_i : in std_logic;
     operational_o : out std_logic;
     ackId_i : in std_logic_vector(4 downto 0);
@@ -880,16 +947,18 @@ entity RioTransmitterCore is
     recoverCounter_o : out std_logic_vector(4 downto 0);
     ackIdWindow_i : in std_logic_vector(4 downto 0);
     ackIdWindow_o : out std_logic_vector(4 downto 0);
-    frameState_i : in std_logic_vector(6 downto 0);
-    frameState_o : out std_logic_vector(6 downto 0);
+    frameState_i : in std_logic_vector(3 downto 0);
+    frameState_o : out std_logic_vector(3 downto 0);
     frameWordCounter_i : in std_logic_vector(1 downto 0);
     frameWordCounter_o : out std_logic_vector(1 downto 0);
-    frameContent_i : in std_logic_vector(32*NUMBER_WORDS-1 downto 0);
-    frameContent_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0);
+    frameContent_i : in std_logic_vector(63 downto 0);
+    frameContent_o : out std_logic_vector(63 downto 0);
     counter_i : in std_logic_vector(3 downto 0);
     counter_o : out std_logic_vector(3 downto 0);
     symbolsTransmitted_i : in std_logic_vector(7 downto 0);
     symbolsTransmitted_o : out std_logic_vector(7 downto 0);
+    maintenanceClass_i : in std_logic;
+    maintenanceClass_o : out std_logic;
     
     -- Frame buffer interface.
     readFrameEmpty_i : in std_logic;
@@ -910,20 +979,20 @@ end entity;
 -------------------------------------------------------------------------------
 -- Architecture for RioTransmitterCore.
 -------------------------------------------------------------------------------
--- REMARK: Check that all _o except channel variables are registered...
 architecture RioTransmitterCoreImpl of RioTransmitterCore is
 
   constant NUMBER_STATUS_TRANSMIT : std_logic_vector := "1111";
   constant NUMBER_LINK_RESPONSE_RETRIES : std_logic_vector := "10";
 
-  -- REMARK: Binary coding???
-  constant FRAME_IDLE : std_logic_vector(6 downto 0) := "0000001";
-  constant FRAME_START : std_logic_vector(6 downto 0) := "0000010";
-  constant FRAME_FIRST : std_logic_vector(6 downto 0) := "0000100";
-  constant FRAME_MIDDLE : std_logic_vector(6 downto 0) := "0001000";
-  constant FRAME_LAST : std_logic_vector(6 downto 0) := "0010000";
-  constant FRAME_END : std_logic_vector(6 downto 0) := "0100000";
-  constant FRAME_DISCARD : std_logic_vector(6 downto 0) := "1000000";
+  constant FRAME_IDLE : std_logic_vector(3 downto 0) :=   "0000";
+  constant FRAME_BUFFER : std_logic_vector(3 downto 0) := "0001";
+  constant FRAME_START : std_logic_vector(3 downto 0) :=  "0010";
+  constant FRAME_FIRST : std_logic_vector(3 downto 0) :=  "0011";
+  constant FRAME_MIDDLE : std_logic_vector(3 downto 0) := "0100";
+  constant FRAME_LAST_0 : std_logic_vector(3 downto 0) := "0101";
+  constant FRAME_LAST_1 : std_logic_vector(3 downto 0) := "0110";
+  constant FRAME_END : std_logic_vector(3 downto 0) :=    "0111";
+  constant FRAME_DISCARD : std_logic_vector(3 downto 0) :="1000";
   
   component Crc5ITU is
     port(
@@ -986,26 +1055,25 @@ begin
   rxControlParameter1 <= rxControlSymbol_i(4 downto 0);
 
   -----------------------------------------------------------------------------
-  -- N-3
+  -- First pipeline stage.
   -- Receive stuff from link-partner and timeout supervision.
   -- Input: ackId, ackIdWindow, timeoutExpired
   -- Output: sendLinkRequest, sendRestartFromRetry, ackId,
   -----------------------------------------------------------------------------
 
+  txControlUpdate_o <= txControlUpdateOut and (not txFull_i);
+  
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      txControlUpdate_o <= '0';
       readFrame_o <= '0';
       
       sendRestartFromRetry <= '0';
       sendLinkRequest <= '0';
     elsif (clk'event and clk = '1') then
-      txControlUpdate_o <= '0';
       readFrame_o <= '0';
       
       if (txFull_i = '0') then
-        txControlUpdate_o <= txControlUpdateOut;
         readFrame_o <= readFrameOut;
         
         sendRestartFromRetry <= sendRestartFromRetryOut;
@@ -1043,20 +1111,28 @@ begin
       outputErrorStopped_o <= '0';
       fatalError_o <= '0';
     elsif (recoverActive_i = '1') then
-      if (ackId_i = recoverCounter_i) then
-        recoverActive_o <= '0';
-        outputErrorStopped_o <= '0';
-      else
+      if (ackId_i /= recoverCounter_i) then
         ackId_o <= std_logic_vector(unsigned(ackId_i) + 1);
         readFrameOut <= '1';
+      else
+        recoverActive_o <= '0';
+        outputErrorStopped_o <= '0';
       end if;
     else
       if (operational_i = '0') then
+        -- Not operational mode.
+
+        -- Check if any new symbol has been received from the link-partner.
         if (txControlEmpty_i = '0') then
+          -- New symbol from link-partner.
+
+          -- Check if the symbol is a status-control-symbol.
           if (txControlStype0 = STYPE0_STATUS) then
             -- A status-control symbol has been received.
+            -- Update variables from the input status control symbol.
             ackId_o <= txControlParameter0;
             bufferStatus_o <= txControlParameter1;
+            outputErrorStopped_o <= '0';
             statusReceived_o <= '1';
           else
             -- Discard all other received symbols in this state.
@@ -1070,7 +1146,6 @@ begin
         statusReceived_o <= '0';
 
         -- Check if the oldest frame timeout has expired.
-        -- REMARK: Two link-requests are transmitted when a timeout occurrs...
         if ((ackId_i /= ackIdWindow_i) and
             (timeSentExpired_i = '1')) then
           -- There has been a timeout on a transmitted frame.
@@ -1079,22 +1154,25 @@ begin
           -- timed out instead.
           timeSentReset_o <= '1';
 
+          -- Check if we are in the output-error-stopped state.
           if (outputErrorStopped_i = '1') then
-            -- Count the number of retransmissions and abort if
-            -- no reply has been received for too many times.
+            -- In the output-error-stopped state.
+            
+            -- Count the number of link-requests that has been sent and abort if
+            -- there has been no reply for too many times.
             if (unsigned(numberSentLinkRequests_i) /= 0) then
               -- Not sent link-request too many times.
-              
               -- Send another link-request.
               sendLinkRequestOut <= '1';
               numberSentLinkRequests_o <= std_logic_vector(unsigned(numberSentLinkRequests_i) - 1);
             else
               -- No response for too many times.
-
               -- Indicate that a fatal error has occurred.
               fatalError_o <= '1';
             end if;
           else
+            -- Not in output-error-stopped and there is a timeout.
+            -- Enter output-error-stopped state and send a link-request.
             sendLinkRequestOut <= '1';
             numberSentLinkRequests_o <= NUMBER_LINK_RESPONSE_RETRIES;
             outputErrorStopped_o <= '1';
@@ -1153,7 +1231,7 @@ begin
                   if (ackId_i = txControlParameter0) then
                     -- The ackId to retry is expected.
                     -- Go to the output-retry-stopped state.
-                    -- REMARK: The output-retry-stopped state is equivalent
+                    -- Note that the output-retry-stopped state is equivalent
                     -- to sending a restart-from-retry.
                     sendRestartFromRetryOut <= '1';
                   else
@@ -1184,13 +1262,8 @@ begin
                     recoverActive_o <= '1';
                   else
                     -- Totally out of sync.
-
                     -- Indicate that a fatal error has occurred.
                     fatalError_o <= '1';
-
-                    -- REMARK: What to do here???
-                    --readWindowReset_o <= '1';
-                    --stateNext <= STATE_UNINITIALIZED;
                   end if;
                 else
                   -- Dont expect or need a link-response in this state.
@@ -1222,7 +1295,7 @@ begin
   end process;
   
   -----------------------------------------------------------------------------
-  -- N-2 pipeline stage.
+  -- Second pipeline stage.
   -- Create stype1-part of symbols and data symbols. Save the time when a
   -- packet was fully sent.
   -- Input:  sendRestartFromRetry, sendLinkRequest
@@ -1231,14 +1304,14 @@ begin
   --         symbolControlLinkRequest, symbolData2, symbolData2Content.
   -----------------------------------------------------------------------------
 
+  readFrameRestart_o <= readFrameRestartOut and (not txFull_i);
+  readWindowReset_o <= readWindowResetOut and (not txFull_i);
+  readWindowNext_o <= readWindowNextOut and (not txFull_i);
+  readContent_o <= readContentOut and (not txFull_i);
+
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      readFrameRestart_o <= '0';
-      readWindowReset_o <= '0';
-      readWindowNext_o <= '0';
-      readContent_o <= '0';
-
       symbolControlRestart <= '0';
       symbolControlLinkRequest <= '0';
       symbolControlStart <= '0';
@@ -1246,17 +1319,7 @@ begin
       symbolData <= '0';
       symbolDataContent <= (others => '0');
     elsif (clk'event and clk = '1') then
-      readFrameRestart_o <= '0';
-      readWindowReset_o <= '0';
-      readWindowNext_o <= '0';
-      readContent_o <= '0';
-
       if (txFull_i = '0') then
-        readFrameRestart_o <= readFrameRestartOut;
-        readWindowReset_o <= readWindowResetOut;
-        readWindowNext_o <= readWindowNextOut;
-        readContent_o <= readContentOut;
-
         symbolControlRestart <= symbolControlRestartOut;
         symbolControlLinkRequest <= symbolControlLinkRequestOut;
         symbolControlStart <= symbolControlStartOut;
@@ -1270,7 +1333,7 @@ begin
   -- This process decide which stype1-part of a control symbols to send as well
   -- as all data symbols.
   process(readWindowEmpty_i, bufferStatus_i,
-          recoverActive_i, recoverCounter_i, ackId_i, operational_i, outputErrorStopped_i, portEnable_i, readContentData_i, readContentWords_i, readContentEnd_i,
+          recoverActive_i, ackId_i, operational_i, outputErrorStopped_i, portEnable_i, readContentData_i, readContentWords_i, readContentEnd_i,
           frameState_i, frameWordCounter_i, frameContent_i,
           ackIdWindow_i,
           sendRestartFromRetry, sendLinkRequest,
@@ -1298,7 +1361,6 @@ begin
     if (fatalError_i = '1') then
       readWindowResetOut <= '1';
     elsif (recoverActive_i = '1') then
-      -- REMARK: Make sure idle is generated when this state is active...
       ackIdWindow_o <= ackId_i;
       frameState_o <= FRAME_IDLE;
       readWindowResetOut <= '1';
@@ -1310,7 +1372,6 @@ begin
         -----------------------------------------------------------------------
         
         -- Initialize framing before entering the operational state.
-        -- REMARK: Only do this when the portInitialized becomes asserted???
         frameState_o <= FRAME_IDLE;
         ackIdWindow_o <= ackId_i;
         readWindowResetOut <= '1';
@@ -1352,6 +1413,7 @@ begin
           -- REMARK: Hold any data symbol if there is a pending symbol from the
           -- receiver side...
 
+          -- REMARK: This statemachine does not work... one tick ahead is needed...
           case frameState_i is
             
             when FRAME_IDLE =>
@@ -1364,55 +1426,83 @@ begin
                 -- Update the output from the frame buffer to contain the
                 -- data when it is read later.
                 readContentOut <= '1';
+                frameContent_o <=
+                  frameContent_i(31 downto 0) & readContentData_i;
 
-                -- Indicate that a control symbol has been sent to start the
-                -- transmission of the frame.
-                frameState_o <= FRAME_START;
+                -- Proceed to start the transmission of the packet.
+                frameState_o <= FRAME_BUFFER;
               end if;
 
-            when FRAME_START =>
+            when FRAME_BUFFER =>
+              -----------------------------------------------------------------
+              -- Packet buffer output has been updated. Store the packet
+              -- content temporarily.
+              -----------------------------------------------------------------
+
+              readContentOut <= '1';
+              frameContent_o <=
+                frameContent_i(31 downto 0) & readContentData_i;
+
+              if (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS) then
+                maintenanceClass_o <= '1';
+              else
+                maintenanceClass_o <= '0';
+              end if;
+
+              frameState_o <= FRAME_START;
+              
+            when FRAME_START | FRAME_END =>
               -------------------------------------------------------
               -- Check if we are allowed to transmit this packet.
               -------------------------------------------------------
-              -- The packet may be either not allowed, i.e. a non-maintenance
+              -- The packet may be not allowed, i.e. a non-maintenance
               -- sent when only maintenance is allowed. The link-partner can be
-              -- busy, i.e. no having enough buffers to receive the new packet
+              -- busy, i.e. not having enough buffers to receive the new packet
               -- in or the number of outstanding packets may be too large.
               -- REMARK: Only update readContent_o in the last instance
               -- if cascaded...
 
               -- Check if the packet is allowed.
-              if ((portEnable_i = '1') or
-                  (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS)) then
+              if ((portEnable_i = '1') or (maintenanceClass_i = '1')) then
                 -- Packet is allowed.
 
                 -- Check if the link is able to accept the new frame.
-                if ((bufferStatus_i /= "00000") and
+                if ((readWindowEmpty_i = '0') and
+                    (bufferStatus_i /= "00000") and
                     ((unsigned(ackIdWindow_i)+1) /= unsigned(ackId_i))) then
                   -- New data is available for transmission and there
                   -- is room to receive it at the other side.
                   -- The packet may be transmitted.
-                  
-                  -- Indicate that a control symbol has been sent to start the
-                  -- transmission of the frame.
-                  frameWordCounter_o <= readContentWords_i;
-                  frameContent_o <= readContentData_i;
-                  readContentOut <= '1';
-                  
+
                   -- Send a control symbol to start the packet and a status to
                   -- complete the symbol.
                   symbolControlStartOut <= '1';
-
+                  
+                  -- Indicate that a control symbol has been sent to start the
+                  -- transmission of the frame.
+                  frameContent_o <=
+                    frameContent_i(31 downto 0) & readContentData_i;
+                  readContentOut <= '1';
+                  
                   -- Proceed to send the first packet data symbol containing
                   -- the ackId.
                   frameState_o <= FRAME_FIRST;
                 else
                   -- The link cannot accept the packet.
                   -- Wait in this state and dont do anything.
+                  if (frameState_i = FRAME_END) then
+                    symbolControlEndOut <= '1';
+                  end if;
+                  readFrameRestartOut <= '1';
+                  frameState_o <= FRAME_IDLE;
                 end if;
               else
                 -- The packet is not allowed.
                 -- Discard it.
+                if (frameState_i = FRAME_END) then
+                  symbolControlEndOut <= '1';
+                end if;
+                --readFrameRestartOut <= '1';
                 frameState_o <= FRAME_DISCARD;
               end if;
 
@@ -1425,23 +1515,19 @@ begin
               -- Write a new data symbol and fill in our ackId on the
               -- packet.
               symbolDataOut <= '1';
-              symbolDataContentOut <=
-                std_logic_vector(ackIdWindow_i) & "0" &
-                frameContent_i((32*NUMBER_WORDS)-7 downto (32*(NUMBER_WORDS-1)));
+              symbolDataContentOut <= std_logic_vector(ackIdWindow_i) & "0" &
+                                      frameContent_i(57 downto 32);
+              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
               
-              if (unsigned(frameWordCounter_i) /= 0) then
-                frameWordCounter_o <=
-                  std_logic_vector(unsigned(frameWordCounter_i) - 1);
-                frameContent_o <=
-                  frameContent_i((32*(NUMBER_WORDS-1))-1 downto 0) & x"00000000";
+              -- Check if the frame is ending.
+              if (readContentEnd_i = '1') then
+                -- The frame is ending.
+                readWindowNextOut <= '1';
+                frameState_o <= FRAME_LAST_0;
               else
-                frameWordCounter_o <= readContentWords_i;
-                frameContent_o <= readContentData_i;
                 readContentOut <= '1';
+                frameState_o <= FRAME_MIDDLE;
               end if;
-              
-              -- Continue to send the rest of the body of the packet.
-              frameState_o <= FRAME_MIDDLE;
               
             when FRAME_MIDDLE =>
               ---------------------------------------------------------------
@@ -1449,89 +1535,60 @@ begin
               -- Send a data symbol until the last part of the packet is
               -- detected.
               ---------------------------------------------------------------
-              -- REMARK: Dont send anything if there is a pending symbol in the
-              -- rx-control fifo to let it be transmitted in the middle of the
-              -- packet...
               
               -- Write a new data symbol.
               symbolDataOut <= '1';
-              symbolDataContentOut <=
-                frameContent_i((32*NUMBER_WORDS)-1 downto (32*(NUMBER_WORDS-1)));
+              symbolDataContentOut <= frameContent_i(63 downto 32);
+              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
 
-              if (unsigned(frameWordCounter_i) /= 0) then
-                frameWordCounter_o <=
-                  std_logic_vector(unsigned(frameWordCounter_i) - 1);
-                frameContent_o <=
-                  frameContent_i((32*(NUMBER_WORDS-1))-1 downto 0) & x"00000000";
+              -- Check if the frame is ending.
+              if (readContentEnd_i = '1') then
+                -- The frame is ending.
+                readWindowNextOut <= '1';
+                frameState_o <= FRAME_LAST_0;
               else
-                frameWordCounter_o <= readContentWords_i;
-                frameContent_o <= readContentData_i;                    
-
-                -- Check if the frame is ending.
-                -- REMARK: Dont forget to update RioPacketBuffer to support this...
-                if (readContentEnd_i = '1') then
-                  -- The frame is ending.
-
-                  -- Update the window to the next frame.
-                  -- It takes one tick for the output from the frame
-                  -- buffer to get updated.
-                  readWindowNextOut <= '1';
-
-                  -- Proceed to check if there is another frame to start
-                  -- with directly.
-                  frameState_o <= FRAME_LAST;
-                else
-                  readContentOut <= '1';
-                end if;
+                readContentOut <= '1';
               end if;
               
-            when FRAME_LAST =>
-              ---------------------------------------------------------------
-              -- A frame has ended and the window has been updated.
-              -- Check if the next symbol should end the frame or if a
-              -- new one should be started.
-              ---------------------------------------------------------------
-
-              -- Write a new data symbol.
-              symbolDataOut <= '1';
-              symbolDataContentOut <=
-                frameContent_i((32*NUMBER_WORDS)-1 downto (32*(NUMBER_WORDS-1)));
-
-              if (unsigned(frameWordCounter_i) /= 0) then
-                frameWordCounter_o <=
-                  std_logic_vector(unsigned(frameWordCounter_i) - 1);
-                frameContent_o <=
-                  frameContent_i((32*(NUMBER_WORDS-1))-1 downto 0) & x"00000000";
-              else
-                -- Update the window ackId.
-                ackIdWindow_o <= std_logic_vector(unsigned(ackIdWindow_i) + 1);
-
-                -- Start timeout supervision for transmitted frame.
-                timeSentSet_o <= '1';
-
-                -- Note that the packet must be ended if the link-partner
-                -- cannot receive it.
-                if ((readWindowEmpty_i = '0') and
-                    (bufferStatus_i /= "00000") and
-                    ((unsigned(ackIdWindow_i)+2) /= unsigned(ackId_i))) then
-                  readContentOut <= '1';
-                  frameState_o <= FRAME_START;
-                else
-                  frameState_o <= FRAME_END;                  
-                end if;
-              end if;
-              
-            when FRAME_END =>
+            when FRAME_LAST_0 =>
               -----------------------------------------------------------------
               -- 
               -----------------------------------------------------------------
-              
-              -- Send a control symbol to end the packet.
-              symbolControlEndOut <= '1';
-                            
-              -- Start a new frame the next time.
-              frameState_o <= FRAME_IDLE;
-              
+
+              symbolDataOut <= '1';
+              symbolDataContentOut <= frameContent_i(63 downto 32);
+              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
+              if (readWindowEmpty_i = '0') then
+                readContentOut <= '1';
+              end if;
+              frameState_o <= FRAME_LAST_1;
+
+            when FRAME_LAST_1 =>
+              -----------------------------------------------------------------
+              -- 
+              -----------------------------------------------------------------
+
+              symbolDataOut <= '1';
+              symbolDataContentOut <= frameContent_i(63 downto 32);
+              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
+              if (readWindowEmpty_i = '0') then
+                if (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS) then
+                  maintenanceClass_o <= '1';
+                else
+                  maintenanceClass_o <= '0';
+                end if;
+                readContentOut <= '1';
+              end if;
+
+              -- Update the window ackId.
+              ackIdWindow_o <= std_logic_vector(unsigned(ackIdWindow_i) + 1);
+
+              -- Start timeout supervision for transmitted frame.
+              timeSentSet_o <= '1';
+
+              -- Proceed to end the frame or start a new one.
+              frameState_o <= FRAME_END;
+
             when FRAME_DISCARD =>
               ---------------------------------------------------------------
               -- 
@@ -1563,7 +1620,7 @@ begin
   end process;  
 
   -----------------------------------------------------------------------------
-  -- N-1
+  -- Third pipeline stage.
   -- Create the stype0 and stype1 part of a control symbol.
   -- This process makes sure that the buffer status are transmitted at least
   -- every 255 symbol.
@@ -1576,11 +1633,11 @@ begin
   --         symbolData1, symbolData1Content
   -----------------------------------------------------------------------------
 
+  rxControlUpdate_o <= rxControlUpdateOut and (not txFull_i);
+      
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      rxControlUpdate_o <= '0';
-      
       controlValid <= '0';
       stype0 <= (others=>'0');
       parameter0 <= (others=>'0');
@@ -1591,8 +1648,6 @@ begin
       dataContent <= (others=>'0');
     elsif (clk'event and clk = '1') then
       if (txFull_i = '0') then
-        rxControlUpdate_o <= rxControlUpdateOut;
-        
         controlValid <= controlValidOut;
         stype0 <= stype0Out;
         parameter0 <= parameter0Out;
@@ -1712,7 +1767,7 @@ begin
           -- The port is still initialized.
           
           -- Check if a status must be sent.
-          -- A status must be sent when there are not other stype0 value to
+          -- A status must be sent when there are no other stype0 value to
           -- send or if too many symbols without buffer-status has been sent.
           -- REMARK: Is there a risk of a race when a generated status-symbol
           -- is sent before another symbol stored in the rx-control fifo???
@@ -1757,15 +1812,17 @@ begin
           -- The port is not initialized anymore.
           -- Change the operational state.
           operational_o <= '0';
+          counter_o <= NUMBER_STATUS_TRANSMIT;
+          symbolsTransmitted_o <= (others=>'0');
         end if;          
       end if;
     end if;
   end process;
   
   -----------------------------------------------------------------------------
-  -- N pipeline stage.
+  -- Fourth pipeline stage.
   -- Make all symbols ready for transmission, i.e. calculate the CRC5 on
-  -- control symbols.
+  -- control symbols and choose which symbol to send.
   -- Inputs: controlValid, stype0, parameter0, parameter1, stype1, cmd,
   --         symbolData1, symbolData1Content 
   -----------------------------------------------------------------------------
@@ -2822,61 +2879,116 @@ end architecture;
 ---------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+use work.rio_common.all;
 
 
 -------------------------------------------------------------------------------
 -- 
 -------------------------------------------------------------------------------
-entity RioFifo1 is
+entity RioFifo is
   generic(
-    WIDTH : natural);
+    DEPTH_WIDTH : natural;
+    DATA_WIDTH : natural);
   port(
     clk : in std_logic;
     areset_n : in std_logic;
 
     empty_o : out std_logic;
     read_i : in std_logic;
-    data_o : out std_logic_vector(WIDTH-1 downto 0);
+    data_o : out std_logic_vector(DATA_WIDTH-1 downto 0);
 
     full_o : out std_logic;
     write_i : in std_logic;
-    data_i : in std_logic_vector(WIDTH-1 downto 0));
+    data_i : in std_logic_vector(DATA_WIDTH-1 downto 0));
 end entity;
        
 
 -------------------------------------------------------------------------------
 -- 
 -------------------------------------------------------------------------------
-architecture RioFifo1Impl of RioFifo1 is
+architecture RioFifoImpl of RioFifo is
+
+  component MemorySimpleDualPortAsync is
+    generic(
+      ADDRESS_WIDTH : natural := 1;
+      DATA_WIDTH : natural := 1;
+      INIT_VALUE : std_logic := 'U');
+    port(
+      clkA_i : in std_logic;
+      enableA_i : in std_logic;
+      addressA_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+      dataA_i : in std_logic_vector(DATA_WIDTH-1 downto 0);
+
+      addressB_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+      dataB_o : out std_logic_vector(DATA_WIDTH-1 downto 0));
+  end component;
+
   signal empty : std_logic;
   signal full : std_logic;
+
+  signal readAddress : std_logic_vector(DEPTH_WIDTH-1 downto 0);
+  signal readAddressInc : std_logic_vector(DEPTH_WIDTH-1 downto 0);
+  signal writeAddress : std_logic_vector(DEPTH_WIDTH-1 downto 0);
+  signal writeAddressInc : std_logic_vector(DEPTH_WIDTH-1 downto 0);
 begin
 
+  -- REMARK: Remove full here...
   empty_o <= empty;
   full_o <= full;
-  
+
+  readAddressInc <= std_logic_vector(unsigned(readAddress) + 1);
+  writeAddressInc <= std_logic_vector(unsigned(writeAddress) + 1);
+
   process(areset_n, clk)
   begin
     if (areset_n = '0') then
       empty <= '1';
       full <= '0';
-      data_o <= (others => '0');
+      readAddress <= (others=>'0');
+      writeAddress <= (others=>'0');
     elsif (clk'event and clk = '1') then
       if (empty = '1') then
         if (write_i = '1') then
           empty <= '0';
-          full <= '1';
-          data_o <= data_i;
+          writeAddress <= writeAddressInc;
         end if;
-      else
+      end if;
+      if (full = '1') then
         if (read_i = '1') then
-          empty <= '1';
           full <= '0';
+          readAddress <= readAddressInc;
+        end if;
+      end if;
+      if (empty = '0') and (full = '0') then
+        if (write_i = '1') and (read_i = '0') then
+          writeAddress <= writeAddressInc;
+          if (writeAddressInc = readAddress) then
+            full <= '1';
+          end if;
+        end if;
+        if (write_i = '0') and (read_i = '1') then
+          readAddress <= readAddressInc;
+          if (readAddressInc = writeAddress) then
+            empty <= '1';
+          end if;
+        end if;
+        if (write_i = '1') and (read_i = '1') then
+          writeAddress <= writeAddressInc;
+          readAddress <= readAddressInc;
         end if;
       end if;
     end if;
   end process;
   
+  Memory: MemorySimpleDualPortAsync
+    generic map(ADDRESS_WIDTH=>DEPTH_WIDTH,
+                DATA_WIDTH=>DATA_WIDTH,
+                INIT_VALUE=>'0')
+    port map(
+      clkA_i=>clk, enableA_i=>write_i,
+      addressA_i=>writeAddress, dataA_i=>data_i,
+      addressB_i=>readAddress, dataB_o=>data_o);  
 end architecture;
 
 

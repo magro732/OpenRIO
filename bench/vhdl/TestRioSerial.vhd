@@ -143,12 +143,12 @@ architecture TestRioSerialImpl of TestRioSerial is
       writeContentData_o : out std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
       portInitialized_i : in std_logic;
-      outboundSymbolEmpty_o : out std_logic;
-      outboundSymbolRead_i : in std_logic;
-      outboundSymbol_o : out std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
-      inboundSymbolFull_o : out std_logic;
-      inboundSymbolWrite_i : in std_logic;
-      inboundSymbol_i : in std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0));
+      outboundSymbolFull_i : in std_logic;
+      outboundSymbolWrite_o : out std_logic;
+      outboundSymbol_o : out std_logic_vector(((2+32)*NUMBER_WORDS-1) downto 0);
+      inboundSymbolEmpty_i : in std_logic;
+      inboundSymbolRead_o : out std_logic;
+      inboundSymbol_i : in std_logic_vector(((2+32)*NUMBER_WORDS-1) downto 0));
   end component;
 
   constant NUMBER_WORDS : natural range 1 to 8 := 1;
@@ -171,11 +171,11 @@ architecture TestRioSerialImpl of TestRioSerial is
   signal outboundAckIdRead : std_logic_vector(4 downto 0);
   
   signal portInitialized : std_logic;
-  signal outboundSymbolEmpty : std_logic;
-  signal outboundSymbolRead : std_logic;
+  signal outboundSymbolFull : std_logic;
+  signal outboundSymbolWrite : std_logic;
   signal outboundSymbol : std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
-  signal inboundSymbolFull : std_logic;
-  signal inboundSymbolWrite : std_logic;
+  signal inboundSymbolEmpty : std_logic;
+  signal inboundSymbolRead : std_logic;
   signal inboundSymbol : std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
 
   signal readFrameEmpty : std_logic;
@@ -229,14 +229,12 @@ begin
       constant symbolType : in std_logic_vector(1 downto 0);
       constant symbolContent : in std_logic_vector(31 downto 0) := x"00000000") is
     begin
-      wait until outboundSymbolEmpty = '0' and clk'event and clk = '1';
+      outboundSymbolFull <= '0';
+      wait until clk'event and clk = '1' and outboundSymbolWrite = '1';
 
       while ((outboundSymbol(33 downto 32) = SYMBOL_IDLE) and
              (symbolType /= SYMBOL_IDLE)) loop
-        outboundSymbolRead <= '1';
-        wait until clk'event and clk = '1';
-        outboundSymbolRead <= '0';
-        wait until outboundSymbolEmpty = '0' and clk'event and clk = '1';
+        wait until clk'event and clk = '1' and outboundSymbolWrite = '1';
       end loop;
       
       assert symbolType = outboundSymbol(33 downto 32)
@@ -262,9 +260,7 @@ begin
           severity error;
       end if;
 
-      outboundSymbolRead <= '1';
-      wait until clk'event and clk = '1';
-      outboundSymbolRead <= '0';
+      outboundSymbolFull <= '1';
     end procedure;
 
     ---------------------------------------------------------------------------
@@ -274,13 +270,11 @@ begin
       constant symbolType : in std_logic_vector(1 downto 0);
       constant symbolContent : in std_logic_vector(31 downto 0) := x"00000000") is
     begin
-      wait until inboundSymbolFull = '0' and clk'event and clk = '1';
-
-      inboundSymbolWrite <= '1';
+      inboundSymbolEmpty <= '0';
       inboundSymbol <= symbolType & symbolContent;
 
-      wait until clk'event and clk = '1';
-      inboundSymbolWrite <= '0';
+      wait until clk'event and clk = '1' and inboundSymbolRead = '1';
+      inboundSymbolEmpty <= '1';
     end procedure;
 
     ---------------------------------------------------------------------------
@@ -305,8 +299,8 @@ begin
     outputPortEnable <= '1';
     
     portInitialized <= '0';
-    outboundSymbolRead <= '0';
-    inboundSymbolWrite <= '0';
+    outboundSymbolFull <= '1';
+    inboundSymbolEmpty <= '1';
     inboundSymbol <= (others => '0');
 
     localAckIdWrite <= '0';
@@ -472,6 +466,7 @@ begin
                                         STYPE1_NOP, "000"));
     end loop;
 
+    ReceiveSymbol(SYMBOL_IDLE);
     ReceiveSymbol(SYMBOL_IDLE);
     ReceiveSymbol(SYMBOL_IDLE);
     wait until linkInitialized = '1';
@@ -2311,9 +2306,11 @@ begin
       writeFrameFull_i=>writeFrameFull, writeFrame_o=>writeFrame, writeFrameAbort_o=>writeFrameAbort,
       writeContent_o=>writeContent, writeContentData_o=>writeContentData,
       portInitialized_i=>portInitialized,
-      outboundSymbolEmpty_o=>outboundSymbolEmpty, outboundSymbolRead_i=>outboundSymbolRead,
+      outboundSymbolFull_i=>outboundSymbolFull,
+      outboundSymbolWrite_o=>outboundSymbolWrite,
       outboundSymbol_o=>outboundSymbol,
-      inboundSymbolFull_o=>inboundSymbolFull, inboundSymbolWrite_i=>inboundSymbolWrite,
+      inboundSymbolEmpty_i=>inboundSymbolEmpty,
+      inboundSymbolRead_o=>inboundSymbolRead,
       inboundSymbol_i=>inboundSymbol);
 
 end architecture;

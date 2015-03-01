@@ -772,7 +772,7 @@ begin
       if(readFrameRestart_i = '1') then
         memoryRead_p <= memoryStartWindow_p;
       elsif(readContent_i = '1') then
-        if(memoryRead_p = readFrameEnd_p) then
+        if(memoryReadNext_p = readFrameEnd_p) then
           readContentEnd_o <= '1';
         else
           readContentEnd_o <= '0';

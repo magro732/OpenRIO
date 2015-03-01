@@ -280,7 +280,8 @@ begin
     end procedure;
     
     procedure SetOutboundReadContent(
-      constant content : in std_logic_vector(31 downto 0)) is
+      constant content : in std_logic_vector(31 downto 0);
+      constant ending : in std_logic := '0') is
     begin
       outboundReadContent <= '1';
       wait until clk'event and clk = '1';
@@ -288,19 +289,7 @@ begin
       
       assert (outboundReadContentData = content)
         report "Unexpected content read." severity error;
-      assert (outboundReadContentEnd = '0')
-        report "Unexpected content end." severity error;
-      
-      outboundReadContent <= '0';
-    end procedure;
-
-    procedure SetOutboundReadContentEnd is
-    begin
-      outboundReadContent <= '1';
-      wait until clk'event and clk = '1';
-      wait for 1 ns;
-      
-      assert (outboundReadContentEnd = '1')
+      assert (outboundReadContentEnd = ending)
         report "Unexpected content end." severity error;
       
       outboundReadContent <= '0';
@@ -659,7 +648,7 @@ begin
 
     ---------------------------------------------------------------------------
     
-    for i in 0 to 2 loop
+    for i in 0 to 1 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -669,7 +658,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(2, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -685,7 +674,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
 
-    for i in 0 to 2 loop
+    for i in 0 to 1 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -695,7 +684,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
     
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(2, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -779,7 +768,7 @@ begin
     -- Read the frames using the window mechanism.
     ---------------------------------------------------------------------------
     
-    for i in 0 to 2 loop
+    for i in 0 to 1 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(1+i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -789,7 +778,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
     
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(1+2, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -805,7 +794,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
     
-    for i in 0 to 2 loop
+    for i in 0 to 1 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(2+i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -815,7 +804,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(2+2, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -843,7 +832,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
     
-    for i in 0 to 2 loop
+    for i in 0 to 1 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(1+i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -853,7 +842,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(1+2, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -869,7 +858,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
 
-    for i in 0 to 2 loop
+    for i in 0 to 1 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(2+i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -879,7 +868,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(2+2, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -914,7 +903,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
     
-    for i in 0 to 2 loop
+    for i in 0 to 1 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(2+i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -924,7 +913,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(2+2, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -1023,7 +1012,7 @@ begin
     ---------------------------------------------------------------------------
 
     for j in 0 to 61 loop
-      for i in 0 to 2 loop
+      for i in 0 to 1 loop
         SetOutboundReadContent(std_logic_vector(to_unsigned(j+i, 32)));
         assert (outboundWriteFrameFull = '1')
           report "Unexpected writeFrameFull." severity error;
@@ -1033,7 +1022,7 @@ begin
           report "Unexpected readWindowEmpty." severity error;
       end loop;
 
-      SetOutboundReadContentEnd;
+      SetOutboundReadContent(std_logic_vector(to_unsigned(j+2, 32)), '1');
       assert (outboundWriteFrameFull = '1')
         report "Unexpected writeFrameFull." severity error;
       assert (outboundReadFrameEmpty = '0')
@@ -1050,7 +1039,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
       
-    for i in 0 to 2 loop
+    for i in 0 to 1 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(62+i, 32)));
       assert (outboundWriteFrameFull = '1')
         report "Unexpected writeFrameFull." severity error;
@@ -1060,7 +1049,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(62+2, 32)), '1');
     assert (outboundWriteFrameFull = '1')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -1106,7 +1095,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
 
-    for i in 0 to 2 loop
+    for i in 0 to 1 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(62+i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -1116,7 +1105,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(62+2, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -1221,7 +1210,7 @@ begin
     ---------------------------------------------------------------------------
 
     for j in 0 to 5 loop
-      for i in 0 to 30 loop
+      for i in 0 to 29 loop
         SetOutboundReadContent(std_logic_vector(to_unsigned(j+i, 32)));
         assert (outboundWriteFrameFull = '1')
           report "Unexpected writeFrameFull." severity error;
@@ -1231,7 +1220,7 @@ begin
           report "Unexpected readWindowEmpty." severity error;
       end loop;
 
-      SetOutboundReadContentEnd;
+      SetOutboundReadContent(std_logic_vector(to_unsigned(j+30, 32)), '1');
       assert (outboundWriteFrameFull = '1')
         report "Unexpected writeFrameFull." severity error;
       assert (outboundReadFrameEmpty = '0')
@@ -1248,7 +1237,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
       
-    for i in 0 to 68 loop
+    for i in 0 to 67 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(1024+i, 32)));
       assert (outboundWriteFrameFull = '1')
         report "Unexpected writeFrameFull." severity error;
@@ -1258,7 +1247,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(1024+68, 32)), '1');
     assert (outboundWriteFrameFull = '1')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -1314,7 +1303,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
 
-    for i in 0 to 68 loop
+    for i in 0 to 67 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(1024+i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -1324,7 +1313,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(1024+68, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -1530,7 +1519,7 @@ begin
     -- 
     ---------------------------------------------------------------------------
 
-    for i in 0 to 3 loop
+    for i in 0 to 2 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -1540,7 +1529,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(3, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -1588,7 +1577,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
     
-    SetOutboundReadContent(std_logic_vector(to_unsigned(4, 32)));
+    SetOutboundReadContent(std_logic_vector(to_unsigned(4, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -1596,14 +1585,6 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
     
-    SetOutboundReadContentEnd;
-    assert (outboundWriteFrameFull = '0')
-      report "Unexpected writeFrameFull." severity error;
-    assert (outboundReadFrameEmpty = '0')
-      report "Unexpected readFrameEmpty." severity error;
-    assert (outboundReadWindowEmpty = '0')
-      report "Unexpected readWindowEmpty." severity error;
-
     SetOutboundReadWindowNext;
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
@@ -1724,7 +1705,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
 
-    for i in 0 to 3 loop
+    for i in 0 to 2 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(1+i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -1734,7 +1715,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(1+3, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -1758,7 +1739,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
 
-    for i in 0 to 3 loop
+    for i in 0 to 2 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(3+i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -1768,7 +1749,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(3+3, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -1819,7 +1800,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
 
-    for i in 0 to 3 loop
+    for i in 0 to 2 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(1+i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -1829,7 +1810,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(1+3, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -1845,7 +1826,7 @@ begin
     assert (outboundReadWindowEmpty = '0')
       report "Unexpected readWindowEmpty." severity error;
 
-    for i in 0 to 3 loop
+    for i in 0 to 2 loop
       SetOutboundReadContent(std_logic_vector(to_unsigned(1+i, 32)));
       assert (outboundWriteFrameFull = '0')
         report "Unexpected writeFrameFull." severity error;
@@ -1855,7 +1836,7 @@ begin
         report "Unexpected readWindowEmpty." severity error;
     end loop;
 
-    SetOutboundReadContentEnd;
+    SetOutboundReadContent(std_logic_vector(to_unsigned(1+3, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '0')
@@ -1913,7 +1894,7 @@ begin
     assert (outboundReadContentEmpty = '0')
       report "Unexpected readContentEmpty." severity error;
 
-    SetOutboundReadContent(std_logic_vector(to_unsigned(1, 32)));
+    SetOutboundReadContent(std_logic_vector(to_unsigned(1, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '1')
@@ -1933,16 +1914,6 @@ begin
     assert (outboundReadContentEmpty = '0')
       report "Unexpected readContentEmpty." severity error;
     
-    SetOutboundReadContentEnd;
-    assert (outboundWriteFrameFull = '0')
-      report "Unexpected writeFrameFull." severity error;
-    assert (outboundReadFrameEmpty = '0')
-      report "Unexpected readFrameEmpty." severity error;
-    assert (outboundReadWindowEmpty = '0')
-      report "Unexpected readWindowEmpty." severity error;
-    assert (outboundReadContentEmpty = '0')
-      report "Unexpected readContentEmpty." severity error;
-
     SetOutboundReadWindowNext;
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
@@ -2034,7 +2005,7 @@ begin
     assert (outboundReadFrameAborted = '0')
       report "Unexpected readFrameAborted." severity error;
 
-    SetOutboundReadContent(std_logic_vector(to_unsigned(2, 32)));
+    SetOutboundReadContent(std_logic_vector(to_unsigned(2, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '1')
@@ -2058,18 +2029,6 @@ begin
     assert (outboundReadFrameAborted = '0')
       report "Unexpected readFrameAborted." severity error;
     
-    SetOutboundReadContentEnd;
-    assert (outboundWriteFrameFull = '0')
-      report "Unexpected writeFrameFull." severity error;
-    assert (outboundReadFrameEmpty = '0')
-      report "Unexpected readFrameEmpty." severity error;
-    assert (outboundReadWindowEmpty = '0')
-      report "Unexpected readWindowEmpty." severity error;
-    assert (outboundReadContentEmpty = '0')
-      report "Unexpected readContentEmpty." severity error;
-    assert (outboundReadFrameAborted = '0')
-      report "Unexpected readFrameAborted." severity error;
-
     SetOutboundReadWindowNext;
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
@@ -2115,7 +2074,7 @@ begin
     assert (outboundReadFrameAborted = '0')
       report "Unexpected readFrameAborted." severity error;
     
-    SetOutboundReadContent(std_logic_vector(to_unsigned(1, 32)));
+    SetOutboundReadContent(std_logic_vector(to_unsigned(1, 32)), '1');
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
     assert (outboundReadFrameEmpty = '1')
@@ -2163,18 +2122,6 @@ begin
     assert (outboundReadFrameAborted = '0')
       report "Unexpected readFrameAborted." severity error;
     
-    SetOutboundReadContentEnd;
-    assert (outboundWriteFrameFull = '0')
-      report "Unexpected writeFrameFull." severity error;
-    assert (outboundReadFrameEmpty = '0')
-      report "Unexpected readFrameEmpty." severity error;
-    assert (outboundReadWindowEmpty = '0')
-      report "Unexpected readWindowEmpty." severity error;
-    assert (outboundReadContentEmpty = '0')
-      report "Unexpected readContentEmpty." severity error;
-    assert (outboundReadFrameAborted = '0')
-      report "Unexpected readFrameAborted." severity error;
-
     SetOutboundReadWindowNext;
     assert (outboundWriteFrameFull = '0')
       report "Unexpected writeFrameFull." severity error;
