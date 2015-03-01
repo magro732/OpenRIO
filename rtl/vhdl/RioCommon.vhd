@@ -96,6 +96,13 @@ package rio_common is
       dataB_o : out std_logic_vector(DATA_WIDTH-1 downto 0));
   end component;
   
+  component Crc16CITT is
+    port(
+      d_i : in  std_logic_vector(15 downto 0);
+      crc_i : in  std_logic_vector(15 downto 0);
+      crc_o : out std_logic_vector(15 downto 0));
+  end component;
+
   -----------------------------------------------------------------------------
   -- Logical layer component declarations.
   -----------------------------------------------------------------------------
@@ -120,16 +127,15 @@ package rio_common is
       writeContent_o : out std_logic;
       writeContentData_o : out std_logic_vector(31 downto 0);
 
-      inboundCyc_o : out std_logic;
       inboundStb_o : out std_logic;
-      inboundAdr_o : out std_logic_vector(7 downto 0);
+      inboundAdr_o : out std_logic_vector(3 downto 0);
       inboundDat_o : out std_logic_vector(31 downto 0);
-      inboundAck_i : in std_logic;
+      inboundStall_i : in std_logic;
       
-      outboundCyc_i : in std_logic_vector(PORTS-1 downto 0);
       outboundStb_i : in std_logic_vector(PORTS-1 downto 0);
+      outboundAdr_i : in std_logic_vector(PORTS-1 downto 0);
       outboundDat_i : in std_logic_vector(32*PORTS-1 downto 0);
-      outboundAck_o : out std_logic_vector(PORTS-1 downto 0));
+      outboundStall_o : out std_logic_vector(PORTS-1 downto 0));
   end component;
 
   component RioLogicalMaintenance is
@@ -165,6 +171,12 @@ package rio_common is
   end component;
   
   component MaintenanceInbound is
+    generic(
+      ENABLE_READ_REQUEST : boolean := true;
+      ENABLE_WRITE_REQUEST : boolean := true;
+      ENABLE_READ_RESPONSE : boolean := true;
+      ENABLE_WRITE_RESPONSE : boolean := true;
+      ENABLE_PORT_WRITE : boolean := true);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -175,6 +187,7 @@ package rio_common is
       readResponseReady_o : out std_logic;
       writeResponseReady_o : out std_logic;
       portWriteReady_o : out std_logic;
+      
       vc_o : out std_logic;
       crf_o : out std_logic;
       prio_o : out std_logic_vector(1 downto 0);
@@ -192,13 +205,73 @@ package rio_common is
       payload_o : out std_logic_vector(63 downto 0);
       done_i : in std_logic;
       
-      inboundCyc_i : in std_logic;
       inboundStb_i : in std_logic;
-      inboundAdr_i : in std_logic_vector(7 downto 0);
+      inboundAdr_i : in std_logic_vector(3 downto 0);
       inboundDat_i : in std_logic_vector(31 downto 0);
-      inboundAck_o : out std_logic);
+      inboundStall_o : out std_logic);
   end component;
   
+  component RequestClassInbound is
+    generic(
+      EXTENDED_ADDRESS : natural range 0 to 2 := 0);
+    port(
+      clk : in std_logic;
+      areset_n : in std_logic;
+      enable : in std_logic;
+
+      nreadReady_o : out std_logic;
+      
+      vc_o : out std_logic;
+      crf_o : out std_logic;
+      prio_o : out std_logic_vector(1 downto 0);
+      tt_o : out std_logic_vector(1 downto 0);
+      dstId_o : out std_logic_vector(31 downto 0);
+      srcId_o : out std_logic_vector(31 downto 0);
+      tid_o : out std_logic_vector(7 downto 0);
+      address_o : out std_logic_vector(16*EXTENDED_ADDRESS+30 downto 0);
+      length_o : out std_logic_vector(4 downto 0);
+      select_o : out std_logic_vector(7 downto 0);
+      done_i : in std_logic;
+      
+      inboundStb_i : in std_logic;
+      inboundAdr_i : in std_logic_vector(3 downto 0);
+      inboundDat_i : in std_logic_vector(31 downto 0);
+      inboundStall_o : out std_logic);
+  end component;
+
+  component WriteClassInbound is
+    generic(
+      ENABLE_NWRITE : boolean := true;
+      ENABLE_NWRITER : boolean := true;
+      EXTENDED_ADDRESS : natural range 0 to 2 := 0);
+    port(
+      clk : in std_logic;
+      areset_n : in std_logic;
+      enable : in std_logic;
+
+      nwriteReady_o : out std_logic;
+      nwriterReady_o : out std_logic;
+      
+      vc_o : out std_logic;
+      crf_o : out std_logic;
+      prio_o : out std_logic_vector(1 downto 0);
+      tt_o : out std_logic_vector(1 downto 0);
+      dstId_o : out std_logic_vector(31 downto 0);
+      srcId_o : out std_logic_vector(31 downto 0);
+      tid_o : out std_logic_vector(7 downto 0);
+      address_o : out std_logic_vector(16*EXTENDED_ADDRESS+30 downto 0);
+      length_o : out std_logic_vector(4 downto 0);
+      select_o : out std_logic_vector(7 downto 0);
+      payloadIndex_i : in std_logic_vector(4 downto 0);
+      payload_o : out std_logic_vector(63 downto 0);
+      done_i : in std_logic;
+      
+      inboundStb_i : in std_logic;
+      inboundAdr_i : in std_logic_vector(3 downto 0);
+      inboundDat_i : in std_logic_vector(31 downto 0);
+      inboundStall_o : out std_logic);
+  end component;
+
   component MaintenanceOutbound is
     port(
       clk : in std_logic;
@@ -210,6 +283,7 @@ package rio_common is
       readResponseReady_i : in std_logic;
       writeResponseReady_i : in std_logic;
       portWriteReady_i : in std_logic;
+      
       vc_i : in std_logic;
       crf_i : in std_logic;
       prio_i : in std_logic_vector(1 downto 0);
@@ -227,10 +301,38 @@ package rio_common is
       payload_i : in std_logic_vector(63 downto 0);
       done_o : out std_logic;
       
-      outboundCyc_o : out std_logic;
       outboundStb_o : out std_logic;
+      outboundAdr_o : out std_logic;
       outboundDat_o : out std_logic_vector(31 downto 0);
-      outboundAck_i : in std_logic);
+      outboundStall_i : in std_logic);
+  end component;
+
+  component ResponseClassOutbound is
+    port(
+      clk : in std_logic;
+      areset_n : in std_logic;
+      enable : in std_logic;
+
+      doneNoPayloadReady_i : in std_logic;
+      doneWithPayloadReady_i :  in std_logic;
+      errorReady_i : in std_logic;
+      
+      vc_i : in std_logic;
+      crf_i : in std_logic;
+      prio_i : in std_logic_vector(1 downto 0);
+      tt_i : in std_logic_vector(1 downto 0);
+      dstid_i : in std_logic_vector(31 downto 0);
+      srcid_i : in std_logic_vector(31 downto 0);
+      tid_i : in std_logic_vector(7 downto 0);
+      payloadLength_i : in std_logic_vector(4 downto 0);
+      payloadIndex_o : out std_logic_vector(4 downto 0);
+      payload_i : in std_logic_vector(63 downto 0);
+      done_o : out std_logic;
+      
+      outboundStb_o : out std_logic;
+      outboundAdr_o : out std_logic;
+      outboundDat_o : out std_logic_vector(31 downto 0);
+      outboundStall_i : in std_logic);
   end component;
 
   component RioPacketBuffer is
@@ -334,8 +436,12 @@ package rio_common is
   constant TTYPE_MAINTENANCE_WRITE_REQUEST : std_logic_vector(3 downto 0) := "0001";
   constant TTYPE_MAINTENANCE_READ_RESPONSE : std_logic_vector(3 downto 0) := "0010";
   constant TTYPE_MAINTENANCE_WRITE_RESPONSE : std_logic_vector(3 downto 0) := "0011";
+  constant TTYPE_MAINTENANCE_PORT_WRITE : std_logic_vector(3 downto 0) := "0100";
   constant TTYPE_NREAD_TRANSACTION : std_logic_vector(3 downto 0) := "0100";
   constant TTYPE_NWRITE_TRANSACTION : std_logic_vector(3 downto 0) := "0100";
+  constant TTYPE_NWRITER_TRANSACTION : std_logic_vector(3 downto 0) := "0101";
+  constant TTYPE_RESPONSE_NO_PAYLOAD : std_logic_vector(3 downto 0) := "0000";
+  constant TTYPE_RESPONSE_WITH_PAYLOAD : std_logic_vector(3 downto 0) := "1000";
 
   constant LINK_REQUEST_CMD_RESET_DEVICE : std_logic_vector(2 downto 0) := "011";
   constant LINK_REQUEST_CMD_INPUT_STATUS : std_logic_vector(2 downto 0) := "100";
@@ -494,12 +600,6 @@ package rio_common is
   function byteToString(constant byte : std_logic_vector(7 downto 0))
     return string;
 
-  -----------------------------------------------------------------------------
-  -- Function to print a std_logic_vector.
-  -----------------------------------------------------------------------------
-  function to_string(constant value : std_logic_vector)
-    return string;
-    
   ---------------------------------------------------------------------------
   -- Procedure to print to report file and output
   ---------------------------------------------------------------------------
@@ -519,47 +619,6 @@ package rio_common is
   -- Procedure to Print Error
   ---------------------------------------------------------------------------
   procedure PrintE( constant str : string );
-
-  ---------------------------------------------------------------------------
-  -- Procedures for test control.
-  ---------------------------------------------------------------------------
-
-  procedure TestWarning(constant tag : in string);
-  procedure TestError(constant tag : in string;
-                      constant stopAtError : in boolean := true);
-  procedure TestCompare(constant expression : in boolean;
-                        constant tag : in string := "";
-                        constant stopAtError : in boolean := true);
-  procedure TestCompare(constant got : in std_logic;
-                        constant expected : in std_logic;
-                        constant tag : in string := "";
-                        constant stopAtError : in boolean := true);
-  procedure TestCompare(constant got : in std_logic_vector;
-                        constant expected : in std_logic_vector;
-                        constant tag : in string := "";
-                        constant stopAtError : in boolean := true);
-  procedure TestCompare(constant got : in natural;
-                        constant expected : in natural;
-                        constant tag : in string := "";
-                        constant stopAtError : in boolean := true);
-  procedure TestCompare(constant got : in time;
-                        constant expected : in time;
-                        constant tag : in string := "";
-                        constant stopAtError : in boolean := true);
-  
-  procedure TestWait(signal waitSignal : in std_logic;
-                     constant waitValue : in std_logic;
-                     constant tag : in string := "";
-                     constant waitTime : in time := 1 ms;
-                     constant stopAtError : in boolean := true);
-  procedure TestWait(signal waitSignal : in std_logic;
-                     constant waitValue : in std_logic;
-                     signal ackSignal : inout std_logic;
-                     constant tag : in string := "";
-                     constant waitTime : in time := 1 ms;
-                     constant stopAtError : in boolean := true);
-
-  procedure TestEnd;
 
 end package;
 
@@ -990,48 +1049,6 @@ package body rio_common is
     return returnValue;
   end function;
   
-  -----------------------------------------------------------------------------
-  -- Function to print std_logic_vector.
-  -----------------------------------------------------------------------------
-  function to_string(constant value : std_logic) return string is
-    variable s : string(1 to 1);
-  begin
-    if (value = '0') then
-      s(1) := '0';
-    elsif (value = '1') then
-      s(1) := '1';
-    elsif (value = 'U') then
-      s(1) := 'U';
-    elsif (value = 'X') then
-      s(1) := 'X';
-    else
-      s(1) := '?';
-    end if;
-    return s;
-  end function;
-  function to_string(constant value : std_logic_vector) return string is
-    variable s : string(1 to value'length);
-    variable index : positive;
-    variable i : natural;
-  begin
-    index := 1;
-    for i in value'range loop
-      if (value(i) = '0') then
-        s(index) := '0';
-      elsif (value(i) = '1') then
-        s(index) := '1';
-      elsif (value(i) = 'U') then
-        s(index) := 'U';
-      elsif (value(i) = 'X') then
-        s(index) := 'X';
-      else
-        s(index) := '?';
-      end if;
-      index := index + 1;
-    end loop;
-    return s;
-  end function;
-  
   ---------------------------------------------------------------------------
   -- Procedure to print test report
   ---------------------------------------------------------------------------
@@ -1087,217 +1104,6 @@ package body rio_common is
     --Write to STD_OUTPUT
     report str severity error;
   end PrintE;
-
-  ---------------------------------------------------------------------------
-  -- Procedures to handle tests.
-  ---------------------------------------------------------------------------
-
-  procedure TestWarning(constant tag : in string) is
-    variable writeBuffer : line;
-  begin
-    write(writeBuffer, now);
-    write(writeBuffer, string'(":WARNING:"));
-    write(writeBuffer, tag);
-    writeline(OUTPUT, writeBuffer);
-  end procedure;
-  
-  procedure TestError(constant tag : in string;
-                      constant stopAtError : in boolean := true) is
-    variable writeBuffer : line;
-  begin
-    write(writeBuffer, now);
-    write(writeBuffer, string'(":FAILED:"));
-    write(writeBuffer, tag);
-    writeline(OUTPUT, writeBuffer);
-    
-    if (stopAtError) then
-      std.env.stop(0);
-    end if;
-  end procedure;
-  
-  procedure TestCompare(constant expression : in boolean;
-                        constant tag : in string := "";
-                        constant stopAtError : in boolean := true) is
-    variable writeBuffer : line;
-  begin
-    write(writeBuffer, now);
-    if (not expression) then
-      write(writeBuffer, string'(":FAILED:"));
-    else
-      write(writeBuffer, string'(":PASSED:"));
-    end if;
-    write(writeBuffer, tag);
-    writeline(OUTPUT, writeBuffer);
-    
-    if (stopAtError) and (not expression) then
-      std.env.stop(0);
-    end if;
-  end procedure;
-  
-  procedure TestCompare(constant got : in std_logic;
-                        constant expected : in std_logic;
-                        constant tag : in string := "";
-                        constant stopAtError : in boolean := true) is
-    variable writeBuffer : line;
-  begin
-    write(writeBuffer, now);
-    if (expected /= got) then
-      write(writeBuffer, string'(":FAILED:"));
-      write(writeBuffer, tag);
-      write(writeBuffer, ":got=" & to_string(got));
-      write(writeBuffer, ":expected=" & to_string(expected));
-    else
-      write(writeBuffer, string'(":PASSED:"));
-      write(writeBuffer, tag);
-    end if;
-    writeline(OUTPUT, writeBuffer);
-
-    if (stopAtError) and (expected /= got) then
-      std.env.stop(0);
-    end if;
-  end procedure;
-  
-  procedure TestCompare(constant got : in std_logic_vector;
-                        constant expected : in std_logic_vector;
-                        constant tag : in string := "";
-                        constant stopAtError : in boolean := true) is
-    variable writeBuffer : line;
-  begin
-    write(writeBuffer, now);
-    if (expected /= got) then
-      write(writeBuffer, string'(":FAILED:"));
-      write(writeBuffer, tag);
-      write(writeBuffer, ":got=" & to_string(got));
-      write(writeBuffer, ":expected=" & to_string(expected));
-    else
-      write(writeBuffer, string'(":PASSED:"));
-      write(writeBuffer, tag);
-    end if;
-    writeline(OUTPUT, writeBuffer);
-
-    if (stopAtError) and (expected /= got) then
-      std.env.stop(0);
-    end if;
-  end procedure;
-  
-  procedure TestCompare(constant got : in natural;
-                        constant expected : in natural;
-                        constant tag : in string := "";
-                        constant stopAtError : in boolean := true) is
-    variable writeBuffer : line;
-  begin
-    write(writeBuffer, now);
-    if (expected /= got) then
-      write(writeBuffer, string'(":FAILED:"));
-      write(writeBuffer, tag);
-      write(writeBuffer, ":got=" & integer'image(got));
-      write(writeBuffer, ":expected=" & integer'image(expected));
-    else
-      write(writeBuffer, string'(":PASSED:"));
-      write(writeBuffer, tag);
-    end if;
-    writeline(OUTPUT, writeBuffer);
-
-    if (stopAtError) and (expected /= got) then
-      std.env.stop(0);
-    end if;
-  end procedure;
-  
-  procedure TestCompare(constant got : in time;
-                        constant expected : in time;
-                        constant tag : in string := "";
-                        constant stopAtError : in boolean := true) is
-    variable writeBuffer : line;
-  begin
-    write(writeBuffer, now);
-    if (expected /= got) then
-      write(writeBuffer, string'(":FAILED:"));
-      write(writeBuffer, tag);
-      write(writeBuffer, string'(":got="));
-      write(writeBuffer, got);
-      write(writeBuffer, string'(":expected="));
-      write(writeBuffer, expected);
-    else
-      write(writeBuffer, string'(":PASSED:"));
-      write(writeBuffer, tag);
-    end if;
-    writeline(OUTPUT, writeBuffer);
-
-    if (stopAtError) and (expected /= got) then
-      std.env.stop(0);
-    end if;
-  end procedure;
-
-  procedure TestWait(signal waitSignal : in std_logic;
-                     constant waitValue : in std_logic;
-                     constant tag : in string := "";
-                     constant waitTime : in time := 1 ms;
-                     constant stopAtError : in boolean := true) is
-    variable writeBuffer : line;
-  begin
-    if (waitSignal /= waitValue) then
-      wait until waitSignal = waitValue for waitTime;
-      if (waitSignal /= waitValue) then
-        write(writeBuffer, now);
-        write(writeBuffer, string'(":FAILED:"));
-        write(writeBuffer, tag);
-        writeline(OUTPUT, writeBuffer);
-        
-        if (stopAtError) then
-          std.env.stop(0);
-        end if;
-      end if;
-    end if;
-  end procedure;
-  
-  procedure TestWait(signal waitSignal : in std_logic;
-                     constant waitValue : in std_logic;
-                     signal ackSignal : inout std_logic;
-                     constant tag : in string := "";
-                     constant waitTime : in time := 1 ms;
-                     constant stopAtError : in boolean := true) is
-    variable writeBuffer : line;
-  begin
-    if (waitSignal /= waitValue) then
-
-      wait until waitSignal = waitValue for waitTime;
-      
-      if (waitSignal /= waitValue) then
-        write(writeBuffer, now);
-        write(writeBuffer, string'(":FAILED:"));
-        write(writeBuffer, tag);
-        writeline(OUTPUT, writeBuffer);
-        
-        if (stopAtError) then
-          std.env.stop(0);
-        end if;
-      end if;
-    end if;
-    
-    ackSignal <= not ackSignal;
-      
-    wait until waitSignal /= waitValue for waitTime;
-      
-    if (waitSignal = waitValue) then
-      write(writeBuffer, now);
-      write(writeBuffer, string'(":FAILED:"));
-      write(writeBuffer, tag);
-      writeline(OUTPUT, writeBuffer);
-        
-      if (stopAtError) then
-        std.env.stop(0);
-      end if;
-    end if;
-  end procedure;
-
-  procedure TestEnd is
-    variable writeBuffer : line;
-  begin
-    write(writeBuffer, now);
-    write(writeBuffer, string'(":COMPLETED"));
-    writeline(OUTPUT, writeBuffer);
-    std.env.stop(0);
-  end TestEnd;
 
 end rio_common;
 

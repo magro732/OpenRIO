@@ -9,7 +9,6 @@
 -- Contains automatic simulation test code to verify a RioSwitch implementation.
 -- 
 -- To Do:
--- - Use the Wishbone port as a test port on the implementation defined config-space.
 -- - Test all sizes of packets that go through the maintenance port.
 -- 
 -- Author(s): 
@@ -567,43 +566,43 @@ begin
 
     -- Try to accuire the lock.
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"00", address=>x"000068", data=>x"00000002");
+                  tid=>x"01", address=>x"000068", data=>x"00000002");
 
     -- Check that the lock has been accuired.
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"00", address=>x"000068", data=>x"00000002");
+                 tid=>x"02", address=>x"000068", data=>x"00000002");
 
     -- Try to accuire the lock from another source.
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"00", address=>x"000068", data=>x"00000003");
+                  tid=>x"03", address=>x"000068", data=>x"00000003");
 
     -- Check that the lock refuses the new access.
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"00", address=>x"000068", data=>x"00000002");
+                 tid=>x"04", address=>x"000068", data=>x"00000002");
 
     -- Release the lock.
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"00", address=>x"000068", data=>x"00000002");
+                  tid=>x"05", address=>x"000068", data=>x"00000002");
 
     -- Check that the lock is released.
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"00", address=>x"000068", data=>x"0000ffff");
+                 tid=>x"06", address=>x"000068", data=>x"0000ffff");
     
     -- Check that the lock can be accuired from another source once unlocked.
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"00", address=>x"000068", data=>x"00000003");
+                  tid=>x"07", address=>x"000068", data=>x"00000003");
     
     -- Check that the lock is released.
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"00", address=>x"000068", data=>x"00000003");
+                 tid=>x"08", address=>x"000068", data=>x"00000003");
     
     -- Release the lock again.
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"00", address=>x"000068", data=>x"00000003");
+                  tid=>x"09", address=>x"000068", data=>x"00000003");
     
     -- Check that the lock is released.
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"00", address=>x"000068", data=>x"0000ffff");
+                 tid=>x"0a", address=>x"000068", data=>x"0000ffff");
     
     ExchangeFrames;
 
@@ -874,7 +873,7 @@ begin
                                                            data=>maintData)));
 
     ExchangeFrames;
-    TestWait(messageEmpty, '1', "config read");
+    TestWait(messageEmpty, '1', "config write");
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");

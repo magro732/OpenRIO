@@ -45,7 +45,6 @@
 -------------------------------------------------------------------------------
 -- TestRioLogicalCommon.
 -------------------------------------------------------------------------------
-
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -53,6 +52,7 @@ use ieee.math_real.all;
 library std;
 use std.textio.all;
 use work.rio_common.all;
+use work.TestPortPackage.all;
 
 
 -------------------------------------------------------------------------------
@@ -67,71 +67,20 @@ end entity;
 -------------------------------------------------------------------------------
 architecture TestRioLogicalCommonImpl of TestRioLogicalCommon is
   
-  component RioLogicalCommon is
-    port(
-      clk : in std_logic;
-      areset_n : in std_logic;
-      enable : in std_logic;
-      
-      readFrameEmpty_i : in std_logic;
-      readFrame_o : out std_logic;
-      readContent_o : out std_logic;
-      readContentEnd_i : in std_logic;
-      readContentData_i : in std_logic_vector(31 downto 0);
-      writeFrameFull_i : in std_logic;
-      writeFrame_o : out std_logic;
-      writeFrameAbort_o : out std_logic;
-      writeContent_o : out std_logic;
-      writeContentData_o : out std_logic_vector(31 downto 0);
-
-      configStb_o : out std_logic;
-      configWe_o : out std_logic;
-      configAdr_o : out std_logic_vector(21 downto 0);
-      configDat_o : out std_logic_vector(31 downto 0);
-      configDat_i : in std_logic_vector(31 downto 0);
-      configAck_i : in std_logic);
-  end component;
-
-  component TestPort is
-    port(
-      clk : in std_logic;
-      areset_n : in std_logic;
-
-      frameValid_i : in std_logic;
-      frameWrite_i : in RioFrame;
-      frameComplete_o : out std_logic;
-      
-      frameExpected_i : in std_logic;
-      frameRead_i : in RioFrame;
-      frameReceived_o : out std_logic;
-
-      readFrameEmpty_o : out std_logic;
-      readFrame_i : in std_logic;
-      readFrameRestart_i : in std_logic;
-      readFrameAborted_o : out std_logic;
-      readContentEmpty_o : out std_logic;
-      readContent_i : in std_logic;
-      readContentEnd_o : out std_logic;
-      readContentData_o : out std_logic_vector(31 downto 0);
-      writeFrameFull_o : out std_logic;
-      writeFrame_i : in std_logic;
-      writeFrameAbort_i : in std_logic;
-      writeContent_i : in std_logic;
-      writeContentData_i : in std_logic_vector(31 downto 0));
-  end component;
-
+  signal outboundMessageEmpty : std_logic;
+  signal outboundMessageWrite : std_logic;
+  signal outboundMessageMessage : TestPortMessagePacketBuffer;
+  signal outboundMessageAck : std_logic;
+    
+  signal inboundMessageEmpty : std_logic;
+  signal inboundMessageWrite : std_logic;
+  signal inboundMessageMessage : TestPortMessagePacketBuffer;
+  signal inboundMessageAck : std_logic;
+  
   signal clk : std_logic;
   signal areset_n : std_logic;
   signal enable : std_logic;
 
-  signal frameValid : std_logic;
-  signal frameWrite : RioFrame;
-  signal frameComplete : std_logic;
-      
-  signal frameExpected : std_logic;
-  signal frameRead : RioFrame;
-  signal frameReceived : std_logic;
-  
   signal writeFrameFull : std_logic;
   signal writeFrame : std_logic;
   signal writeFrameAbort : std_logic;
@@ -147,12 +96,15 @@ architecture TestRioLogicalCommonImpl of TestRioLogicalCommon is
   signal readContentEnd : std_logic;
   signal readContentData : std_logic_vector(31 downto 0);
 
-  signal configStb, configStbExpected : std_logic;
-  signal configWe : std_logic;
-  signal configAddr : std_logic_vector(21 downto 0);
-  signal configDataWrite : std_logic_vector(31 downto 0);
-  signal configDataRead : std_logic_vector(31 downto 0);
-  signal configAck : std_logic;
+  signal inboundStb : std_logic;
+  signal inboundAdr : std_logic_vector(3 downto 0);
+  signal inboundDat : std_logic_vector(31 downto 0);
+  signal inboundStall : std_logic;
+
+  signal outboundStb : std_logic_vector(0 downto 0);
+  signal outboundAdr : std_logic_vector(0 downto 0);
+  signal outboundDat : std_logic_vector(31 downto 0);
+  signal outboundStall : std_logic_vector(0 downto 0);
   
 begin
   
@@ -173,44 +125,148 @@ begin
   -----------------------------------------------------------------------------
   TestDriver: process
 
-    ---------------------------------------------------------------------------
-    -- 
-    ---------------------------------------------------------------------------
-    procedure SendFrame(constant frame : RioFrame) is
+    -----------------------------------------------------------------------------
+    -- Procedures to handle outbound and inbound packets.
+    -----------------------------------------------------------------------------
+    procedure OutboundFrame(constant frame : in RioFrame;
+                            constant abort : in boolean := false) is
     begin
-      frameValid <= '1';
-      frameWrite <= frame;
-      wait until frameComplete = '1';
-      frameValid <= '0';
+      TestPortPacketBufferWrite(outboundMessageWrite, outboundMessageMessage, outboundMessageAck,
+                                frame, abort);
+    end procedure;
+    procedure InboundFrame(constant frame : in RioFrame;
+                           constant abort : in boolean := false) is
+    begin
+      TestPortPacketBufferWrite(inboundMessageWrite, inboundMessageMessage, inboundMessageAck,
+                                frame, abort);
     end procedure;
 
     ---------------------------------------------------------------------------
     -- 
     ---------------------------------------------------------------------------
-    procedure ReceiveFrame(constant frame : RioFrame) is
+    procedure InboundPayload(constant header : in std_logic_vector(15 downto 0);
+                             constant dstId : in std_logic_vector(15 downto 0);
+                             constant srcId : in std_logic_vector(15 downto 0);
+                             constant payload : in RioPayload) is
+      variable adr : std_logic_vector(3 downto 0);
     begin
-      frameExpected <= '1';
-      frameRead <= frame;
-      wait until frameReceived = '1';
-      frameExpected <= '0';
+      wait until clk = '1';
+      while (inboundStb = '0') loop
+        wait until clk = '1';
+      end loop;
+      adr := inboundAdr;
+      TestCompare(inboundStb, '1', "stb header");
+      TestCompare(inboundAdr, header(3 downto 0), "adr");
+      TestCompare(inboundDat, x"0000" & header, "header");
+      
+      wait until clk = '1';
+      TestCompare(inboundStb, '1', "stb dstId");
+      TestCompare(inboundAdr, adr, "adr dstId");
+      TestCompare(inboundDat, x"0000" & dstId, "dstId");
+      wait until clk = '1';
+      TestCompare(inboundStb, '1', "stb srcId");
+      TestCompare(inboundAdr, adr, "adr srcId");
+      TestCompare(inboundDat, x"0000" & srcId, "srcId");
+
+      for i in 0 to (payload.length/2)-1 loop
+        wait until clk = '1';
+        TestCompare(inboundStb, '1', "stb payload");
+        TestCompare(inboundAdr, adr, "adr payload");
+        TestCompare(inboundDat, payload.data(2*i) & payload.data(2*i+1), "payload");
+      end loop;
+
+      if ((payload.length mod 2) = 1) then
+        -- Check the last half-word of payload that has CRC appended to it.
+        wait until clk = '1';
+        TestCompare(inboundStb, '1', "stb payload");
+        TestCompare(inboundAdr, adr, "adr payload");
+        TestCompare(inboundDat(31 downto 16), payload.data(payload.length-1), "payload");
+      else
+        if (payload.length >= 38) then
+          -- Ignore the last word since it contains only CRC and padding.
+          wait until clk = '1';
+          TestCompare(inboundStb, '1', "stb crc+pad");
+          TestCompare(inboundAdr, adr, "adr crc+pad");
+          TestCompare(inboundDat(15 downto 0), x"0000", "crc+pad");
+        end if;
+      end if;
+      
+      wait until clk = '1';
+      TestCompare(inboundStb, '0', "stb end");
     end procedure;
 
+    ---------------------------------------------------------------------------
+    -- 
+    ---------------------------------------------------------------------------
+    procedure OutboundPayload(constant header : in std_logic_vector(15 downto 0);
+                              constant dstId : in std_logic_vector(15 downto 0);
+                              constant srcId : in std_logic_vector(15 downto 0);
+                              constant payload : in RioPayload) is
+    begin
+      if ((payload.length mod 2) = 1) then
+        outboundAdr(0) <= '1';
+      else
+        outboundAdr(0) <= '0';
+      end if;
+      
+      outboundStb(0) <= '1';
+      outboundDat <= "UUUUUUUUUUUUUUUU" & header;
+      wait until clk = '1';
+      while (outboundStall(0) = '1') loop
+        wait until clk = '1';
+      end loop;
+
+      outboundDat <= "UUUUUUUUUUUUUUUU" & dstId;
+      wait until clk = '1';
+      while (outboundStall(0) = '1') loop
+        wait until clk = '1';
+      end loop;
+      
+      outboundDat <= "UUUUUUUUUUUUUUUU" & srcId;
+      wait until clk = '1';
+      while (outboundStall(0) = '1') loop
+        wait until clk = '1';
+      end loop;
+
+      for i in 0 to (payload.length/2)-1 loop
+        outboundDat <= payload.data(2*i) & payload.data(2*i+1);
+        wait until clk = '1';
+        while (outboundStall(0) = '1') loop
+          wait until clk = '1';
+        end loop;
+      end loop;
+
+      if ((payload.length mod 2) = 1) then
+        outboundDat <= payload.data(payload.length-1) & "UUUUUUUUUUUUUUUU";
+        wait until clk = '1';
+        while (outboundStall(0) = '1') loop
+          wait until clk = '1';
+        end loop;
+      end if;
+      
+      outboundStb(0) <= '0';
+      outboundAdr(0) <= 'U';
+      outboundDat <= (others=>'U');
+      wait until clk = '1';
+    end procedure;
+
+    ---------------------------------------------------------------------------
+    -- 
+    ---------------------------------------------------------------------------
     variable seed1 : positive := 1;
     variable seed2: positive := 1;
 
-    variable maintData : DoubleWordArray(0 to 7);
     variable frame : RioFrame;
+    variable payload : RioPayload;
     
   begin
     areset_n <= '0';
     enable <= '1';
-
-    frameValid <= '0';
-    frameExpected <= '0';
-
-    configStbExpected <= '0';
-    configAck <= '0';
     
+    writeFrameFull <= '0';
+    inboundStall <= '0';
+    outboundStb(0) <= '0';
+      
     wait until clk'event and clk = '1';
     wait until clk'event and clk = '1';
     areset_n <= '1';
@@ -222,1023 +278,90 @@ begin
     PrintS("TG_RioLogicalCommon");
     PrintS("-----------------------------------------------------------------");
     PrintS("TG_RioLogicalCommon-TC1");
-    PrintS("Description: Test maintenance read requests.");
-    PrintS("Requirement: XXXXX");
+    PrintS("Description: Test all sizes of packets in the inbound direction.");
+    PrintS("Requirement: ");
     PrintS("-----------------------------------------------------------------");
     PrintS("Step 1:");
-    PrintS("Action: Send maintenance read request for one word on even offset.");
-    PrintS("Result: Check the accesses on the external configuration port.");
+    PrintS("Action: Add inbound packets in all allowed sized.");
+    PrintS("Result: The payload of the inbound packets should be received on ");
+    PrintS("        the other side without CRC.");
     PrintS("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
     PrintR("TG_RioLogicalCommon-TC1-Step1");
     ---------------------------------------------------------------------------
+    -- REMARK: Use random data...
+    for j in 1 to 133 loop
+      payload.length := j;
+      for i in 0 to payload.length-1 loop
+        payload.data(i) := std_logic_vector(to_unsigned(i, 16));
+      end loop;
+      frame := RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                              tt=>"01", ftype=>FTYPE_WRITE_CLASS,
+                              destId=>x"beef", sourceId=>x"dead", 
+                              payload=>payload);
+      InboundFrame(frame);
+    end loop;
+
+    for j in 1 to 133 loop
+      payload.length := j;
+      InboundPayload(x"0015", x"beef", x"dead", payload);
+    end loop;
+
+    TestWait(inboundMessageEmpty, '1', "inboundMessage empty");
     
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0000",
-                                                     size=>"1000",
-                                                     tid=>x"aa",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"000000000000000000000",
-                                                     wdptr=>'0',
-                                                     dataLength=>0,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
-    wait until clk = '1';
-    assert configWe = '0';
-    assert configAddr = "0000000000000000000000";
-    wait until clk = '1';
-    configDataRead <= x"deadbeef";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    configStbExpected <= '0';
-    maintData(0) := x"deadbeef00000000";
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0010",
-                                                        size=>"0000",
-                                                        tid=>x"aa",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>1,
-                                                        data=>maintData)));
-
-
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Send maintenance read request for one word on odd offset.");
-    PrintS("Result: Check the accesses on the external configuration port.");
-    PrintS("-----------------------------------------------------------------");
+    --PrintS("-----------------------------------------------------------------");
+    --PrintS("Step 2:");
+    --PrintS("Action: Send an inbound frame that are too long.");
+    --PrintS("Result: The tail of the packet should be discarded.");
+    --PrintS("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC1-Step2");
+    --PrintR("TG_RioLogicalCommon-TC1-Step2");
     ---------------------------------------------------------------------------
-    
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0000",
-                                                     size=>"1000",
-                                                     tid=>x"aa",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"000000000000000000000",
-                                                     wdptr=>'1',
-                                                     dataLength=>0,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000001" report "Unexpected config address." severity error;
-    configDataRead <= x"c0debabe";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    configStbExpected <= '0';
-    maintData(0) := x"00000000c0debabe";
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0010",
-                                                        size=>"0000",
-                                                        tid=>x"aa",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>1,
-                                                        data=>maintData)));
-
-    ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: Send maintenance read request for two words.");
-    PrintS("Result: Check the accesses on the external configuration port.");
-    PrintS("-----------------------------------------------------------------");
-    ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC1-Step3");
-    ---------------------------------------------------------------------------
-
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0000",
-                                                     size=>"1011",
-                                                     tid=>x"cc",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"000000000000000000001",
-                                                     wdptr=>'0',
-                                                     dataLength=>0,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000010" report "Unexpected config address." severity error;
-    configDataRead <= x"11111111";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000011" report "Unexpected config address." severity error;
-    configDataRead <= x"22222222";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    configStbExpected <= '0';
-    maintData(0) := x"1111111122222222";
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0010",
-                                                        size=>"0000",
-                                                        tid=>x"cc",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>1,
-                                                        data=>maintData)));
-
-    ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 4:");
-    PrintS("Action: Send maintenance read request for four words.");
-    PrintS("Result: Check the accesses on the external configuration port.");
-    PrintS("-----------------------------------------------------------------");
-    ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC1-Step4");
-    ---------------------------------------------------------------------------
-
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0000",
-                                                     size=>"1011",
-                                                     tid=>x"cc",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"000000000000000000001",
-                                                     wdptr=>'1',
-                                                     dataLength=>0,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000010" report "Unexpected config address." severity error;
-    configDataRead <= x"11111111";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000011" report "Unexpected config address." severity error;
-    configDataRead <= x"22222222";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000100" report "Unexpected config address." severity error;
-    configDataRead <= x"33333333";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000101" report "Unexpected config address." severity error;
-    configDataRead <= x"44444444";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    configStbExpected <= '0';
-    maintData(0) := x"1111111122222222";
-    maintData(1) := x"3333333344444444";
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0010",
-                                                        size=>"0000",
-                                                        tid=>x"cc",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>2,
-                                                        data=>maintData)));
-
-    ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 5:");
-    PrintS("Action: Send maintenance read request for eight words.");
-    PrintS("Result: Check the accesses on the external configuration port.");
-    PrintS("-----------------------------------------------------------------");
-    ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC1-Step5");
-    ---------------------------------------------------------------------------
-
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0000",
-                                                     size=>"1100",
-                                                     tid=>x"cc",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"000000000000000000001",
-                                                     wdptr=>'0',
-                                                     dataLength=>0,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000010" report "Unexpected config address." severity error;
-    configDataRead <= x"11111111";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000011" report "Unexpected config address." severity error;
-    configDataRead <= x"22222222";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000100" report "Unexpected config address." severity error;
-    configDataRead <= x"33333333";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000101" report "Unexpected config address." severity error;
-    configDataRead <= x"44444444";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000110" report "Unexpected config address." severity error;
-    configDataRead <= x"55555555";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000111" report "Unexpected config address." severity error;
-    configDataRead <= x"66666666";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001000" report "Unexpected config address." severity error;
-    configDataRead <= x"77777777";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001001" report "Unexpected config address." severity error;
-    configDataRead <= x"88888888";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    configStbExpected <= '0';
-    maintData(0) := x"1111111122222222";
-    maintData(1) := x"3333333344444444";
-    maintData(2) := x"5555555566666666";
-    maintData(3) := x"7777777788888888";
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0010",
-                                                        size=>"0000",
-                                                        tid=>x"cc",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>4,
-                                                        data=>maintData)));
-
-    ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 6:");
-    PrintS("Action: Send maintenance read request for sixteen words.");
-    PrintS("Result: Check the accesses on the external configuration port.");
-    PrintS("-----------------------------------------------------------------");
-    ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC1-Step6");
-    ---------------------------------------------------------------------------
-
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0000",
-                                                     size=>"1100",
-                                                     tid=>x"cc",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"000000000000000000001",
-                                                     wdptr=>'1',
-                                                     dataLength=>0,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000010" report "Unexpected config address." severity error;
-    configDataRead <= x"11111111";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000011" report "Unexpected config address." severity error;
-    configDataRead <= x"22222222";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000100" report "Unexpected config address." severity error;
-    configDataRead <= x"33333333";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000101" report "Unexpected config address." severity error;
-    configDataRead <= x"44444444";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000110" report "Unexpected config address." severity error;
-    configDataRead <= x"55555555";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000111" report "Unexpected config address." severity error;
-    configDataRead <= x"66666666";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001000" report "Unexpected config address." severity error;
-    configDataRead <= x"77777777";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001001" report "Unexpected config address." severity error;
-    configDataRead <= x"88888888";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001010" report "Unexpected config address." severity error;
-    configDataRead <= x"99999999";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001011" report "Unexpected config address." severity error;
-    configDataRead <= x"aaaaaaaa";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001100" report "Unexpected config address." severity error;
-    configDataRead <= x"bbbbbbbb";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001101" report "Unexpected config address." severity error;
-    configDataRead <= x"cccccccc";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001110" report "Unexpected config address." severity error;
-    configDataRead <= x"dddddddd";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001111" report "Unexpected config address." severity error;
-    configDataRead <= x"eeeeeeee";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000010000" report "Unexpected config address." severity error;
-    configDataRead <= x"ffffffff";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '0' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000010001" report "Unexpected config address." severity error;
-    configDataRead <= x"10101010";
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    configStbExpected <= '0';
-    maintData(0) := x"1111111122222222";
-    maintData(1) := x"3333333344444444";
-    maintData(2) := x"5555555566666666";
-    maintData(3) := x"7777777788888888";
-    maintData(4) := x"99999999aaaaaaaa";
-    maintData(5) := x"bbbbbbbbcccccccc";
-    maintData(6) := x"ddddddddeeeeeeee";
-    maintData(7) := x"ffffffff10101010";
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0010",
-                                                        size=>"0000",
-                                                        tid=>x"cc",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>8,
-                                                        data=>maintData)));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
     PrintS("TG_RioLogicalCommon-TC2");
-    PrintS("Description: Test maintenance write requests.");
-    PrintS("Requirement: XXXXX");
+    PrintS("Description: Test all sizes of packets in the outbound direction.");
+    PrintS("Requirement: ");
     PrintS("-----------------------------------------------------------------");
     PrintS("Step 1:");
-    PrintS("Action: Send maintenance write request for one word on even offset.");
-    PrintS("Result: Check the accesses on the external configuration port.");
+    PrintS("Action: Add outbound packets in all allowed sized.");
+    PrintS("Result: The payload of the outbound packets should be received on ");
+    PrintS("        the other side with CRC added.");
     PrintS("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
     PrintR("TG_RioLogicalCommon-TC2-Step1");
     ---------------------------------------------------------------------------
 
-    maintData(0) := x"deadbeef00000000";
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0001",
-                                                     size=>"1000",
-                                                     tid=>x"aa",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"100000000000000000000",
-                                                     wdptr=>'0',
-                                                     dataLength=>1,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
+    for j in 1 to 133 loop
+      payload.length := j;
+      for i in 0 to payload.length-1 loop
+        payload.data(i) := std_logic_vector(to_unsigned(i, 16));
+      end loop;
+      frame := RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                              tt=>"01", ftype=>FTYPE_WRITE_CLASS,
+                              destId=>x"beef", sourceId=>x"dead", 
+                              payload=>payload);
+      OutboundFrame(frame);
+    end loop;
     
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected configWe." severity error;
-    assert configAddr = "1000000000000000000000" report "Unexpected configAddr." severity error;
-    assert configDataWrite = x"deadbeef" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
+    for j in 1 to 133 loop
+      payload.length := j;
+      OutboundPayload(x"0015", x"beef", x"dead", payload);
+    end loop;
+
+    TestWait(outboundMessageEmpty, '1', "outboundMessage empty");
     
-    configStbExpected <= '0';
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0011",
-                                                        size=>"0000",
-                                                        tid=>x"aa",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>0,
-                                                        data=>maintData)));
-
-    ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Send maintenance write request for one word on odd offset.");
-    PrintS("Result: Check the accesses on the external configuration port.");
-    PrintS("-----------------------------------------------------------------");
-    ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC2-Step2");
-    ---------------------------------------------------------------------------
-    
-    maintData(0) := x"00000000c0debabe";
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0001",
-                                                     size=>"1000",
-                                                     tid=>x"aa",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"100000000000000000000",
-                                                     wdptr=>'1',
-                                                     dataLength=>1,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "1000000000000000000001" report "Unexpected config address." severity error;
-    assert configDataWrite = x"c0debabe" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    configStbExpected <= '0';
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0011",
-                                                        size=>"0000",
-                                                        tid=>x"aa",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>0,
-                                                        data=>maintData)));
-
-    ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: Send maintenance write request for two words.");
-    PrintS("Result: Check the accesses on the external configuration port.");
-    PrintS("-----------------------------------------------------------------");
-    ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC2-Step3");
-    ---------------------------------------------------------------------------
-
-    maintData(0) := x"1111111122222222";
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0001",
-                                                     size=>"1011",
-                                                     tid=>x"cc",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"100000000000000000001",
-                                                     wdptr=>'0',
-                                                     dataLength=>1,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "1000000000000000000010" report "Unexpected config address." severity error;
-    assert configDataWrite = x"11111111" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "1000000000000000000011" report "Unexpected config address." severity error;
-    assert configDataWrite = x"22222222" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    configStbExpected <= '0';
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0011",
-                                                        size=>"0000",
-                                                        tid=>x"cc",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>0,
-                                                        data=>maintData)));
-
-    ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 4:");
-    PrintS("Action: Send maintenance write request for four words.");
-    PrintS("Result: Check the accesses on the external configuration port.");
-    PrintS("-----------------------------------------------------------------");
-    ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC2-Step4");
-    ---------------------------------------------------------------------------
-
-    maintData(0) := x"1111111122222222";
-    maintData(1) := x"3333333344444444";
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0001",
-                                                     size=>"1011",
-                                                     tid=>x"cc",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"000000000000000000001",
-                                                     wdptr=>'1',
-                                                     dataLength=>2,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000010" report "Unexpected config address." severity error;
-    assert configDataWrite = x"11111111" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000011" report "Unexpected config address." severity error;
-    assert configDataWrite = x"22222222" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000100" report "Unexpected config address." severity error;
-    assert configDataWrite = x"33333333" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000101" report "Unexpected config address." severity error;
-    assert configDataWrite = x"44444444" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    configStbExpected <= '0';
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0011",
-                                                        size=>"0000",
-                                                        tid=>x"cc",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>0,
-                                                        data=>maintData)));
-
-    ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 5:");
-    PrintS("Action: Send maintenance write request for eight words.");
-    PrintS("Result: Check the accesses on the external configuration port.");
-    PrintS("-----------------------------------------------------------------");
-    ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC2-Step5");
-    ---------------------------------------------------------------------------
-
-    maintData(0) := x"1111111122222222";
-    maintData(1) := x"3333333344444444";
-    maintData(2) := x"5555555566666666";
-    maintData(3) := x"7777777788888888";
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0001",
-                                                     size=>"1100",
-                                                     tid=>x"cc",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"000000000000000000001",
-                                                     wdptr=>'0',
-                                                     dataLength=>4,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000010" report "Unexpected config address." severity error;
-    assert configDataWrite = x"11111111" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000011" report "Unexpected config address." severity error;
-    assert configDataWrite = x"22222222" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000100" report "Unexpected config address." severity error;
-    assert configDataWrite = x"33333333" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000101" report "Unexpected config address." severity error;
-    assert configDataWrite = x"44444444" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000110" report "Unexpected config address." severity error;
-    assert configDataWrite = x"55555555" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000111" report "Unexpected config address." severity error;
-    assert configDataWrite = x"66666666" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001000" report "Unexpected config address." severity error;
-    assert configDataWrite = x"77777777" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001001" report "Unexpected config address." severity error;
-    assert configDataWrite = x"88888888" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    configStbExpected <= '0';
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0011",
-                                                        size=>"0000",
-                                                        tid=>x"cc",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>0,
-                                                        data=>maintData)));
-
-    ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 6:");
-    PrintS("Action: Send maintenance write request for sixteen words.");
-    PrintS("Result: Check the accesses on the external configuration port.");
-    PrintS("-----------------------------------------------------------------");
-    ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC2-Step6");
-    ---------------------------------------------------------------------------
-
-    maintData(0) := x"1111111122222222";
-    maintData(1) := x"3333333344444444";
-    maintData(2) := x"5555555566666666";
-    maintData(3) := x"7777777788888888";
-    maintData(4) := x"99999999aaaaaaaa";
-    maintData(5) := x"bbbbbbbbcccccccc";
-    maintData(6) := x"ddddddddeeeeeeee";
-    maintData(7) := x"ffffffff10101010";
-    SendFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                             tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                             sourceId=>x"dead", destId=>x"beef",
-                             payload=>RioMaintenance(transaction=>"0001",
-                                                     size=>"1100",
-                                                     tid=>x"cc",
-                                                     hopCount=>x"ff",
-                                                     configOffset=>"000000000000000000001",
-                                                     wdptr=>'1',
-                                                     dataLength=>8,
-                                                     data=>maintData)));
-
-    wait until configStb = '1';
-    configStbExpected <= '1';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000010" report "Unexpected config address." severity error;
-    assert configDataWrite = x"11111111" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000011" report "Unexpected config address." severity error;
-    assert configDataWrite = x"22222222" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000100" report "Unexpected config address." severity error;
-    assert configDataWrite = x"33333333" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000101" report "Unexpected config address." severity error;
-    assert configDataWrite = x"44444444" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000110" report "Unexpected config address." severity error;
-    assert configDataWrite = x"55555555" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000000111" report "Unexpected config address." severity error;
-    assert configDataWrite = x"66666666" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001000" report "Unexpected config address." severity error;
-    assert configDataWrite = x"77777777" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001001" report "Unexpected config address." severity error;
-    assert configDataWrite = x"88888888" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001010" report "Unexpected config address." severity error;
-    assert configDataWrite = x"99999999" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001011" report "Unexpected config address." severity error;
-    assert configDataWrite = x"aaaaaaaa" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001100" report "Unexpected config address." severity error;
-    assert configDataWrite = x"bbbbbbbb" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001101" report "Unexpected config address." severity error;
-    assert configDataWrite = x"cccccccc" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001110" report "Unexpected config address." severity error;
-    assert configDataWrite = x"dddddddd" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000001111" report "Unexpected config address." severity error;
-    assert configDataWrite = x"eeeeeeee" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-    
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000010000" report "Unexpected config address." severity error;
-    assert configDataWrite = x"ffffffff" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    wait until clk = '1';
-    assert configWe = '1' report "Unexpected config write." severity error;
-    assert configAddr = "0000000000000000010001" report "Unexpected config address." severity error;
-    assert configDataWrite = x"10101010" report "Unexpected configDataWrite." severity error;
-    configAck <= '1';
-    wait until clk = '1';
-    configAck <= '0';
-
-    configStbExpected <= '0';
-    
-    ReceiveFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
-                                sourceId=>x"beef", destId=>x"dead",
-                                payload=>RioMaintenance(transaction=>"0011",
-                                                        size=>"0000",
-                                                        tid=>x"cc",
-                                                        hopCount=>x"ff",
-                                                        configOffset=>"000000000000000000000",
-                                                        wdptr=>'0',
-                                                        dataLength=>0,
-                                                        data=>maintData)));
-
+    -----------------------------------------------------------------------------
+    --PrintS("-----------------------------------------------------------------");
+    --PrintS("Step 2:");
+    --PrintS("Action: Send an outbound frame that are too long.");
+    --PrintS("Result: The tail of the packet should be discarded.");
+    --PrintS("-----------------------------------------------------------------");
+    -----------------------------------------------------------------------------
+    --PrintR("TG_RioLogicalCommon-TC1-Step2");
+    -----------------------------------------------------------------------------
 
     ---------------------------------------------------------------------------
     -- Test completed.
@@ -1248,273 +371,64 @@ begin
   end process;
 
   -----------------------------------------------------------------------------
-  -- Instantiate a process receiving the configuration accesses to the
-  -- implementation defined space.
-  -----------------------------------------------------------------------------
-  process
-  begin
-    loop
-      wait until clk'event and clk = '1';
-      assert configStbExpected = configStb report "Unexpected config-space access." severity error;
-    end loop;
-  end process;
-  
-  -----------------------------------------------------------------------------
-  -- Instantiate the test port array.
+  -- Instantiate the test port.
   -----------------------------------------------------------------------------
 
-  readFrameRestart <= '0';
-  TestPortInst: TestPort
+  TestPortPacketBufferInst: TestPortPacketBuffer
+    generic map(READ_CONTENT_END_DATA_VALID=>false)
     port map(
       clk=>clk, areset_n=>areset_n, 
-      frameValid_i=>frameValid,
-      frameWrite_i=>frameWrite, 
-      frameComplete_o=>frameComplete, 
-      frameExpected_i=>frameExpected, 
-      frameRead_i=>frameRead, 
-      frameReceived_o=>frameReceived, 
+      readEmpty_o=>inboundMessageEmpty, 
+      readWrite_i=>inboundMessageWrite, 
+      readMessage_i=>inboundMessageMessage, 
+      readAck_o=>inboundMessageAck, 
+      writeEmpty_o=>outboundMessageEmpty, 
+      writeWrite_i=>outboundMessageWrite, 
+      writeMessage_i=>outboundMessageMessage, 
+      writeAck_o=>outboundMessageAck, 
       readFrameEmpty_o=>readFrameEmpty, 
       readFrame_i=>readFrame, 
-      readFrameRestart_i=>readFrameRestart, 
-      readFrameAborted_o=>readFrameAborted, 
+      readFrameRestart_i=>'0', 
+      readFrameAborted_o=>readFrameAborted,
+      readWindowEmpty_o=>open,
+      readWindowReset_i=>'0',
+      readWindowNext_i=>readFrame,
       readContentEmpty_o=>readContentEmpty, 
       readContent_i=>readContent, 
       readContentEnd_o=>readContentEnd, 
       readContentData_o=>readContentData, 
-      writeFrameFull_o=>writeFrameFull, 
       writeFrame_i=>writeFrame, 
       writeFrameAbort_i=>writeFrameAbort, 
       writeContent_i=>writeContent, 
       writeContentData_i=>writeContentData);
-
+  
   -----------------------------------------------------------------------------
-  -- Instantiate the switch.
+  -- Instantiate the test object.
   -----------------------------------------------------------------------------
 
   TestObject: RioLogicalCommon
+    generic map(PORTS=>1)
     port map(
-      clk=>clk, areset_n=>areset_n, enable=>enable,
-      writeFrameFull_i=>writeFrameFull,
-      writeFrame_o=>writeFrame,
-      writeFrameAbort_o=>writeFrameAbort, 
-      writeContent_o=>writeContent,
-      writeContentData_o=>writeContentData, 
-      readFrameEmpty_i=>readFrameEmpty, 
+      clk=>clk,
+      areset_n=>areset_n,
+      enable=>enable,
+      readFrameEmpty_i=>readFrameEmpty,
       readFrame_o=>readFrame,
       readContent_o=>readContent,
-      readContentEnd_i=>readContentEnd, 
+      readContentEnd_i=>readContentEnd,
       readContentData_i=>readContentData,
-      configStb_o=>configStb,
-      configWe_o=>configWe,
-      configAdr_o=>configAddr,
-      configDat_o=>configDataWrite,
-      configDat_i=>configDataRead,
-      configAck_i=>configAck);
+      writeFrameFull_i=>writeFrameFull,
+      writeFrame_o=>writeFrame,
+      writeFrameAbort_o=>writeFrameAbort,
+      writeContent_o=>writeContent,
+      writeContentData_o=>writeContentData,
+      inboundStb_o=>inboundStb,
+      inboundAdr_o=>inboundAdr,
+      inboundDat_o=>inboundDat,
+      inboundStall_i=>inboundStall,
+      outboundStb_i=>outboundStb,
+      outboundAdr_i=>outboundAdr,
+      outboundDat_i=>outboundDat,
+      outboundStall_o=>outboundStall);
   
-  
-end architecture;
-
-
-
--------------------------------------------------------------------------------
--- 
--------------------------------------------------------------------------------
-library ieee;
-use ieee.std_logic_1164.all;
-use ieee.numeric_std.all;
-library std;
-use std.textio.all;
-use work.rio_common.all;
- 
-
--------------------------------------------------------------------------------
--- 
--------------------------------------------------------------------------------
-entity TestPort is
-  port(
-    clk : in std_logic;
-    areset_n : in std_logic;
-
-    frameValid_i : in std_logic;
-    frameWrite_i : in RioFrame;
-    frameComplete_o : out std_logic;
-    
-    frameExpected_i : in std_logic;
-    frameRead_i : in RioFrame;
-    frameReceived_o : out std_logic;
-
-    readFrameEmpty_o : out std_logic;
-    readFrame_i : in std_logic;
-    readFrameRestart_i : in std_logic;
-    readFrameAborted_o : out std_logic;
-    readContentEmpty_o : out std_logic;
-    readContent_i : in std_logic;
-    readContentEnd_o : out std_logic;
-    readContentData_o : out std_logic_vector(31 downto 0);
-    
-    writeFrameFull_o : out std_logic;
-    writeFrame_i : in std_logic;
-    writeFrameAbort_i : in std_logic;
-    writeContent_i : in std_logic;
-    writeContentData_i : in std_logic_vector(31 downto 0));
-end entity;
-
-
--------------------------------------------------------------------------------
--- 
--------------------------------------------------------------------------------
-architecture TestPortImpl of TestPort is
-begin
-  
-  -----------------------------------------------------------------------------
-  -- 
-  -----------------------------------------------------------------------------
-  FrameReader: process
-    type StateType is (STATE_IDLE, STATE_WRITE);
-    variable state : StateType;
-    variable frameIndex : natural range 0 to 69;
-  begin
-    writeFrameFull_o <= '1';
-    frameReceived_o <= '0';
-    wait until areset_n = '1';
-
-    state := STATE_IDLE;
-
-    loop
-      wait until clk'event and clk = '1';
-    
-      case state is
-        
-        when STATE_IDLE =>
-          frameReceived_o <= '0';
-          if (frameExpected_i = '1') then
-            writeFrameFull_o <= '0';
-            state := STATE_WRITE;
-            frameIndex := 0;
-          else
-            writeFrameFull_o <= '1';
-          end if;
-          assert writeFrame_i = '0' report "Unexpected frame." severity error;
-          assert writeFrameAbort_i = '0' report "Unexpected frame abort." severity error;
-          assert writeContent_i = '0' report "Unexpected data." severity error;
-          
-        when STATE_WRITE =>
-          if (writeContent_i = '1') then
-            -- Writing content.
-            if (frameIndex < frameRead_i.length) then
-              assert writeContentData_i = frameRead_i.payload(frameIndex)
-                report "Unexpected frame content received:" &
-                " index=" & integer'image(frameIndex) &
-                " expected=" & integer'image(to_integer(unsigned(frameRead_i.payload(frameIndex)))) &
-                " got=" & integer'image(to_integer(unsigned(writeContentData_i)))
-                severity error;
-              
-              frameIndex := frameIndex + 1;
-            else
-              report "Unexpected frame content received:" &
-                " index=" & integer'image(frameIndex) &
-                " expected=" & integer'image(to_integer(unsigned(frameRead_i.payload(frameIndex)))) &
-                " got=" & integer'image(to_integer(unsigned(writeContentData_i)))
-                severity error;
-              
-              frameIndex := frameIndex + 1;
-            end if;
-          else
-            -- Not writing any content.
-          end if;
-          
-          if (writeFrame_i = '1') then
-            -- Writing a complete frame.
-            assert frameIndex = frameRead_i.length report "Unexpected frame length received." severity error;
-            state := STATE_IDLE;
-            frameReceived_o <= '1';
-            writeFrameFull_o <= '1';
-          else
-            -- Not writing any frame.
-          end if;
-
-          if (writeFrameAbort_i = '1') then
-            -- The frame should be aborted.
-            frameIndex := 0;
-          else
-            -- Not aborting any frame.
-          end if;
-      end case;
-    end loop;    
-  end process;
-
-  -----------------------------------------------------------------------------
-  -- 
-  -----------------------------------------------------------------------------
-  -- REMARK: add support for these signals...
-  -- readFrameEmpty_i : in std_logic;
-  -- readFrameAborted_i : in std_logic;
-  FrameSender: process
-    type StateType is (STATE_IDLE, STATE_READ);
-    variable state : StateType;
-    variable frameIndex : natural range 0 to 69;
-  begin
-    readFrameEmpty_o <= '1';
-    readFrameAborted_o <= '0';
-    readContentEmpty_o <= '1';
-    readContentEnd_o <= '1';
-    readContentData_o <= (others => 'U');
-    frameComplete_o <= '0';
-    wait until areset_n = '1';
-
-    state := STATE_IDLE;
-
-    loop
-      wait until clk'event and clk = '1';
-    
-      case state is
-
-        when STATE_IDLE =>
-          frameComplete_o <= '0';
-          if (frameValid_i = '1') then
-            state := STATE_READ;
-            frameIndex := 0;
-            readContentEmpty_o <= '0';
-            readFrameEmpty_o <= '0';
-          else
-            readContentEmpty_o <= '1';
-          end if;
-          
-        when STATE_READ =>
-          if (readFrameRestart_i = '1') then
-            readContentEnd_o <= '0';
-            frameIndex := 0;
-          else
-            -- Not restarting a frame.
-          end if;
-          
-          if (readContent_i = '1') then
-            if (frameIndex < frameWrite_i.length) then
-              readContentData_o <= frameWrite_i.payload(frameIndex);
-              readContentEnd_o <= '0';
-              frameIndex := frameIndex + 1;
-            elsif (frameIndex = frameWrite_i.length) then
-              readContentEnd_o <= '1';
-            else
-              report "Reading empty frame." severity error;
-            end if;
-          else
-            -- Not reading data.
-          end if;
-
-          if (readFrame_i = '1') then
-            state := STATE_IDLE;
-            assert frameIndex = frameWrite_i.length report "Unread frame data discarded." severity error;
-            frameComplete_o <= '1';
-            readFrameEmpty_o <= '1';
-            readContentEmpty_o <= '1';
-            readContentData_o <= (others => 'U');
-          else
-            -- Not reading a frame.
-          end if;
-
-      end case;
-    end loop;
-  end process;
-
 end architecture;

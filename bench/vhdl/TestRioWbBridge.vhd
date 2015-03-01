@@ -9,7 +9,6 @@
 -- Contains automatic test code to verify a RioWbBridge implementation.
 -- 
 -- To Do:
--- - Move the testport package and entities to a seperate file.
 -- - Add testcases to NWRITE to cover all possible access lengths, not just the
 --   maximum as presently.
 -- 
@@ -439,7 +438,18 @@ begin
           wdptr := '1';
         end if;
         
-        CreateRandomPayload(ioData, seed1, seed2);
+        ioData(0) := x"0001020304050607";
+        ioData(1) := x"08090a0b0c0d0e0f";
+        ioData(2) := x"1011121314151617";
+        ioData(3) := x"18191a1b1c1d1e1f";
+        ioData(4) := x"2021222324252627";
+        ioData(5) := x"28292a2b2c2d2e2f";
+        ioData(6) := x"3031323334353637";
+        ioData(7) := x"38393a3b3c3d3e3f";
+        ioData(8) := x"4041424344454647";
+        ioData(9) := x"48494a4b4c4d4e4f";
+        ioData(10) := x"5051525354555657";
+        ioData(11) := x"58595a5b5c5d5e5f";
 
         InboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
                                     tt=>"01", ftype=>FTYPE_REQUEST_CLASS, 

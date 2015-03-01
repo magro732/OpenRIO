@@ -6,15 +6,15 @@
 -- http://www.opencores.org/cores/rio/
 -- 
 -- Description
--- Contains a platform to build endpoints on.
+-- Contains a platform to build endpoints on. It handles CRC insertion/removal
+-- and unpacks the deviceId in a packet into a fixed 32-bit to make the parsing
+-- of packets in higher layers easier. It also discards packets that does not
+-- have a handler.
 -- 
 -- To Do:
--- - Fix bug with one extra write in inbound direction.
--- - Rewrite to decrease resource usage.
--- - Clean up and increase the speed of the interface to packet handlers.
--- - 8-bit deviceId has not been verified, fix.
+-- - 8-bit deviceId has not been implemented, fix either as seperate
+--   architecture or an architecture with combined 8- and 16-bit support.
 -- - Egress; Place packets in different queues depending on the packet priority?
--- - Add verification of all sizes of packets.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 
@@ -51,16 +51,32 @@
 -- RioLogicalCommon.
 -------------------------------------------------------------------------------
 -- Ingress:
--- * Removes in-the-middle and trailing CRC.
--- * Forwards packets to logical-layer handlers depending on ftype and
---   transaction (output as address).
--- * Outputs header and deviceIDs in seperate accesses to facilitate 8- and
---   16-bit deviceAddress support. All fields are right-justified.
+-- * Removes in-the-middle CRC. The trailing CRC is not removed since it is not
+--   possible to know in which half-word it is placed without knowing how the
+--   packet should be parsed.
+-- * Forwards packets to logical-layer handlers depending on ftype. The
+--   ftype-field is output as address.
+-- * Outputs header and deviceIDs in seperate accesses to facilitate supporting
+--   different deviceId sizes. All fields are right-justified.
+-- * stall_i is used to stop the flow of data. The flow will continue when
+--   stall_i is deasserted. The stall_i signals should not be registered. If
+--   there is no handler for a packet, stall_i will not go high and the packet
+--   will be automatically discarded.
 -- Egress:
 -- * Adds in-the-middle and trailing CRC.
--- * Receives packets from logical-layer handlers.
--- * Receives header and deviceIDs in seperate accesses to facilitate 8- and
---   16-bit deviceAddress support. All fields are right-justified.
+-- * Receives packets from a configurable number of logical-layer handlers.
+--   This enables more complex endpoints with several independent
+--   funtionalities.
+-- * Receives header and deviceId in seperate accesses to facilitate
+--   supporting different deviceId sizes. All fields are right-justified. The
+--   size of the deviceId is indicated by the TT-field in the header.
+-- * The adr_i-input signal on the egress side is used to indicate if the last
+--   word contains one or two half-words. This is used to know where to insert
+--   the trailing CRC. It should be set at the start of the frame. If all
+--   frames always have the CRC in the same place it is ok to set this signal
+--   constant.
+-- Examples of how to write a handler for a packet can be found in
+-- RioLogicalPackets.vhd.
 -------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
@@ -73,7 +89,7 @@ use work.rio_common.all;
 -------------------------------------------------------------------------------
 entity RioLogicalCommon is
   generic(
-    PORTS : natural);
+    PORTS : natural := 1);
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -91,16 +107,15 @@ entity RioLogicalCommon is
     writeContent_o : out std_logic;
     writeContentData_o : out std_logic_vector(31 downto 0);
 
-    inboundCyc_o : out std_logic;
     inboundStb_o : out std_logic;
-    inboundAdr_o : out std_logic_vector(7 downto 0);
+    inboundAdr_o : out std_logic_vector(3 downto 0);
     inboundDat_o : out std_logic_vector(31 downto 0);
-    inboundAck_i : in std_logic;
+    inboundStall_i : in std_logic;
     
-    outboundCyc_i : in std_logic_vector(PORTS-1 downto 0);
     outboundStb_i : in std_logic_vector(PORTS-1 downto 0);
+    outboundAdr_i : in std_logic_vector(PORTS-1 downto 0);
     outboundDat_i : in std_logic_vector(32*PORTS-1 downto 0);
-    outboundAck_o : out std_logic_vector(PORTS-1 downto 0));
+    outboundStall_o : out std_logic_vector(PORTS-1 downto 0));
 end entity;
 
 
@@ -117,12 +132,14 @@ architecture RioLogicalCommon of RioLogicalCommon is
       areset_n : in std_logic;
 
       stb_i : in std_logic_vector(WIDTH-1 downto 0);
-      dataM_i : in std_logic_vector(32*WIDTH-1 downto 0);
-      ack_o : out std_logic_vector(WIDTH-1 downto 0);
+      adr_i : in std_logic_vector(WIDTH-1 downto 0);
+      data_i : in std_logic_vector(32*WIDTH-1 downto 0);
+      stall_o : out std_logic_vector(WIDTH-1 downto 0);
 
       stb_o : out std_logic;
-      dataS_o : out std_logic_vector(31 downto 0);
-      ack_i : in std_logic);
+      adr_o : out std_logic;
+      data_o : out std_logic_vector(31 downto 0);
+      stall_i : in std_logic);
   end component;
   
   component RioLogicalCommonIngress is
@@ -136,11 +153,10 @@ architecture RioLogicalCommon of RioLogicalCommon is
       readContentEnd_i : in std_logic;
       readContentData_i : in std_logic_vector(31 downto 0);
 
-      inboundCyc_o : out std_logic;
-      inboundStb_o : out std_logic;
-      inboundAdr_o : out std_logic_vector(7 downto 0);
-      inboundDat_o : out std_logic_vector(31 downto 0);
-      inboundAck_i : in std_logic);
+      stb_o : out std_logic;
+      adr_o : out std_logic_vector(3 downto 0);
+      dat_o : out std_logic_vector(31 downto 0);
+      stall_i : in std_logic);
   end component;
 
   component RioLogicalCommonEgress is
@@ -154,15 +170,16 @@ architecture RioLogicalCommon of RioLogicalCommon is
       writeContent_o : out std_logic;
       writeContentData_o : out std_logic_vector(31 downto 0);
 
-      outboundCyc_i : in std_logic;
-      outboundStb_i : in std_logic;
-      outboundDat_i : in std_logic_vector(31 downto 0);
-      outboundAck_o : out std_logic);
+      stb_i : in std_logic;
+      adr_i : in std_logic;
+      dat_i : in std_logic_vector(31 downto 0);
+      stall_o : out std_logic);
   end component;
 
   signal outboundStb : std_logic;
+  signal outboundAdr : std_logic;
   signal outboundDat : std_logic_vector(31 downto 0);
-  signal outboundAck : std_logic;
+  signal outboundStall : std_logic;
   
 begin
 
@@ -174,22 +191,23 @@ begin
       readContent_o=>readContent_o, 
       readContentEnd_i=>readContentEnd_i, 
       readContentData_i=>readContentData_i, 
-      inboundCyc_o=>inboundCyc_o, 
-      inboundStb_o=>inboundStb_o, 
-      inboundAdr_o=>inboundAdr_o, 
-      inboundDat_o=>inboundDat_o, 
-      inboundAck_i=>inboundAck_i);
+      stb_o=>inboundStb_o, 
+      adr_o=>inboundAdr_o, 
+      dat_o=>inboundDat_o, 
+      stall_i=>inboundStall_i);
 
   EgressInterconnect: RioLogicalCommonInterconnect
     generic map(WIDTH=>PORTS)
     port map(
       clk=>clk, areset_n=>areset_n, 
-      stb_i=>outboundStb_i, 
-      dataM_i=>outboundDat_i, 
-      ack_o=>outboundAck_o, 
-      stb_o=>outboundStb, 
-      dataS_o=>outboundDat, 
-      ack_i=>outboundAck);
+      stb_i=>outboundStb_i,
+      adr_i=>outboundAdr_i,
+      data_i=>outboundDat_i, 
+      stall_o=>outboundStall_o, 
+      stb_o=>outboundStb,
+      adr_o=>outboundAdr,
+      data_o=>outboundDat, 
+      stall_i=>outboundStall);
 
   Egress: RioLogicalCommonEgress
     port map(
@@ -199,10 +217,10 @@ begin
       writeFrameAbort_o=>writeFrameAbort_o, 
       writeContent_o=>writeContent_o, 
       writeContentData_o=>writeContentData_o, 
-      outboundCyc_i=>'1', 
-      outboundStb_i=>outboundStb, 
-      outboundDat_i=>outboundDat, 
-      outboundAck_o=>outboundAck);
+      stb_i=>outboundStb,
+      adr_i=>outboundAdr,
+      dat_i=>outboundDat, 
+      stall_o=>outboundStall);
 
 end architecture;
 
@@ -231,239 +249,114 @@ entity RioLogicalCommonIngress is
     readContentEnd_i : in std_logic;
     readContentData_i : in std_logic_vector(31 downto 0);
 
-    inboundCyc_o : out std_logic;
-    inboundStb_o : out std_logic;
-    inboundAdr_o : out std_logic_vector(7 downto 0);
-    inboundDat_o : out std_logic_vector(31 downto 0);
-    inboundAck_i : in std_logic);
+    stb_o : out std_logic;
+    adr_o : out std_logic_vector(3 downto 0);
+    dat_o : out std_logic_vector(31 downto 0);
+    stall_i : in std_logic);
 end entity;
 
 
 -------------------------------------------------------------------------------
--- Architecture for RioLogicalCommonIngress.
+-- Architecture for RioLogicalCommonIngress16.
+-- Only 16-bit deviceId are supported.
 -------------------------------------------------------------------------------
-architecture RioLogicalCommonIngress of RioLogicalCommonIngress is
-  type StateType is (IDLE,
-                     WAIT_HEADER_0, HEADER_0, HEADER_1,
-                     SEND_HEADER, SEND_DESTINATION, SEND_SOURCE,
-                     FORWARD_SHORT, FORWARD_CRC, FORWARD_LONG, FORWARD_LAST,
-                     END_PACKET);
-  signal state : StateType;
+architecture RioLogicalCommonIngress16 of RioLogicalCommonIngress is
 
-  signal packetPosition : natural range 0 to 68;
+  signal packetPosition : natural range 0 to 74;
+
+  signal loadValue, loadValue16 : std_logic_vector(63 downto 0);
   signal packetContent : std_logic_vector(63 downto 0);
 
   signal tt : std_logic_vector(1 downto 0);
   signal ftype : std_logic_vector(3 downto 0);
-  signal transaction : std_logic_vector(3 downto 0);
+
+  signal readContent : std_logic;
+  signal readFrame : std_logic;
   
 begin
+  readContent_o <= readContent;
+  readFrame_o <= readFrame;
+  
+  adr_o <= ftype;
+  dat_o <= packetContent(63 downto 32);
 
-  process(clk, areset_n)
+  loadValue16 <=
+    (x"0000" & packetContent(31 downto 16) & readContentData_i) when (packetPosition = 4) else
+    (x"0000" & packetContent(31 downto 0) & x"0000") when (packetPosition = 5) else
+    (packetContent(31 downto 16) & readContentData_i & x"0000") when (packetPosition < 24) else
+    (packetContent(31 downto 16) & readContentData_i(15 downto 0) & x"00000000") when (packetPosition = 24) else
+    (readContentData_i & x"00000000");
+  loadValue <= loadValue16 when (tt = "01") else (x"0000" & readContentData_i & x"0000");
+  shifter: process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      state <= IDLE;
-      
-      packetPosition <= 0;
       packetContent <= (others=>'0');
-      
+    elsif (clk'event and clk = '1') then
+      if ((stall_i = '0') and (readFrameEmpty_i = '0')) then
+        packetContent <= loadValue;
+      end if;
+    end if;
+  end process;
+
+  packetCounter: process(clk, areset_n)
+  begin
+    if (areset_n = '0') then
+      packetPosition <= 0;
+    elsif (clk'event and clk = '1') then
+      if (readFrame = '1') or (readFrameEmpty_i = '1') then
+        packetPosition <= 0;
+      elsif (stall_i = '0') then
+        packetPosition <= packetPosition + 1;
+      end if;
+    end if;
+  end process;
+
+  headerRegister: process(clk, areset_n)
+  begin
+    if (areset_n = '0') then
       tt <= "00";
       ftype <= "0000";
-      transaction <= "0000";
-
-      readContent_o <= '0';
-      readFrame_o <= '0';
-
-      inboundCyc_o <= '0';
-      inboundStb_o <= '0';
-      inboundAdr_o <= (others=>'0');
-      inboundDat_o <= (others=>'0');
     elsif (clk'event and clk = '1') then
-      readContent_o <= '0';
-      readFrame_o <= '0';
-      
-      case state is
-        when IDLE =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          packetPosition <= 0;
-          if (readFrameEmpty_i = '0') then
-            readContent_o <= '1';
-            state <= WAIT_HEADER_0;
-          end if;
-          
-        when WAIT_HEADER_0 =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          readContent_o <= '1';
-          state <= HEADER_0;
+      if (readFrame = '1') then
+        tt <= "00";
+        ftype <= "0000";
+      elsif (stall_i = '0') and (packetPosition = 3) then
+        tt <= readContentData_i(21 downto 20);
+        ftype <= readContentData_i(19 downto 16);
+      end if;
+    end if;
+  end process;
 
-        when HEADER_0 =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          packetContent <= packetContent(31 downto 0) & readContentData_i;
-          packetPosition <= packetPosition + 1;
-          readContent_o <= '1';
-
-          tt <= readContentData_i(21 downto 20);
-          ftype <= readContentData_i(19 downto 16);
-
-          state <= HEADER_1;
-          
-        when HEADER_1 =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          packetContent <= packetContent(31 downto 0) & readContentData_i;
-          packetPosition <= packetPosition + 1;
-
-          if (tt = "00") then
-            transaction <= readContentData_i(31 downto 28);
-          elsif (tt = "01") then
-            transaction <= readContentData_i(15 downto 12);
-          end if;
-          
-          state <= SEND_HEADER;
-
-        when SEND_HEADER =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          inboundCyc_o <= '1';
-          inboundStb_o <= '1';
-          inboundAdr_o <= ftype & transaction;
-          inboundDat_o <= x"0000" & packetContent(63 downto 48);
-          packetContent <= packetContent(47 downto 0) & x"0000";
-
-          state <= SEND_DESTINATION;
-
-        when SEND_DESTINATION =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (inboundAck_i = '1') then
-            if (tt = "00") then
-              inboundDat_o <= x"000000" & packetContent(63 downto 56);
-              packetContent <= packetContent(55 downto 0) & x"00";
-            elsif (tt = "01") then
-              inboundDat_o <= x"0000" & packetContent(63 downto 48);
-              packetContent <= packetContent(47 downto 0) & x"0000";
-            end if;
-
-            state <= SEND_SOURCE;
-          end if;
-          
-        when SEND_SOURCE =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (inboundAck_i = '1') then
-            if (tt = "00") then
-              inboundDat_o <= x"000000" & packetContent(63 downto 56);
-              packetContent <= packetContent(55 downto 0) & x"00";
-            elsif (tt = "01") then
-              inboundDat_o <= x"0000" & packetContent(63 downto 48);
-              packetContent <= packetContent(47 downto 32) & readContentData_i & x"0000";
-              readContent_o <= '1';
-            end if;
-
-            state <= FORWARD_SHORT;
-          end if;
-          
-        when FORWARD_SHORT =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (inboundAck_i = '1') then
-            packetPosition <= packetPosition + 1;
-
-            if (tt = "00") then
-              inboundDat_o <= packetContent(63 downto 32);
-              packetContent <= packetContent(31 downto 0) & readContentData_i;
-            elsif (tt = "01") then
-              inboundDat_o <= packetContent(63 downto 32);
-              packetContent <= packetContent(31 downto 16) & readContentData_i & x"0000";
-            end if;
-            
-            if (readContentEnd_i = '0') then
-              if (packetPosition = 18) then
-                state <= FORWARD_CRC;
-              end if;
-              
-              readContent_o <= '1';
+  controller: process(clk, areset_n)
+  begin
+    if (areset_n = '0') then
+      readContent <= '0';
+      readFrame <= '0';
+      stb_o <= '0';
+    elsif (clk'event and clk = '1') then
+      if (stall_i = '0') then
+        case packetPosition is
+          when 0 =>
+            readContent <= '0';
+            readFrame <= '0';
+            stb_o <= '0';
+          when 1 =>
+            readContent <= '1';
+          when 2 =>
+            readContent <= '1';
+          when 3 =>
+            readContent <= '0';
+            stb_o <= '1';
+          when others =>
+            if (readFrame = '0') then
+              stb_o <= not readContentEnd_i;
+              readFrame <= readContentEnd_i;
+              readContent <= not readContentEnd_i;
             else
-              readFrame_o <= '1';
-              state <= FORWARD_LAST;
+              readFrame <= '0';
             end if;
-          end if;
-
-        when FORWARD_CRC =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (inboundAck_i = '1') then
-            inboundDat_o <= packetContent(63 downto 32);
-
-            packetPosition <= packetPosition + 1;
-            packetContent <=
-              packetContent(31 downto 16) & readContentData_i(15 downto 0) & x"00000000";
-            
-            if (readContentEnd_i = '0') then
-              readContent_o <= '1';
-              state <= FORWARD_LONG;
-            else
-              readFrame_o <= '1';
-              state <= FORWARD_LAST;
-            end if;
-          end if;
-
-        when FORWARD_LONG =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (inboundAck_i = '1') then
-            inboundDat_o <= packetContent(63 downto 32);
-
-            packetPosition <= packetPosition + 1;
-            packetContent <=
-              readContentData_i & x"00000000";
-            
-            if (readContentEnd_i = '0') then
-              readContent_o <= '1';
-            else
-              readFrame_o <= '1';
-              state <= FORWARD_LAST;
-            end if;
-          end if;
-
-        when FORWARD_LAST =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (inboundAck_i = '1') then
-            inboundDat_o <= packetContent(63 downto 32);
-            state <= END_PACKET;
-          end if;
-          
-        when END_PACKET =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (inboundAck_i = '1') then
-            inboundCyc_o <= '0';
-            inboundStb_o <= '0';
-            state <= IDLE;
-          end if;
-          
-        when others =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          state <= IDLE;
-      end case;
+        end case;
+      end if;
     end if;
   end process;
 
@@ -473,11 +366,6 @@ end architecture;
 
 -------------------------------------------------------------------------------
 -- RioLogicalCommonEgress.
--- Only 8-bit and 16-bit deviceId are supported. The first write must contain
--- the 16-bit header, the second write must contain the destination address and
--- the third must contain the source address.
--- CRC is calculated during the transfer and is inserted at byte 81 and 82 and
--- appended to the packet when it ends.
 -------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
@@ -499,307 +387,267 @@ entity RioLogicalCommonEgress is
     writeContent_o : out std_logic;
     writeContentData_o : out std_logic_vector(31 downto 0);
 
-    outboundCyc_i : in std_logic;
-    outboundStb_i : in std_logic;
-    outboundDat_i : in std_logic_vector(31 downto 0);
-    outboundAck_o : out std_logic);
+    stb_i : in std_logic;
+    adr_i : in std_logic;
+    dat_i : in std_logic_vector(31 downto 0);
+    stall_o : out std_logic);
 end entity;
 
 
 -------------------------------------------------------------------------------
--- Architecture for RioLogicalCommonEgress.
+-- Architecture for RioLogicalCommonEgress16.
+-- Only 16-bit deviceId are supported. The first write must contain
+-- the 16-bit header, the second write must contain the destination address and
+-- the third must contain the source address.
+-- CRC is calculated during the transfer and is inserted at byte 81 and 82 and
+-- appended to the packet when it ends.
 -------------------------------------------------------------------------------
-architecture RioLogicalCommonEgress of RioLogicalCommonEgress is
+architecture RioLogicalCommonEgress16 of RioLogicalCommonEgress is
 
-  component Crc16CITT is
-    port(
-      d_i : in  std_logic_vector(15 downto 0);
-      crc_i : in  std_logic_vector(15 downto 0);
-      crc_o : out std_logic_vector(15 downto 0));
-  end component;
+  signal stb, cycleEndCurrent, cycleEndNext : std_logic;
+  
+  signal packetPosition : natural range 0 to 72;
 
-  type StateType is (IDLE,
-                     HEADER_GET, HEADER_ACK,
-                     DESTINATION_GET, DESTINATION_ACK,
-                     SOURCE_GET, SOURCE_ACK,
-                     CONTENT_GET, CONTENT_ACK, 
-                     CRC_APPEND, CRC_UPDATE, CRC_LAST, SEND_FRAME,
-                     RESTART_FRAME, WAIT_UPDATE);
-  signal state : StateType;
-  signal packetPosition : natural range 0 to 69;
-  
-  signal temp : std_logic_vector(15 downto 0);
-  
-  signal tt : std_logic_vector(1 downto 0);
-  signal dstAddr : std_logic_vector(7 downto 0);
+  signal loadValue : std_logic_vector(47 downto 0);
+  signal packetContent : std_logic_vector(47 downto 0);
+  signal packetContentReady : std_logic;
+  signal packetContentOdd : std_logic;
+  signal packetContentLong : std_logic;
+  signal packetContentEnd : std_logic;
+  signal packetContentPending : std_logic;
 
   signal writeContent : std_logic;
-  signal writeContentData1 : std_logic_vector(31 downto 0);
-  signal writeContentData2 : std_logic_vector(31 downto 0);
+  signal writeFrame : std_logic;
+  signal writeContentData : std_logic_vector(31 downto 0);
 
-  signal crcReset : std_logic;
-  signal crc16Current, crc16Temp, crc16Next: std_logic_vector(15 downto 0);
-
+  signal crcCurrent, crcTemp, crcNext: std_logic_vector(15 downto 0);
+  
 begin
 
-  writeContent_o <= writeContent;
-  writeContentData_o <= writeContentData1;
-
-  
-  process(clk, areset_n)
+  -----------------------------------------------------------------------------
+  -- Packet cycle end detection.
+  -----------------------------------------------------------------------------
+  stbDelayFF: process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      crc16Current <= x"0000";
+      stb <= '0';
     elsif (clk'event and clk = '1') then
-      if (crcReset = '1') then
-        crc16Current <= x"ffff";
-      elsif (writeContent = '1') then
-        crc16Current <= crc16Next;
+      if (writeFrame = '1') then
+        stb <= '0';
+      elsif (writeFrameFull_i = '0') then
+        stb <= stb_i;
+      end if;
+    end if;
+  end process;
+  cycleEndNext <= (stb and (not stb_i));
+  cycleEndFF: process(clk, areset_n)
+  begin
+    if (areset_n = '0') then
+      cycleEndCurrent <= '0';
+    elsif (clk'event and clk = '1') then
+      if (writeFrame = '1') then
+        cycleEndCurrent <= '0';
+      elsif (cycleEndNext = '1') then
+        cycleEndCurrent <= '1';
+      end if;
+    end if;
+  end process;
+  packetContentEnd <= cycleEndNext or cycleEndCurrent;
+
+  -----------------------------------------------------------------------------
+  -- Packet positioning.
+  -----------------------------------------------------------------------------
+  packetPositionCounter: process(clk, areset_n)
+  begin
+    if (areset_n = '0') then
+      packetPosition <= 0;
+    elsif (clk'event and clk = '1') then
+      if (writeFrame = '1') then
+        packetPosition <= 0;
+      elsif (stb_i = '1') and (writeFrameFull_i = '0') then
+        packetPosition <= packetPosition + 1;
+      end if;
+    end if;
+  end process;
+
+  -----------------------------------------------------------------------------
+  -- Packet content creation.
+  -----------------------------------------------------------------------------
+  -- REMARK: The critical path is the crcNext through the loadValue-mux into
+  -- packetContent. Register this path if possible.
+  loadValue <=
+    (packetContent(31 downto 0) & dat_i(15 downto 0)) when (packetContentReady = '0') else    
+    (packetContent(15 downto 0) & dat_i) when (packetContentLong = '0') else    
+    (crcNext & packetContent(15 downto 0) & x"0000") when (packetContentPending = '1') else    
+    (dat_i & x"0000");
+  packetContentPlace: process(clk, areset_n)
+  begin
+    if (areset_n = '0') then
+      packetContent <= (others=>'0');
+    elsif (clk'event and clk = '1') then
+      if (stb_i = '1') or (stb = '1') then
+        packetContent <= loadValue;
+      end if;
+    end if;
+  end process;
+
+  -----------------------------------------------------------------------------
+  -- Packet content generation controller.
+  -----------------------------------------------------------------------------
+  stall_o <= writeFrameFull_i when (packetContentReady = '0') else
+             packetContentPending or packetContentEnd;
+  controller: process(clk, areset_n)
+  begin
+    if (areset_n = '0') then
+      packetContentReady <= '0';
+      packetContentPending <= '0';
+      packetContentLong <= '0';
+      packetContentOdd <= '0';
+    elsif (clk'event and clk = '1') then
+      if (writeFrame = '1') then
+        packetContentReady <= '0';
+        packetContentPending <= '0';
+        packetContentLong <= '0';
+        packetContentOdd <= adr_i;
+      elsif (stb_i = '1') and (writeFrameFull_i = '0') then
+        packetContentOdd <= adr_i;
+        
+        case packetPosition is
+          when 2 =>
+            packetContentReady <= '1';
+          when 21 =>
+            packetContentPending <= '1';
+            packetContentLong <= '1';
+          when 22 =>
+            packetContentPending <= '0';
+            packetContentLong <= '1';
+          when others =>
+        end case;
+      end if;
+    end if;
+  end process;
+
+  -----------------------------------------------------------------------------
+  -- CRC calculation and interface towards the packet queue.
+  -----------------------------------------------------------------------------
+  crcCalculation: process(clk, areset_n)
+  begin
+    if (areset_n = '0') then
+      crcCurrent <= x"0000";
+    elsif (clk'event and clk = '1') then
+      if (packetContentReady = '0') then
+        crcCurrent <= x"ffff";
+      elsif (packetContentReady = '1') then
+        crcCurrent <= crcNext;
+      end if;
+    end if;
+  end process;
+  Crc16High: Crc16CITT
+    port map(
+      d_i=>packetContent(47 downto 32), crc_i=>crcCurrent, crc_o=>crcTemp);
+  Crc16Low: Crc16CITT
+    port map(
+      d_i=>packetContent(31 downto 16), crc_i=>crcTemp, crc_o=>crcNext);
+
+  -----------------------------------------------------------------------------
+  -- Frame buffer output interface.
+  -----------------------------------------------------------------------------
+  -- REMARK: This process needs to be optimized further. It is not part of the critical
+  -- path though.
+  writeFrameContent: process(clk, areset_n)
+    variable flush : std_logic;
+    variable appendCrc : std_ulogic;
+    variable appendHigh : std_ulogic;
+    variable endFrame : std_ulogic;
+  begin
+    if (areset_n = '0') then
+      writeFrame <= '0';
+      writeContent <= '0';
+      writeContentData <= (others=>'0');
+      flush := '0';
+      appendCrc := '0';
+      appendHigh := '0';
+      endFrame := '0';
+    elsif (clk'event and clk = '1') then
+      if (writeFrame = '1') then
+        writeFrame <= '0';
+        writeContent <= '0';
+        writeContentData <= (others=>'0');
+        flush := '0';
+        appendCrc := '0';
+        appendHigh := '0';
+        endFrame := '0';
+      else
+        if (flush = '1') then
+          writeContent <= '1';
+          writeContentData <= packetContent(47 downto 16);
+          flush := '0';
+        elsif (appendCrc = '1') then
+          writeContent <= '1';
+          if (appendHigh = '0') then
+            writeContentData <= packetContent(47 downto 32) & crcTemp;
+          else
+            writeContentData <= crcCurrent & x"0000";
+          end if;
+          appendCrc := '0';
+        elsif (endFrame = '1') then
+          writeContent <= '0';
+          writeFrame <= '1';
+          endFrame := '0';
+        elsif (packetContentPending = '1') and (packetContentEnd = '1') then
+          writeContent <= '1';
+          writeContentData <= packetContent(47 downto 16);
+          flush := not packetContentOdd;
+          appendCrc := '1';
+          appendHigh := '1';
+          endFrame := '1';
+        elsif (packetContentEnd = '1') then
+          if (packetContentLong = '0') then
+            writeContent <= '1';
+            writeContentData <= packetContent(47 downto 16);
+            flush := '0';
+            appendCrc := '1';
+            appendHigh := packetContentOdd;
+            endFrame := '1';
+          else
+            if (packetContentOdd = '1') then
+              writeContent <= '1';
+              writeContentData <= packetContent(47 downto 32) & crcTemp;
+              flush := '0';
+              appendCrc := '0';
+              appendHigh := '0';
+              endFrame := '1';
+            else
+              writeContent <= '1';
+              writeContentData <= packetContent(47 downto 16);
+              flush := '0';
+              appendCrc := '1';
+              appendHigh := '1';
+              endFrame := '1';
+            end if;
+          end if;
+        elsif (packetContentReady = '1') then
+          writeContent <= '1';
+          writeContentData <= packetContent(47 downto 16);
+        else
+          writeContent <= '0';
+          writeFrame <= '0';
+        end if;
       end if;
     end if;
   end process;
   
-  process(clk, areset_n)
-  begin
-    if (areset_n = '0') then
-      state <= IDLE;
-      packetPosition <= 0;
-
-      tt <= (others=>'0');
-      dstAddr <= (others=>'0');
-
-      temp <= (others=>'0');
-      writeContent <= '0';
-      writeContentData1 <= (others=>'0');
-      writeContentData2 <= (others=>'0');
-      
-      crcReset <= '0';
-      
-      outboundAck_o <= '0';
-
-      writeFrame_o <= '0';
-      writeFrameAbort_o <= '0';
-    elsif (clk'event and clk = '1') then
-      writeContent <= '0';
-      writeFrame_o <= '0';
-      
-      crcReset <= '0';
-      
-      case state is
-        when IDLE =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          packetPosition <= 0;
-          crcReset <= '1';
-          if (writeFrameFull_i = '0') then
-            state <= HEADER_GET;
-          end if;
-
-        when HEADER_GET =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if ((outboundCyc_i = '1') and (outboundStb_i = '1')) then
-            temp <= outboundDat_i(15 downto 0);
-            tt <= outboundDat_i(5 downto 4);
-
-            outboundAck_o <= '1';
-            state <= HEADER_ACK;
-          else
-            state <= HEADER_GET;
-          end if;
-
-        when HEADER_ACK =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          outboundAck_o <= '0';
-          state <= DESTINATION_GET;
-
-        when DESTINATION_GET =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          
-          if ((outboundCyc_i = '1') and (outboundStb_i = '1')) then
-            if (tt = "01") then
-              writeContentData2 <= temp & outboundDat_i(15 downto 0);
-            else
-              report "TT-field not supported." severity error;
-            end if;
-            
-            outboundAck_o <= '1';
-            state <= DESTINATION_ACK;
-          else
-            state <= RESTART_FRAME;
-          end if;
-        
-        when DESTINATION_ACK =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          outboundAck_o <= '0';
-          state <= SOURCE_GET;
-
-        when SOURCE_GET =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          
-          if ((outboundCyc_i = '1') and (outboundStb_i = '1')) then
-            if (tt = "01") then
-              temp <= outboundDat_i(15 downto 0);
-            end if;
-            
-            outboundAck_o <= '1';
-            state <= SOURCE_ACK;
-          else
-            state <= RESTART_FRAME;
-          end if;
-        
-        when SOURCE_ACK =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          outboundAck_o <= '0';
-          state <= CONTENT_GET;
-          
-        when CONTENT_GET =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if ((outboundCyc_i = '1') and (outboundStb_i = '1')) then
-            if (packetPosition < 19) then
-              if (tt = "01") then
-                writeContentData2 <= temp & outboundDat_i(31 downto 16);
-                temp <= outboundDat_i(15 downto 0);
-                outboundAck_o <= '1';
-              end if;
-            elsif (packetPosition = 19) then
-              if (tt = "01") then
-                writeContentData2 <= crc16Next & temp;
-              end if;
-            else
-              if (tt = "01") then
-                writeContentData2 <= outboundDat_i;
-                outboundAck_o <= '1';
-              end if;
-            end if;
-            writeContent <= '1';
-            writeContentData1 <= writeContentData2;
-            packetPosition <= packetPosition + 1;
-            state <= CONTENT_ACK;
-          else
-            state <= CRC_APPEND;
-          end if;
-          
-        when CONTENT_ACK =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (packetPosition = 20) then
-            if (tt = "01") then
-              writeContentData2 <= crc16Next & temp;
-            end if;
-          end if;
-          outboundAck_o <= '0';
-          state <= CONTENT_GET;
-
-        when CRC_APPEND =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (packetPosition < 19) then
-            if (tt = "01") then
-              writeContent <= '1';
-              writeContentData1 <= writeContentData2;
-              packetPosition <= packetPosition + 1;
-            end if;
-          elsif (packetPosition = 19) then
-            if (tt = "01") then
-              writeContent <= '1';
-              writeContentData1 <= writeContentData2;
-              packetPosition <= packetPosition + 1;
-            end if;
-          else
-            if (tt = "01") then
-              writeContentData1 <= writeContentData2(31 downto 16) & x"0000";
-              packetPosition <= packetPosition + 1;
-            end if;
-          end if;
-          state <= CRC_UPDATE;
-          
-        when CRC_UPDATE =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          state <= CRC_LAST;
-
-        when CRC_LAST =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          if (packetPosition <= 19) then
-            if (tt = "01") then
-              writeContent <= '1';
-              writeContentData1 <= crc16Current & x"0000";
-            end if;
-          else
-            if (tt = "01") then
-              writeContent <= '1';
-              writeContentData1 <= writeContentData2(31 downto 16) & crc16Temp;
-            end if;
-          end if;
-          
-          state <= SEND_FRAME;
-          
-        when SEND_FRAME =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          writeFrame_o <= '1';
-          state <= WAIT_UPDATE;
-
-        when RESTART_FRAME =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          writeFrameAbort_o <= '1';
-          state <= WAIT_UPDATE;
-
-        when WAIT_UPDATE =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          writeFrameAbort_o <= '0';
-          state <= IDLE;
-          
-        when others =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-      end case;
-    end if;
-  end process;
-
-  -----------------------------------------------------------------------------
-  -- Packet CRC calculation.
-  -----------------------------------------------------------------------------
-
-  Crc16High: Crc16CITT
-    port map(
-      d_i=>writeContentData1(31 downto 16), crc_i=>crc16Current, crc_o=>crc16Temp);
-  Crc16Low: Crc16CITT
-    port map(
-      d_i=>writeContentData1(15 downto 0), crc_i=>crc16Temp, crc_o=>crc16Next);
-
+  writeContent_o <= writeContent;
+  writeFrame_o <= writeFrame;
+  writeFrameAbort_o <= '0';
+  writeContentData_o <= writeContentData;
+  
 end architecture;
 
 
 
--------------------------------------------------------------------------------
--- RioLogicalCommonIngress.
+--------------------------------------------------------------------------------
+-- RioLogicalCommonInterconnect.
 -------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
@@ -818,12 +666,14 @@ entity RioLogicalCommonInterconnect is
     areset_n : in std_logic;
 
     stb_i : in std_logic_vector(WIDTH-1 downto 0);
-    dataM_i : in std_logic_vector(32*WIDTH-1 downto 0);
-    ack_o : out std_logic_vector(WIDTH-1 downto 0);
+    adr_i : in std_logic_vector(WIDTH-1 downto 0);
+    data_i : in std_logic_vector(32*WIDTH-1 downto 0);
+    stall_o : out std_logic_vector(WIDTH-1 downto 0);
 
     stb_o : out std_logic;
-    dataS_o : out std_logic_vector(31 downto 0);
-    ack_i : in std_logic);
+    adr_o : out std_logic;
+    data_o : out std_logic_vector(31 downto 0);
+    stall_i : in std_logic);
 end entity;
 
 
@@ -831,8 +681,8 @@ end entity;
 -- Architecture for RioLogicalCommonInterconnect.
 -------------------------------------------------------------------------------
 architecture RioLogicalCommonInterconnectImpl of RioLogicalCommonInterconnect is
-  signal activeCycle : std_logic;
-  signal selectedMaster : natural range 0 to WIDTH-1;
+  signal activeCycle : std_logic := '0';
+  signal selectedMaster : natural range 0 to WIDTH-1 := 0;
 begin
   
   -----------------------------------------------------------------------------
@@ -863,10 +713,11 @@ begin
   -- Interconnection.
   -----------------------------------------------------------------------------
   stb_o <= stb_i(selectedMaster) and activeCycle;
-  dataS_o <= dataM_i(32*(selectedMaster+1)-1 downto 32*selectedMaster);
+  adr_o <= adr_i(selectedMaster);
+  data_o <= data_i(32*(selectedMaster+1)-1 downto 32*selectedMaster);
 
   Interconnect: for i in 0 to WIDTH-1 generate
-    ack_o(i) <= ack_i when (selectedMaster = i) else '0';
+    stall_o(i) <= stall_i when (selectedMaster = i) and (activeCycle = '1') else '1';
   end generate;
 
 end architecture;

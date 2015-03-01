@@ -9,7 +9,8 @@
 -- Contains automatic simulation test code to verify a RioSerial implementation.
 -- 
 -- To Do:
--- -
+-- - Replace TestSwitchPort with generic TestPortPacketBuffer from common library.
+-- - Move TestSymbolPort to generic library.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 
@@ -80,6 +81,7 @@ library std;
 use std.textio.all;
 use work.rio_common.all;
 use work.TestRioSerialPackage.all;
+use work.TestPortPackage.all;
 
 
 -------------------------------------------------------------------------------
@@ -2562,6 +2564,7 @@ library std;
 use std.textio.all;
 use work.rio_common.all;
 use work.TestRioSerialPackage.all;
+use work.TestPortPackage.all;
 
 
 -------------------------------------------------------------------------------
@@ -2821,6 +2824,7 @@ library std;
 use std.textio.all;
 use work.rio_common.all;
 use work.TestRioSerialPackage.all;
+use work.TestPortPackage.all;
 
 
 -------------------------------------------------------------------------------

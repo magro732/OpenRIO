@@ -21,7 +21,8 @@
 --   sending port can see if a receiving port is up or not.
 -- - Add support for extended route.
 -- - Add validity-bit to know if a route has been activly set for a particular
---   deviceId.
+--   deviceId. Currently, we rely on that the routing table memory is
+--   initialized in the enumeration or at device startup.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 
@@ -52,16 +53,11 @@
 -- from http://www.opencores.org/lgpl.shtml 
 -- 
 -------------------------------------------------------------------------------
--- Revision history.
--- - Adding support for all sizes of maintenance packets.
--- - Adding configAck to external config-space interface.
--------------------------------------------------------------------------------
 
 
 -------------------------------------------------------------------------------
 -- RioSwitch
 -------------------------------------------------------------------------------
-
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all; 
@@ -512,7 +508,6 @@ begin
       readFrame_o <= '0';
       readFrameRestart_o <= '0';
 
-      -- REMARK: Add support for aborted frames...
       case masterState is
 
         when STATE_IDLE =>
@@ -676,8 +671,8 @@ begin
           ---------------------------------------------------------------------
 
           -- Wait for the target port to complete the request.
-          -- REMARK: Remove the ack-condition, we know that the write takes one
-          -- cycle...
+          -- REMARK: Remove the ack-condition to increase performance, we know
+          -- that the write takes one cycle.
           if (masterAck_i = '1') then
             -- The target port is ready.
 
@@ -998,15 +993,14 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
   -- Signals between RioLogicalCommon and PacketHandler.
   -----------------------------------------------------------------------------
 
-  signal inboundCyc : std_logic;
   signal inboundStb : std_logic;
-  signal inboundAdr : std_logic_vector(7 downto 0);
+  signal inboundAdr : std_logic_vector(3 downto 0);
   signal inboundDat : std_logic_vector(31 downto 0);
-  signal inboundAck : std_logic;
-  signal outboundCyc : std_logic_vector(0 downto 0);
+  signal inboundStall : std_logic;
   signal outboundStb : std_logic_vector(0 downto 0);
+  signal outboundAdr : std_logic_vector(0 downto 0);
   signal outboundDat : std_logic_vector(31 downto 0);
-  signal outboundAck : std_logic_vector(0 downto 0);
+  signal outboundStall : std_logic_vector(0 downto 0);
 
   -----------------------------------------------------------------------------
   -- Signals between PacketHandlers and maintenance controllers.
@@ -1095,7 +1089,6 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
   signal configDataRead, configDataReadInternal : std_logic_vector(31 downto 0);
   signal configAck, configAckInternal : std_logic;
 
-  -- REMARK: Make these variables instead...
   signal discovered : std_logic;
   signal hostBaseDeviceIdLocked : std_logic;
   signal hostBaseDeviceId : std_logic_vector(15 downto 0);
@@ -1109,8 +1102,7 @@ begin
   -----------------------------------------------------------------------------
   -- Normal switch port instance interfacing the switch interconnect.
   -----------------------------------------------------------------------------
-  -- REMARK: PORT_INDEX is not used in this instantiation.
-  -- REMARK: Add generic to disable the maintenance routing to this port...
+  -- Note that PORT_INDEX is not used in this instantiation and set to zero.
   PortInst: SwitchPort
     generic map(
       MAINTENANCE_LOOKUP=>true,
@@ -1166,8 +1158,9 @@ begin
   -- Packet queue.
   -- This queue should only contain one packet.
   -----------------------------------------------------------------------------
-  -- REMARK: Use a packet-buffer with a configurable maximum sized packet...
-  -- the size of the memory is too large...
+  -- REMARK: Use a packet-buffer with a configurable maximum sized packet. The
+  -- size of the resulting memory is larger than needed since maintenance
+  -- packets never contain more than 8 double-words.
   PacketQueue: RioPacketBuffer
     generic map(SIZE_ADDRESS_WIDTH=>1, CONTENT_ADDRESS_WIDTH=>7)
     port map(
@@ -1218,22 +1211,19 @@ begin
       writeFrameAbort_o=>outboundWriteFrameAbort, 
       writeContent_o=>outboundWriteContent, 
       writeContentData_o=>outboundWriteContentData, 
-      inboundCyc_o=>inboundCyc, 
       inboundStb_o=>inboundStb, 
       inboundAdr_o=>inboundAdr, 
       inboundDat_o=>inboundDat, 
-      inboundAck_i=>inboundAck, 
-      outboundCyc_i=>outboundCyc, 
-      outboundStb_i=>outboundStb, 
+      inboundStall_i=>inboundStall, 
+      outboundStb_i=>outboundStb,
+      outboundAdr_i=>outboundAdr,
       outboundDat_i=>outboundDat, 
-      outboundAck_o=>outboundAck);
+      outboundStall_o=>outboundStall);
 
   -----------------------------------------------------------------------------
   -- Inbound maintenance packet parser.
   -- Unpack inbound maintenance packets.
   -----------------------------------------------------------------------------
-  -- REMARK: add another receiver that discards all other packet types...
-  -- REMARK: Connect enable to something...
   payloadIndexInbound <= payloadIndexOutbound when (forwardPacket = '1') else payloadIndexMaint;
   doneInbound <= doneOutbound when (forwardPacket = '1') else doneMaint;
   InboundPacket: MaintenanceInbound
@@ -1260,11 +1250,10 @@ begin
       payloadIndex_i=>payloadIndexInbound, 
       payload_o=>payloadInbound, 
       done_i=>doneInbound, 
-      inboundCyc_i=>inboundCyc, 
       inboundStb_i=>inboundStb, 
       inboundAdr_i=>inboundAdr, 
       inboundDat_i=>inboundDat, 
-      inboundAck_o=>inboundAck);
+      inboundStall_o=>inboundStall);
 
   -----------------------------------------------------------------------------
   -- Outbound maintenance packet generator.
@@ -1280,7 +1269,6 @@ begin
   hopOutbound <= std_logic_vector(unsigned(hopInbound)-1) when (forwardPacket = '1') else x"ff";
   payloadLengthOutbound <= payloadLengthInbound when (forwardPacket = '1') else payloadLengthMaint;
   payloadOutbound <= payloadInbound when (forwardPacket = '1') else payloadMaint;
-  -- REMARK: Connect enable to something...
   OutboundPacket: MaintenanceOutbound
     port map(
       clk=>clk, areset_n=>areset_n, enable=>'1', 
@@ -1305,10 +1293,10 @@ begin
       payloadIndex_o=>payloadIndexOutbound, 
       payload_i=>payloadOutbound, 
       done_o=>doneOutbound, 
-      outboundCyc_o=>outboundCyc(0), 
-      outboundStb_o=>outboundStb(0), 
+      outboundStb_o=>outboundStb(0),
+      outboundAdr_o=>outboundAdr(0),
       outboundDat_o=>outboundDat, 
-      outboundAck_i=>outboundAck(0));
+      outboundStall_i=>outboundStall(0));
 
   -----------------------------------------------------------------------------
   -- Main switch maintenance controller.
@@ -1319,7 +1307,7 @@ begin
   RioSwitchMaintenance: process(clk, areset_n)
     type MasterStateType is (STATE_IDLE,
                              STATE_START_PORT_LOOKUP,
-                             STATE_READ_PORT_LOOKUP,
+                             STATE_WAIT_PORT_LOOKUP,
                              STATE_WAIT_COMPLETE);
     variable masterState : MasterStateType;
   begin
@@ -1337,17 +1325,18 @@ begin
 
         when STATE_IDLE =>
           ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
           -- Wait for frame to be available.
+          ---------------------------------------------------------------------
           -- REMARK: Discard erronous frames.
           sendPacket <= '0';
           if (((readRequestInbound = '1') or (writeRequestInbound = '1')) and (hopInbound = x"00")) then
             masterState := STATE_WAIT_COMPLETE;
             forwardPacket <= '0';
             outboundFramePort <= inboundFramePort;
-          elsif (((readResponseInbound = '1') or ((readRequestInbound = '1') and (hopInbound /= x"00"))) or
-                 ((writeResponseInbound = '1') or ((writeRequestInbound = '1') and (hopInbound /= x"00"))) or
+          elsif ((readResponseInbound = '1') or
+                 ((readRequestInbound = '1') and (hopInbound /= x"00")) or
+                 (writeResponseInbound = '1') or
+                 ((writeRequestInbound = '1') and (hopInbound /= x"00")) or
                  (portWriteInbound = '1')) then
             masterState := STATE_START_PORT_LOOKUP;
             forwardPacket <= '1';
@@ -1355,20 +1344,20 @@ begin
           
         when STATE_START_PORT_LOOKUP =>
           ---------------------------------------------------------------------
-          -- 
+          -- The destination port of the packet should be read from the routing
+          -- table.
           ---------------------------------------------------------------------
 
           -- Initiate a port-lookup of the destination address.
           lookupStb_o <= '1';
           lookupAddr_o <= dstIdInbound(15 downto 0);
-          masterState := STATE_READ_PORT_LOOKUP;
+          masterState := STATE_WAIT_PORT_LOOKUP;
 
-        when STATE_READ_PORT_LOOKUP =>
+        when STATE_WAIT_PORT_LOOKUP =>
           ---------------------------------------------------------------------
-          -- 
+          -- Wait for the destination port lookup to complete.
           ---------------------------------------------------------------------
           
-          -- Wait for the routing table to complete the request.
           if (lookupAck_i = '1') then
             -- The address lookup is complete.
             
@@ -1385,10 +1374,9 @@ begin
 
         when STATE_WAIT_COMPLETE =>
           ---------------------------------------------------------------------
-          -- 
+          -- Indicate that the packet can be sent and wait for it to be
+          -- transmitted.
           ---------------------------------------------------------------------
-          -- REMARK: Wait for the packet to be fully transmitted to the target
-          -- port. Then reset everything for the reception of a new packet.
           sendPacket <= '1';
           if (doneInbound = '1') then
             masterState := STATE_IDLE;
@@ -1406,7 +1394,6 @@ begin
   -- Bridge between the inbound RapidIO maintenance packets to the internal
   -- config-space bus.
   -----------------------------------------------------------------------------
-  -- REMARK: Connect enable...
   readRequestMaint <= (readRequestInbound and sendPacket) when (forwardPacket = '0') else '0';
   writeRequestMaint <= (writeRequestInbound and sendPacket) when (forwardPacket = '0') else '0';
   MaintenanceBridge: RioLogicalMaintenance

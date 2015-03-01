@@ -6,10 +6,12 @@
 -- http://www.opencores.org/cores/rio/
 -- 
 -- Description
--- Contains a platform to build endpoints on.
+-- Contains a converter of RapidIO maintenance packets into a Wishbone similar
+-- access. It relies on the Maintenance-packet modules from
+-- RioLogicalPackets.vhd to function.
 -- 
 -- To Do:
--- - Clean up the code for reading. Works but messy.
+-- - Clean up the code for reading. Works but it is messy.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 
@@ -146,6 +148,7 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
+          payloadIndex <= (others=>'0');
           done_o <= '0';
           if (readRequestReady_i = '1') then
             state <= CONFIG_READ_START;
@@ -329,7 +332,7 @@ begin
             status_o <= "0111";
             state <= CONFIG_WRITE_RESPONSE;
           end if;
-          payloadIndex <= "0001";
+          payloadIndex <= std_logic_vector(unsigned(payloadIndex) + 1);
           
         when CONFIG_WRITE =>
           ---------------------------------------------------------------------
