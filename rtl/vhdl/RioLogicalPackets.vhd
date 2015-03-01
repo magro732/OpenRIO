@@ -9,7 +9,10 @@
 -- Containing RapidIO packet parsers and generators.
 -- 
 -- To Do:
--- -
+-- - Add support for all Request-class packets.
+-- - Add support for all Write-class packets.
+-- - Add support for Doorbell-class packets.
+-- - Add support for Message-class packets.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 

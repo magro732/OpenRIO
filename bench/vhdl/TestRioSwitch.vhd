@@ -10,6 +10,7 @@
 -- 
 -- To Do:
 -- - Test all sizes of packets that go through the maintenance port.
+-- - Make sure all testcases from the 1.0 branch is in here.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 
@@ -89,9 +90,6 @@ architecture TestRioSwitchImpl of TestRioSwitch is
 
       readFrameEmpty_i : in Array1(SWITCH_PORTS-1 downto 0);
       readFrame_o : out Array1(SWITCH_PORTS-1 downto 0);
-      readFrameRestart_o : out Array1(SWITCH_PORTS-1 downto 0);
-      readFrameAborted_i : in Array1(SWITCH_PORTS-1 downto 0);
-      readContentEmpty_i : in Array1(SWITCH_PORTS-1 downto 0);
       readContent_o : out Array1(SWITCH_PORTS-1 downto 0);
       readContentEnd_i : in Array1(SWITCH_PORTS-1 downto 0);
       readContentData_i : in Array32(SWITCH_PORTS-1 downto 0);
@@ -172,9 +170,6 @@ architecture TestRioSwitchImpl of TestRioSwitch is
 
   signal readFrameEmpty : Array1(PORTS-1 downto 0);
   signal readFrame : Array1(PORTS-1 downto 0);
-  signal readFrameRestart : Array1(PORTS-1 downto 0);
-  signal readFrameAborted : Array1(PORTS-1 downto 0);
-  signal readContentEmpty : Array1(PORTS-1 downto 0);
   signal readContent : Array1(PORTS-1 downto 0);
   signal readContentEnd : Array1(PORTS-1 downto 0);
   signal readContentData : Array32(PORTS-1 downto 0);
@@ -383,6 +378,29 @@ begin
     end procedure;
 
     ---------------------------------------------------------------------------
+    -- Set a route table entry.
+    ---------------------------------------------------------------------------
+    procedure RouteSet(constant deviceId : std_logic_vector(15 downto 0);
+                       constant portIndex : std_logic_vector(7 downto 0)) is
+      variable frame : RioFrame;
+    begin
+      WriteConfig32(portIndex=>0, destinationId=>x"ffff", sourceId=>x"ffff", hop=>x"00",
+                    tid=>x"de", address=>x"000070", data=>(x"0000" & deviceId));
+      WriteConfig32(portIndex=>0, destinationId=>x"ffff", sourceId=>x"ffff", hop=>x"00",
+                    tid=>x"ad", address=>x"000074", data=>(x"000000" & portIndex));
+    end procedure;
+    
+    ---------------------------------------------------------------------------
+    -- Set the default route table entry.
+    ---------------------------------------------------------------------------
+    procedure RouteSetDefault(constant portIndex : std_logic_vector(7 downto 0)) is
+      variable frame : RioFrame;
+    begin
+      WriteConfig32(portIndex=>0, destinationId=>x"ffff", sourceId=>x"ffff", hop=>x"00",
+                    tid=>x"ad", address=>x"000078", data=>(x"000000" & portIndex));
+    end procedure;
+    
+    ---------------------------------------------------------------------------
     -- 
     ---------------------------------------------------------------------------
     procedure RouteFrame(constant sourcePortIndex : natural range 0 to 7;
@@ -480,18 +498,18 @@ begin
     wait until clk'event and clk = '1';
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioSwitch");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioSwitch-TC1");
-    PrintS("Description: Test switch maintenance accesses on different ports.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Send maintenance read request packets to read switch identity.");
-    PrintS("Result: The switch should answer with its configured identitiy.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioSwitch");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioSwitch-TC1");
+    TestSpec("Description: Test switch maintenance accesses on different ports.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Send maintenance read request packets to read switch identity.");
+    TestSpec("Result: The switch should answer with its configured identitiy.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC1-Step1");
+    TestCaseStart("TG_RioSwitch-TC1-Step1");
     ---------------------------------------------------------------------------
     
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -506,15 +524,15 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Check the switch Processing Element Features.");
-    PrintS("Result: The expected switch features should be returned. ");
-    PrintS("        Switch with extended features pointer valid. Common ");
-    PrintS("        transport large system support and standard route table ");
-    PrintS("        configuration support.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Check the switch Processing Element Features.");
+    TestSpec("Result: The expected switch features should be returned. ");
+    TestSpec("        Switch with extended features pointer valid. Common ");
+    TestSpec("        transport large system support and standard route table ");
+    TestSpec("        configuration support.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC1-Step2");
+    TestCaseStart("TG_RioSwitch-TC1-Step2");
     ---------------------------------------------------------------------------
 
     ReadConfig32(portIndex=>4, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -523,12 +541,12 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: Check the switch port information.");
-    PrintS("Result: The expected port and number of ports should be returned.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 3:");
+    TestSpec("Action: Check the switch port information.");
+    TestSpec("Result: The expected port and number of ports should be returned.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC1-Step3");
+    TestCaseStart("TG_RioSwitch-TC1-Step3");
     ---------------------------------------------------------------------------
 
     ReadConfig32(portIndex=>2, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -537,12 +555,12 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 4:");
-    PrintS("Action: Check the switch number of supported routes.");
-    PrintS("Result: The expected number of supported routes should be returned.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 4:");
+    TestSpec("Action: Check the switch number of supported routes.");
+    TestSpec("Result: The expected number of supported routes should be returned.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC1-Step4");
+    TestCaseStart("TG_RioSwitch-TC1-Step4");
     ---------------------------------------------------------------------------
 
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -551,13 +569,13 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 5:");
-    PrintS("Action: Test host base device id lock by reading it, then hold it ");
-    PrintS("        and try to grab it from another address.");
-    PrintS("Result: The value should follow the specification.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 5:");
+    TestSpec("Action: Test host base device id lock by reading it, then hold it ");
+    TestSpec("        and try to grab it from another address.");
+    TestSpec("Result: The value should follow the specification.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC1-Step5");
+    TestCaseStart("TG_RioSwitch-TC1-Step5");
     ---------------------------------------------------------------------------
 
     -- Check that the lock is released.
@@ -607,12 +625,12 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 6");
-    PrintS("Action: Check the component tag register.");
-    PrintS("Result: The written value in the component tag should be saved.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 6");
+    TestSpec("Action: Check the component tag register.");
+    TestSpec("Result: The written value in the component tag should be saved.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC1-Step6");
+    TestCaseStart("TG_RioSwitch-TC1-Step6");
     ---------------------------------------------------------------------------
 
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -627,12 +645,12 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 7");
-    PrintS("Action: Read and write to the port link timeout.");
-    PrintS("Result: Check that the portLinkTimeout output from the switch changes.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 7");
+    TestSpec("Action: Read and write to the port link timeout.");
+    TestSpec("Result: Check that the portLinkTimeout output from the switch changes.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC1-Step7");
+    TestCaseStart("TG_RioSwitch-TC1-Step7");
     ---------------------------------------------------------------------------
 
     assert portLinkTimeout = x"ffffff" report "Unexpected portLinkTimeout." severity error;
@@ -651,12 +669,12 @@ begin
     assert portLinkTimeout = x"000001" report "Unexpected portLinkTimeout." severity error;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 8");
-    PrintS("Action: Read from the port general control.");
-    PrintS("Result: Check the discovered bit.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 8");
+    TestSpec("Action: Read from the port general control.");
+    TestSpec("Result: Check the discovered bit.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC1-Step8");
+    TestCaseStart("TG_RioSwitch-TC1-Step8");
     ---------------------------------------------------------------------------
 
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -677,12 +695,12 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 9");
-    PrintS("Action: Read from the port N error and status.");
-    PrintS("Result: Check the port ok and port uninitialized bits.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 9");
+    TestSpec("Action: Read from the port N error and status.");
+    TestSpec("Result: Check the port ok and port uninitialized bits.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC1-Step9");
+    TestCaseStart("TG_RioSwitch-TC1-Step9");
     ---------------------------------------------------------------------------
 
     linkInitialized(0) <= '0';
@@ -713,12 +731,12 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 10");
-    PrintS("Action: Read and write to/from the port N control.");
-    PrintS("Result: Check the output/input port enable.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 10");
+    TestSpec("Action: Read and write to/from the port N control.");
+    TestSpec("Result: Check the output/input port enable.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC1-Step10");
+    TestCaseStart("TG_RioSwitch-TC1-Step10");
     ---------------------------------------------------------------------------
 
     assert outputPortEnable(0) = '0' report "Unexpected outputPortEnable." severity error;
@@ -777,12 +795,12 @@ begin
     assert inputPortEnable(2) = '1' report "Unexpected inputPortEnable." severity error;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 11");
-    PrintS("Action: Read and write to/from the implementation defined space.");
-    PrintS("Result: Check the accesses on the external configuration port.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 11");
+    TestSpec("Action: Read and write to/from the implementation defined space.");
+    TestSpec("Result: Check the accesses on the external configuration port.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC1-Step11");
+    TestCaseStart("TG_RioSwitch-TC1-Step11");
     ---------------------------------------------------------------------------
 
     CreateRandomPayload(maintData, seed1, seed2);
@@ -876,17 +894,17 @@ begin
     TestWait(messageEmpty, '1', "config write");
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioSwitch-TC2");
-    PrintS("Description: Test the configuration of the routing table and the ");
-    PrintS("             routing of packets.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Configure the routing table for address 0->port 1.");
-    PrintS("Result: A packet to address 0 should be forwarded to port 1.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioSwitch-TC2");
+    TestSpec("Description: Test the configuration of the routing table and the ");
+    TestSpec("             routing of packets.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Configure the routing table for address 0->port 1.");
+    TestSpec("Result: A packet to address 0 should be forwarded to port 1.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC2-Step1");
+    TestCaseStart("TG_RioSwitch-TC2-Step1");
     ---------------------------------------------------------------------------
 
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -905,12 +923,12 @@ begin
     ExchangeFrames;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Test the configuration of the default route->port 2.");
-    PrintS("Result: An unknown address should be routed to port 2.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Test the configuration of the default route->port 2.");
+    TestSpec("Result: An unknown address should be routed to port 2.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC2-Step2");
+    TestCaseStart("TG_RioSwitch-TC2-Step2");
     ---------------------------------------------------------------------------
 
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -929,13 +947,13 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: Test to route a maintenance read request from port 2, ");
-    PrintS("        address 0.");
-    PrintS("Result: The packet should be routed to port 1 and hop decremented.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 3:");
+    TestSpec("Action: Test to route a maintenance read request from port 2, ");
+    TestSpec("        address 0.");
+    TestSpec("Result: The packet should be routed to port 1 and hop decremented.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC2-Step3");
+    TestCaseStart("TG_RioSwitch-TC2-Step3");
     ---------------------------------------------------------------------------
 
     SendFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
@@ -965,13 +983,13 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 4:");
-    PrintS("Action: Test to route a maintenance write request from port 2, ");
-    PrintS("        address 0.");
-    PrintS("Result: The packet should be routed to port 1 and hop decremented.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 4:");
+    TestSpec("Action: Test to route a maintenance write request from port 2, ");
+    TestSpec("        address 0.");
+    TestSpec("Result: The packet should be routed to port 1 and hop decremented.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC2-Step4");
+    TestCaseStart("TG_RioSwitch-TC2-Step4");
     ---------------------------------------------------------------------------
 
     CreateRandomPayload(maintData, seed1, seed2);
@@ -1001,13 +1019,13 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 5:");
-    PrintS("Action: Test to route a maintenance read response from port 2, ");
-    PrintS("        address 0.");
-    PrintS("Result: The packet should be routed to port 1 and hop decremented.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 5:");
+    TestSpec("Action: Test to route a maintenance read response from port 2, ");
+    TestSpec("        address 0.");
+    TestSpec("Result: The packet should be routed to port 1 and hop decremented.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC2-Step5");
+    TestCaseStart("TG_RioSwitch-TC2-Step5");
     ---------------------------------------------------------------------------
 
     CreateRandomPayload(maintData, seed1, seed2);
@@ -1037,13 +1055,13 @@ begin
     ExchangeFrames;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 6:");
-    PrintS("Action: Test to route a maintenance write response from port 2, ");
-    PrintS("        address 0.");
-    PrintS("Result: The packet should be routed to port 1 and hop decremented.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 6:");
+    TestSpec("Action: Test to route a maintenance write response from port 2, ");
+    TestSpec("        address 0.");
+    TestSpec("Result: The packet should be routed to port 1 and hop decremented.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC2-Step6");
+    TestCaseStart("TG_RioSwitch-TC2-Step6");
     ---------------------------------------------------------------------------
 
     SendFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
@@ -1072,12 +1090,12 @@ begin
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 7:");
-    PrintS("Action: ");
-    PrintS("Result: ");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 7:");
+    TestSpec("Action: ");
+    TestSpec("Result: ");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC2-Step7");
+    TestCaseStart("TG_RioSwitch-TC2-Step7");
     ---------------------------------------------------------------------------
 
     maintData(0) := x"0123456789abcdef";
@@ -1116,25 +1134,35 @@ begin
     ExchangeFrames;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioSwitch-TC3");
-    PrintS("Description: Test the routing of normal packets.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Send two packets but not the same time.");
-    PrintS("Result: Both packets should be received at the expected ports.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioSwitch-TC3");
+    TestSpec("Description: Test the routing of normal packets.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Send two packets but not the same time.");
+    TestSpec("Result: Both packets should be received at the expected ports.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC3-Step1");
+    TestCaseStart("TG_RioSwitch-TC3-Step1");
     ---------------------------------------------------------------------------
 
+    -- Setup the routing table for the following steps.
+    RouteSet(x"0000", x"00");
+    RouteSet(x"0001", x"00");
+    RouteSet(x"0002", x"00");
+    RouteSet(x"0003", x"00");
+    RouteSet(x"0004", x"01");
+    RouteSet(x"0005", x"02");
+    RouteSet(x"0006", x"02");
+    RouteSetDefault(x"02");
+    
     -- Frame on port 0 to port 1.
     randomPayload.length := 3;
     CreateRandomPayload(randomPayload.data, seed1, seed2);
     SendFrame(portIndex=>0,
-              destinationId=>x"0000", sourceId=>x"ffff", payload=>randomPayload);
+              destinationId=>x"0004", sourceId=>x"ffff", payload=>randomPayload);
     ReceiveFrame(portIndex=>1,
-                 destinationId=>x"0000", sourceId=>x"ffff", payload=>randomPayload);
+                 destinationId=>x"0004", sourceId=>x"ffff", payload=>randomPayload);
 
     -- Frame on port 1 to port 6.
     randomPayload.length := 4;
@@ -1147,14 +1175,14 @@ begin
     ExchangeFrames;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Send two packets to the same port with is full and one to");
-    PrintS("        another that is also full. Then receive the packets one at");
-    PrintS("        a time.");
-    PrintS("Result: The packet to the port that is ready should go though.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Send two packets to the same port with is full and one to");
+    TestSpec("        another that is also full. Then receive the packets one at");
+    TestSpec("        a time.");
+    TestSpec("Result: The packet to the port that is ready should go though.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC3-Step2");
+    TestCaseStart("TG_RioSwitch-TC3-Step2");
     ---------------------------------------------------------------------------
 
     -- Frame on port 0 to port 1.
@@ -1251,11 +1279,11 @@ begin
         readFrameEmpty_o=>readFrameEmpty(portIndex), 
         readFrame_i=>readFrame(portIndex), 
         readFrameRestart_i=>'0', 
-        readFrameAborted_o=>readFrameAborted(portIndex),
+        readFrameAborted_o=>open,
         readWindowEmpty_o=>open,
         readWindowReset_i=>'0',
         readWindowNext_i=>readFrame(portIndex),
-        readContentEmpty_o=>readContentEmpty(portIndex), 
+        readContentEmpty_o=>open, 
         readContent_i=>readContent(portIndex), 
         readContentEnd_o=>readContentEnd(portIndex), 
         readContentData_o=>readContentData(portIndex), 
@@ -1284,9 +1312,7 @@ begin
       writeFrame_o=>writeFrame, writeFrameAbort_o=>writeFrameAbort, 
       writeContent_o=>writeContent, writeContentData_o=>writeContentData, 
       readFrameEmpty_i=>readFrameEmpty, 
-      readFrame_o=>readFrame, readFrameRestart_o=>readFrameRestart, 
-      readFrameAborted_i=>readFrameAborted,
-      readContentEmpty_i=>readContentEmpty,
+      readFrame_o=>readFrame, 
       readContent_o=>readContent, readContentEnd_i=>readContentEnd, 
       readContentData_i=>readContentData,
       portLinkTimeout_o=>portLinkTimeout,

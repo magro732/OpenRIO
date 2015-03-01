@@ -10,7 +10,10 @@
 -- are implemented, one with transmission window support and one without.
 -- 
 -- To Do:
--- -
+-- - Copy code from Bombardier internal reporitory to get configurable sizes.
+-- - Add an additional size-memory to be able to access both window and back at
+--   the same time.
+-- - Add support for priorities, seperate queue for each level.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 

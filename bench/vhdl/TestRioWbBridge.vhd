@@ -372,19 +372,19 @@ begin
     wait until clk'event and clk = '1';
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioWbBridge");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioWbBridge-TC1");
-    PrintS("Description: Test maintenance requests.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Send maintenance read request for one word on even offset.");
-    PrintS("Result: Check the accesses on the external configuration port.");
-    PrintS("-----------------------------------------------------------------");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioWbBridge");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioWbBridge-TC1");
+    TestSpec("Description: Test maintenance requests.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Send maintenance read request for one word on even offset.");
+    TestSpec("Result: Check the accesses on the external configuration port.");
+    TestSpec("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioWbBridge-TC1-Step1");
+    TestCaseStart("TG_RioWbBridge-TC1-Step1");
     ---------------------------------------------------------------------------
 
     InboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
@@ -416,17 +416,17 @@ begin
     TestWait(outboundEmpty, '1', "outbound frame");
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioWbBridge-TC2");
-    PrintS("Description: Test request class packets.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Send request class NREAD packets for all sizes.");
-    PrintS("Result: The Wishbone access should match the inbound packet.");
-    PrintS("-----------------------------------------------------------------");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioWbBridge-TC2");
+    TestSpec("Description: Test request class packets.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Send request class NREAD packets for all sizes.");
+    TestSpec("Result: The Wishbone access should match the inbound packet.");
+    TestSpec("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioWbBridge-TC2-Step1");
+    TestCaseStart("TG_RioWbBridge-TC2-Step1");
     ---------------------------------------------------------------------------
     -- REMARK: Change the address and tid also...
     for i in 0 to 15 loop
@@ -438,18 +438,7 @@ begin
           wdptr := '1';
         end if;
         
-        ioData(0) := x"0001020304050607";
-        ioData(1) := x"08090a0b0c0d0e0f";
-        ioData(2) := x"1011121314151617";
-        ioData(3) := x"18191a1b1c1d1e1f";
-        ioData(4) := x"2021222324252627";
-        ioData(5) := x"28292a2b2c2d2e2f";
-        ioData(6) := x"3031323334353637";
-        ioData(7) := x"38393a3b3c3d3e3f";
-        ioData(8) := x"4041424344454647";
-        ioData(9) := x"48494a4b4c4d4e4f";
-        ioData(10) := x"5051525354555657";
-        ioData(11) := x"58595a5b5c5d5e5f";
+        CreateRandomPayload(ioData, seed1, seed2);
 
         InboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
                                     tt=>"01", ftype=>FTYPE_REQUEST_CLASS, 
@@ -480,18 +469,18 @@ begin
     end loop;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioWbBridge-TC3");
-    PrintS("Description: Test write class packets.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Send write class NWRITER packets for all sizes.");
-    PrintS("Result: The Wishbone access should match the inbound packet and a ");
-    PrintS("        response should be sent.");
-    PrintS("-----------------------------------------------------------------");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioWbBridge-TC3");
+    TestSpec("Description: Test write class packets.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Send write class NWRITER packets for all sizes.");
+    TestSpec("Result: The Wishbone access should match the inbound packet and a ");
+    TestSpec("        response should be sent.");
+    TestSpec("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioWbBridge-TC3-Step1");
+    TestCaseStart("TG_RioWbBridge-TC3-Step1");
     ---------------------------------------------------------------------------
     -- REMARK: Change the address and tid also...
     -- REMARK: Not really all sizes, add sizes in between the fixed as well.
@@ -537,13 +526,13 @@ begin
     end loop;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Send write class NWRITE packets for all sizes.");
-    PrintS("Result: The Wishbone access should match the inbound packet.");
-    PrintS("-----------------------------------------------------------------");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Send write class NWRITE packets for all sizes.");
+    TestSpec("Result: The Wishbone access should match the inbound packet.");
+    TestSpec("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioWbBridge-TC3-Step2");
+    TestCaseStart("TG_RioWbBridge-TC3-Step2");
     ---------------------------------------------------------------------------
     -- REMARK: Change the address and tid also...
     for i in 0 to 15 loop
