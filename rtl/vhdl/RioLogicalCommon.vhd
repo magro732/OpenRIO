@@ -161,7 +161,7 @@ entity RioLogicalCommon is
 
     configStb_o : out std_logic;
     configWe_o : out std_logic;
-    configAdr_o : out std_logic_vector(23 downto 0);
+    configAdr_o : out std_logic_vector(20 downto 0);
     configSel_o : out std_logic_vector(7 downto 0);
     configDat_o : out std_logic_vector(63 downto 0);
     configDat_i : in std_logic_vector(63 downto 0);
@@ -214,7 +214,7 @@ architecture RioLogicalCommon of RioLogicalCommon is
 
       configStb_o : out std_logic;
       configWe_o : out std_logic;
-      configAdr_o : out std_logic_vector(23 downto 0);
+      configAdr_o : out std_logic_vector(20 downto 0);
       configDat_o : out std_logic_vector(63 downto 0);
       configSel_o : out std_logic_vector(7 downto 0);
       configDat_i : in std_logic_vector(63 downto 0);
@@ -231,19 +231,34 @@ architecture RioLogicalCommon of RioLogicalCommon is
       masterDat_o : out std_logic_vector(31 downto 0);
       masterAck_i : in std_logic);
   end component;
+
+  signal masterCyc : std_logic;
+  signal masterStb : std_logic;
+  signal masterAdr : std_logic_vector(7 downto 0);
+  signal masterDat : std_logic_vector(31 downto 0);
+  signal masterAck : std_logic;
+
+  signal slaveCyc : std_logic;
+  signal slaveStb : std_logic;
+  signal slaveDat : std_logic_vector(31 downto 0);
+  signal slaveAck : std_logic;
+
+  signal masterMaintenanceAck : std_logic;
+  signal slaveMaintenanceAck : std_logic;
   
 begin
 
+  -- REMARK: Add crossbar for slave interface?
   masterCyc_o <= masterCyc;
   masterStb_o <= masterStb;
+  masterAdr_o <= masterAdr;
   masterDat_o <= masterDat;
-  masterAck_i <= masterAck;
-
-  slaveCyc_i <= slaveCyc;
-  slaveStb_i <= slaveStb;
-  slaveAdr_i <= slaveAdr;
-  slaveDat_i <= slaveDat;
-  slaveAck_o <= slaveAck or maintenanceAck;
+  masterAck <= masterAck_i or masterMaintenanceAck;
+  
+  slaveCyc <= slaveCyc_i;
+  slaveStb <= slaveStb_i;
+  slaveDat <= slaveDat_i;
+  slaveAck_o <= slaveAck or slaveMaintenanceAck;
   
   LogicalMaintenance: RioLogicalMaintenance
     port map(
@@ -255,15 +270,15 @@ begin
       configSel_o=>configSel_o, 
       configDat_i=>configDat_i, 
       configAck_i=>configAck_i, 
-      slaveCyc_i=>slaveCyc, 
-      slaveStb_i=>slaveStb, 
-      slaveAdr_i=>slaveAdr, 
-      slaveDat_i=>slaveDat, 
-      slaveAck_o=>maintenanceAck, 
-      masterCyc_o=>masterCyc, 
-      masterStb_o=>masterStb, 
-      masterDat_o=>masterDat, 
-      masterAck_i=>masterAck);
+      slaveCyc_i=>masterCyc, 
+      slaveStb_i=>masterStb, 
+      slaveAdr_i=>masterAdr, 
+      slaveDat_i=>masterDat, 
+      slaveAck_o=>masterMaintenanceAck, 
+      masterCyc_o=>slaveCyc, 
+      masterStb_o=>slaveStb, 
+      masterDat_o=>slaveDat, 
+      masterAck_i=>slaveMaintenanceAck);
 
   -- REMARK: Add interconnect for master signals...
   
@@ -608,10 +623,14 @@ architecture RioLogicalCommonEgress of RioLogicalCommonEgress is
   signal dstAddr : std_logic_vector(31 downto 0);
   signal srcAddr : std_logic_vector(31 downto 0);
   
+  signal writeContentData : std_logic_vector(31 downto 0);
+
   signal crc16Current, crc16Temp, crc16Next: std_logic_vector(15 downto 0);
 
 begin
 
+  writeContentData_o <= writeContentData;
+  
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
@@ -638,22 +657,10 @@ begin
           -- 
           ---------------------------------------------------------------------
           if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
-            -- REMARK: Only support the header in one position?
-            if (slaveSelect_i = "1100") then
-              header <= slaveData_i(31 downto 16);
-              tt <= slaveData_i(21 downto 20);
-            elsif (slaveSelect_i = "0110") then
-              header <= slaveData_i(23 downto 8);
-              tt <= slaveData_i(13 downto 12);
-            elsif (slaveSelect_i = "0011") then
-              header <= slaveData_i(15 downto 0);
-              tt <= slaveData_i(5 downto 4);
-            else
-              -- REMARK: Not supported.
-            end if;
-            
-            slaveAck_o <= '1';
+            header <= slaveDat_i(15 downto 0);
+            tt <= slaveDat_i(5 downto 4);
 
+            slaveAck_o <= '1';
             state <= HEADER_ACK;
           else
             state <= RESTART_FRAME;
@@ -672,33 +679,17 @@ begin
           ---------------------------------------------------------------------
           
           if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
-            -- REMARK: Only support the destination in one position?
-            if (slaveSelect_i = "1000") and (tt = "00") then
-              dstAddr <= slaveData_i(31 downto 24);
-            elsif (slaveSelect_i = "0100") and (tt = "00") then
-              dstAddr <= slaveData_i(23 downto 16);
-            elsif (slaveSelect_i = "0010") and (tt = "00") then
-              dstAddr <= slaveData_i(15 downto 8);
-            elsif (slaveSelect_i = "0001") and (tt = "00") then
-              dstAddr <= slaveData_i(7 downto 0);
-            elsif (slaveSelect_i = "1100") and (tt = "01") then
+            if (tt = "00") then
+              dstAddr <= x"00" & slaveDat_i(7 downto 0);
+            elsif (tt = "01") then
               writeContent_o <= '1';
-              writeContentData <= header & slaveData_i(31 downto 16);
-              packetPosition <= packetPosition + 1;
-            elsif (slaveSelect_i = "0110") and (tt = "01") then
-              writeContent_o <= '1';
-              writeContentData <= header & slaveData_i(24 downto 8);
-              packetPosition <= packetPosition + 1;
-            elsif (slaveSelect_i = "0011") and (tt = "01") then
-              writeContent_o <= '1';
-              writeContentData <= header & slaveData_i(15 downto 0);
+              writeContentData <= header & slaveDat_i(15 downto 0);
               packetPosition <= packetPosition + 1;
             else
               -- REMARK: Not supported.
             end if;
             
             slaveAck_o <= '1';
-
             state <= DESTINATION_ACK;
           else
             state <= RESTART_FRAME;
@@ -717,42 +708,19 @@ begin
           ---------------------------------------------------------------------
           
           if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
-            -- REMARK: Only support the source in one position?
-            if (slaveSelect_i = "1000") and (tt = "00") then
+            if (tt = "00") then
               halfWordPending <= '0';
               writeContent_o <= '1';
-              writeContentData <= header & dstAddr & slaveData_i(31 downto 24);
+              writeContentData <= header & dstAddr & slaveDat_i(7 downto 0);
               packetPosition <= packetPosition + 1;
-            elsif (slaveSelect_i = "0100") and (tt = "00") then
-              halfWordPending <= '0';
-              writeContent_o <= '1';
-              writeContentData <= header & dstAddr & slaveData_i(23 downto 16);
-              packetPosition <= packetPosition + 1;
-            elsif (slaveSelect_i = "0010") and (tt = "00") then
-              halfWordPending <= '0';
-              writeContent_o <= '1';
-              writeContentData <= header & dstAddr & slaveData_i(15 downto 8);
-              packetPosition <= packetPosition + 1;
-            elsif (slaveSelect_i = "0001") and (tt = "00") then
-              halfWordPending <= '0';
-              writeContent_o <= '1';
-              writeContentData <= header & dstAddr & slaveData_i(7 downto 0);
-              packetPosition <= packetPosition + 1;
-            elsif (slaveSelect_i = "1100") and (tt = "01") then
+            elsif (tt = "01") then
               halfWordPending <= '1';
-              halfWord <= slaveData_i(31 downto 16);
-            elsif (slaveSelect_i = "0110") and (tt = "01") then
-              halfWordPending <= '1';
-              halfWord <= slaveData_i(24 downto 8);
-            elsif (slaveSelect_i = "0011") and (tt = "01") then
-              halfWordPending <= '1';
-              halfWord <= slaveData_i(15 downto 0);
+              halfWord <= slaveDat_i(15 downto 0);
             else
               -- REMARK: Not supported.
             end if;
             
             slaveAck_o <= '1';
-
             state <= SOURCE_ACK;
           else
             state <= RESTART_FRAME;
@@ -765,7 +733,7 @@ begin
           slaveAck_o <= '0';
 
           if (tt = "00") then
-            crcCurrent <= crcNext;
+            crc16Current <= crc16Next;
           end if;
           
           state <= CONTENT_GET;
@@ -775,43 +743,18 @@ begin
           -- 
           ---------------------------------------------------------------------
           if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
-            -- REMARK: Only support full writes? Not possible with the last
-            -- access though.
-            if (slaveSelect_i = "1111") then
-              if (halfWordPending = '0') then
-                writeContent_o <= '1';
-                writeContentData <= slaveData_i;
-                packetPosition <= packetPosition + 1;
-              else
-                writeContent_o <= '1';
-                writeContentData <= halfWord & slaveData_i(31 downto 16);
-                packetPosition <= packetPosition + 1;
-                halfWord <= slaveData_i(15 downto 0);
-              end if;
-            elsif (slaveSelect_i = "1100") then
-              if (halfWordPending = '0') then
-                halfWordPending <= '1';
-                halfWord <= slaveData_i(31 downto 16);
-              else
-                writeContent_o <= '1';
-                writeContentData <= halfWord & slaveData_i(31 downto 16);
-                packetPosition <= packetPosition + 1;
-                halfWordPending <= '0';
-              end if;
-            elsif (slaveSelect_i = "0011") then
-              if (halfWordPending = '0') then
-                halfWordPending <= '1';
-                halfWord <= slaveData_i(15 downto 0);
-              else
-                writeContent_o <= '1';
-                writeContentData <= halfWord & slaveData_i(15 downto 0);
-                packetPosition <= packetPosition + 1;
-                halfWordPending <= '0';
-              end if;
+            if (halfWordPending = '0') then
+              writeContent_o <= '1';
+              writeContentData <= slaveDat_i;
+              packetPosition <= packetPosition + 1;
+            else
+              writeContent_o <= '1';
+              writeContentData <= halfWord & slaveDat_i(31 downto 16);
+              packetPosition <= packetPosition + 1;
+              halfWord <= slaveDat_i(15 downto 0);
             end if;
             
             slaveAck_o <= '1';
-
             state <= CONTENT_ACK;
           else
             state <= CRC_APPEND;
@@ -926,7 +869,7 @@ entity RioLogicalMaintenance is
 
     configStb_o : out std_logic;
     configWe_o : out std_logic;
-    configAdr_o : out std_logic_vector(23 downto 0);
+    configAdr_o : out std_logic_vector(20 downto 0);
     configDat_o : out std_logic_vector(63 downto 0);
     configSel_o : out std_logic_vector(7 downto 0);
     configDat_i : in std_logic_vector(63 downto 0);
@@ -965,9 +908,9 @@ architecture RioLogicalMaintenance of RioLogicalMaintenance is
       requestDstId_o : out std_logic_vector(31 downto 0);
       requestSrcId_o : out std_logic_vector(31 downto 0);
       requestTid_o : out std_logic_vector(7 downto 0);
-      requestOffset_o : out std_logic_vector(21 downto 0);
+      requestOffset_o : out std_logic_vector(20 downto 0);
       requestPayloadSelect_o : out std_logic_vector(7 downto 0);
-      requestPayloadLength_o : out std_logic_vector(3 downto 0);
+      requestPayloadLength_o : out std_logic_vector(4 downto 0);
       requestPayloadIndex_i : in std_logic_vector(4 downto 0);
       requestPayload_o : out std_logic_vector(63 downto 0);
       requestDone_i : in std_logic;
@@ -1002,7 +945,6 @@ architecture RioLogicalMaintenance of RioLogicalMaintenance is
       
       masterCyc_o : out std_logic;
       masterStb_o : out std_logic;
-      masterAdr_o : out std_logic_vector(7 downto 0);
       masterDat_o : out std_logic_vector(31 downto 0);
       masterAck_i : in std_logic);
   end component;
@@ -1020,15 +962,17 @@ architecture RioLogicalMaintenance of RioLogicalMaintenance is
   signal srcId : std_logic_vector(31 downto 0);
   signal tid : std_logic_vector(7 downto 0);
 
+  signal configAdr : std_logic_vector(20 downto 0);
+  
   signal requestReadReady : std_logic;
   signal requestWriteReady : std_logic;
-  signal requestOffset : std_logic_vector(21 downto 0);
-  signal requestPayloadLength : std_logic_vector(3 downto 0);
+  signal requestOffset : std_logic_vector(20 downto 0);
+  signal requestPayloadLength : std_logic_vector(4 downto 0);
   signal requestPayloadIndex : std_logic_vector(4 downto 0);
   signal requestDone : std_logic;
   
   signal responseReadReady : std_logic;
-  signal responseWriteRead : std_logic;
+  signal responseWriteReady : std_logic;
   signal responsePayloadLength : std_logic_vector(3 downto 0);
   signal responsePayloadWrite : std_logic;
   signal responsePayloadIndex : std_logic_vector(4 downto 0);
@@ -1036,6 +980,8 @@ architecture RioLogicalMaintenance of RioLogicalMaintenance is
   
 begin
 
+  configAdr_o <= configAdr;
+  
   -----------------------------------------------------------------------------
   -- 
   -----------------------------------------------------------------------------
@@ -1052,13 +998,13 @@ begin
           if (requestReadReady = '1') then
             configStb_o <= '1';
             configWe_o <= '0';
-            configAdr_o <= requestOffset;
+            configAdr <= requestOffset;
             responsePayloadIndex <= (others=>'0');
             state <= CONFIG_READ;
           elsif (requestWriteReady = '1') then
             configStb_o <= '1';
             configWe_o <= '1';
-            configAdr_o <= requestOffset;
+            configAdr <= requestOffset;
             requestPayloadIndex <= (others=>'0');
             state <= CONFIG_WRITE;
           end if;          
@@ -1069,10 +1015,11 @@ begin
           ---------------------------------------------------------------------
           if (configAck_i = '1') then
             responsePayloadWrite <= '1';
-            responsePayloadIndex <= responsePayloadIndex + 1;
+            responsePayloadIndex <=
+              std_logic_vector(unsigned(responsePayloadIndex) + 1);
             
             if (responsePayloadIndex /= requestPayloadLength) then
-              configAdr_o <= configAdr_o + 1;
+              configAdr <= std_logic_vector(unsigned(configAdr) + 1);
             else
               requestDone <= '1';
               configStb_o <= '0';
@@ -1095,8 +1042,9 @@ begin
           ---------------------------------------------------------------------
           if (configAck_i = '1') then
             if (responsePayloadIndex /= requestPayloadLength) then
-              configAdr_o <= configAdr_o + 1;
-              requestIndex <= requestIndex + 1;
+              configAdr <= std_logic_vector(unsigned(configAdr) + 1);
+              requestPayloadIndex <=
+                std_logic_vector(unsigned(requestPayloadIndex) + 1);
             else
               requestDone <= '1';
               configStb_o <= '0';
@@ -1108,7 +1056,7 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          responseReadReady <= '1';
+          responseWriteReady <= '1';
           if (responseDone = '1') then
             state <= IDLE;
           end if;
@@ -1135,7 +1083,7 @@ begin
       requestTt_o=>tt, 
       requestDstId_o=>dstId, 
       requestSrcId_o=>srcId, 
-      requestTid_o=>requestTid, 
+      requestTid_o=>tid, 
       requestOffset_o=>requestOffset, 
       requestPayloadSelect_o=>configSel_o, 
       requestPayloadLength_o=>requestPayloadLength, 
@@ -1172,7 +1120,6 @@ begin
       responseDone_o=>responseDone, 
       masterCyc_o=>masterCyc_o, 
       masterStb_o=>masterStb_o, 
-      masterAdr_o=>masterAdr_o, 
       masterDat_o=>masterDat_o, 
       masterAck_i=>masterAck_i);
 
@@ -1206,9 +1153,9 @@ entity MaintenanceRequestInbound is
     requestDstId_o : out std_logic_vector(31 downto 0);
     requestSrcId_o : out std_logic_vector(31 downto 0);
     requestTid_o : out std_logic_vector(7 downto 0);
-    requestOffset_o : out std_logic_vector(21 downto 0);
+    requestOffset_o : out std_logic_vector(20 downto 0);
     requestPayloadSelect_o : out std_logic_vector(7 downto 0);
-    requestPayloadLength_o : out std_logic_vector(3 downto 0);
+    requestPayloadLength_o : out std_logic_vector(4 downto 0);
     requestPayloadIndex_i : in std_logic_vector(4 downto 0);
     requestPayload_o : out std_logic_vector(63 downto 0);
     requestDone_i : in std_logic;
@@ -1244,13 +1191,23 @@ architecture MaintenanceRequestInbound of MaintenanceRequestInbound is
   type StateType is (RECEIVE_PACKET, READY);
   signal state : StateType;
 
+  signal wdptr : std_logic;
+  signal size : std_logic_vector(3 downto 0);
+  signal byteLanes : std_logic_vector(7 downto 0);
+  signal doubleWords : natural range 0 to 32;
+
   signal slaveAck : std_logic;
   signal maintReadComplete : std_logic;
   signal maintWriteComplete : std_logic;
 
   signal packetIndex : natural range 0 to 33;
-  signal requstPayload : std_logic_vector(63 downto 0);
-  
+  signal requestData : std_logic_vector(63 downto 0);
+
+  signal memoryEnable : std_logic;
+  signal memoryWrite : std_logic;
+  signal memoryAddress : std_logic_vector(4 downto 0);
+  signal memoryDataIn : std_logic_vector(63 downto 0);
+
 begin
 
   slaveAck_o <= slaveAck;
@@ -1272,14 +1229,17 @@ begin
           if (slaveCyc_i = '1') then
             if (slaveAck = '0') then
               if (slaveStb_i = '1') then
-                if (slaveAddress_i = x"80") then
+                if (slaveAdr_i = x"80") then
                   -------------------------------------------------------------
                   -- Maintenance Read Request packet parser.
                   -------------------------------------------------------------
                   case (packetIndex) is
                     when 0 =>
                       -- x"0000" & ackid & vc & crf & prio & tt & ftype
-                      requestHeader_o <= slaveDat_i(15 downto 0);
+                      requestVc_o <= slaveDat_i(9);
+                      requestCrf_o <= slaveDat_i(8);
+                      requestPrio_o <= slaveDat_i(7 downto 6);
+                      requestTt_o <= slaveDat_i(5 downto 4);
                       packetIndex <= packetIndex + 1;
                     when 1 =>
                       -- destid
@@ -1297,7 +1257,7 @@ begin
                       packetIndex <= packetIndex + 1;
                     when 4 =>
                       -- config_offset(12:0) & wdptr & rsrv & crc(15:0)
-                      requestOffset_o(12 downto 0) <= slaveDat_i(31 downto 16);
+                      requestOffset_o(12 downto 0) <= slaveDat_i(31 downto 19);
                       wdptr <= slaveDat_i(18);
                       packetIndex <= packetIndex + 1;
                       maintReadComplete <= '1';
@@ -1305,14 +1265,17 @@ begin
                       -- There should be no more content in a maintenance read request.
                       -- Discard.
                   end case;
-                elsif (slaveAddress_i = x"81") then
+                elsif (slaveAdr_i = x"81") then
                   -------------------------------------------------------------
                   -- Maintenance Write Request packet parser.
                   -------------------------------------------------------------
                   case (packetIndex) is
                     when 0 =>
                       -- x"0000" & ackid & vc & crf & prio & tt & ftype
-                      requestHeader_o <= slaveDat_i(15 downto 0);
+                      requestVc_o <= slaveDat_i(9);
+                      requestCrf_o <= slaveDat_i(8);
+                      requestPrio_o <= slaveDat_i(7 downto 6);
+                      requestTt_o <= slaveDat_i(5 downto 4);
                       packetIndex <= packetIndex + 1;
                     when 1 =>
                       -- destId
@@ -1330,23 +1293,25 @@ begin
                       packetIndex <= packetIndex + 1;
                     when 4 =>
                       -- config_offset(12:0) & wdptr & rsrv & double-word(63:48)
-                      requestOffset_o(12 downto 0) <= slaveDat_i(31 downto 16);
-                      requestData(63 downto 48) <= slaveData_i(15 downto 0);
+                      requestOffset_o(12 downto 0) <= slaveDat_i(31 downto 19);
+                      requestData(63 downto 48) <= slaveDat_i(15 downto 0);
                       wdptr <= slaveDat_i(18);
                       packetIndex <= packetIndex + 1;
                     when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 | 25 | 27 | 29 | 31 =>
                       -- double-word(47:16)
-                      requestData(47 downto 16) <= slaveData_i;
+                      requestData(47 downto 16) <= slaveDat_i;
                       packetIndex <= packetIndex + 1;
                     when 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | 24 | 26 | 28 | 30 | 32 =>
                       -- double-word(15:0) & double-word(63:48)
-                      requestData(63 downto 48) <= slaveData_i(15 downto 0);
+                      requestData(63 downto 48) <= slaveDat_i(15 downto 0);
                       packetIndex <= packetIndex + 1;
 
                       memoryEnable <= '1';
-                      memoryAddress <= memoryAddress + 1;
+                      memoryAddress <=
+                        std_logic_vector(unsigned(memoryAddress) + 1);
                       memoryWrite <= '1';
-                      memoryDataIn <= requestData(63 downto 16) & slaveData_i(31 downto 16);
+                      memoryDataIn <=
+                        requestData(63 downto 16) & slaveDat_i(31 downto 16);
                       maintWriteComplete <= '1';
                     when others =>
                       -- There should be no more content in a maintenance write request.
@@ -1376,7 +1341,7 @@ begin
           if (requestDone_i = '1') then
             maintReadComplete <= '0';
             maintWriteComplete <= '0';
-            state <= WAIT_PACKET;
+            state <= RECEIVE_PACKET;
           end if;
           
         when others =>
@@ -1388,131 +1353,121 @@ begin
   -----------------------------------------------------------------------------
   -- Transformation of rdsize/wrsize into length of access and byte lanes.
   -----------------------------------------------------------------------------
-  requestPayloadLength_o <= doubleWords;
+  requestPayloadLength_o <= std_logic_vector(to_unsigned(doubleWords, 5));
   requestPayloadSelect_o <= byteLanes;
   
   -- REMARK: Make this a common component? Can be used in IO-accesses as well.
   -- REMARK: Not all of these are allowed in a maintenance request.
-  process(wdptr, size)
+  process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      doubleWords <= (others=>'0');
+      doubleWords <= 0;
       byteLanes <= (others=>'0');
     elsif (clk'event and clk = '1') then
       if (maintReadComplete = '1') or (maintWriteComplete = '1') then
-        case (wdptr & size) is 
-          when "00000" =>
-            doubleWords <= 1;
-            byteLanes <= "10000000";
-          when "00001" =>
-            doubleWords <= 1;
-            byteLanes <= "01000000";
-            
-          when "00010" =>
-            doubleWords <= 1;
-            byteLanes <= "00100000";
-          when "00011" =>
-            doubleWords <= 1;
-            byteLanes <= "00010000";
-            
-          when "10000" =>
-            doubleWords <= 1;
-            byteLanes <= "00001000";
-          when "10001" =>
-            doubleWords <= 1;
-            byteLanes <= "00000100";
-            
-          when "10010" =>
-            doubleWords <= 1;
-            byteLanes <= "00000010";
-          when "10011" =>
-            doubleWords <= 1;
-            byteLanes <= "00000001";
-            
-          when "00100" =>
-            doubleWords <= 1;
-            byteLanes <= "11000000";
-          when "00101" =>
-            doubleWords <= 1;
-            byteLanes <= "11100000";
-            
-          when "00110" =>
-            doubleWords <= 1;
-            byteLanes <= "00110000";
-          when "00111" =>
-            doubleWords <= 1;
-            byteLanes <= "11111000";
-            
-          when "10100" =>
-            doubleWords <= 1;
-            byteLanes <= "00001100";
-          when "10101" =>
-            doubleWords <= 1;
-            byteLanes <= "00000111";
-            
-          when "10110" =>
-            doubleWords <= 1;
-            byteLanes <= "00000011";
-          when "10111" =>
-            doubleWords <= 1;
-            byteLanes <= "00011111";
-            
-          when "01000" =>
-            doubleWords <= 1;
-            byteLanes <= "11110000";
-          when "11000" =>
-            doubleWords <= 1;
-            byteLanes <= "00001111";
-            
-          when "01001" =>
-            doubleWords <= 1;
-            byteLanes <= "11111100";
-          when "11001" =>
-            doubleWords <= 1;
-            byteLanes <= "00111111";
-            
-          when "01010" =>
-            doubleWords <= 1;
-            byteLanes <= "11111110";
-          when "11010" =>
-            doubleWords <= 1;
-            byteLanes <= "01111111";
-            
-          when "01011" =>
-            doubleWords <= 1;
-            byteLanes <= "11111111";
-          when "11011" =>
-            doubleWords <= 2;
-            byteLanes <= "11111111";
-            
-          when "01100" =>
-            doubleWords <= 4;
-            byteLanes <= "11111111";
-          when "11100" =>
-            doubleWords <= 8;
-            byteLanes <= "11111111";
-            
-          when "01101" =>
-            doubleWords <= 12;
-            byteLanes <= "11111111";
-          when "11101" =>
-            doubleWords <= 16;
-            byteLanes <= "11111111";
-            
-          when "01110" =>
-            doubleWords <= 20;
-            byteLanes <= "11111111";
-          when "11110" =>
-            doubleWords <= 24;
-            byteLanes <= "11111111";
-            
-          when "01111" =>
-            doubleWords <= 28;
-            byteLanes <= "11111111";
-          when "11111" =>
-            doubleWords <= 32;
-            byteLanes <= "11111111";
-        end case;
+        if (wdptr = '0') then
+          case to_integer(unsigned(size)) is
+            when 0 =>
+              doubleWords <= 1;
+              byteLanes <= "10000000";
+            when 1 =>
+              doubleWords <= 1;
+              byteLanes <= "01000000";
+            when 2 =>
+              doubleWords <= 1;
+              byteLanes <= "00100000";
+            when 3 =>
+              doubleWords <= 1;
+              byteLanes <= "00010000";
+            when 4 =>
+              doubleWords <= 1;
+              byteLanes <= "11000000";
+            when 5 =>
+              doubleWords <= 1;
+              byteLanes <= "11100000";
+            when 6 =>
+              doubleWords <= 1;
+              byteLanes <= "00110000";
+            when 7 =>
+              doubleWords <= 1;
+              byteLanes <= "11111000";
+            when 8 =>
+              doubleWords <= 1;
+              byteLanes <= "11110000";
+            when 9 =>
+              doubleWords <= 1;
+              byteLanes <= "11111100";
+            when 10 =>
+              doubleWords <= 1;
+              byteLanes <= "11111110";
+            when 11 =>
+              doubleWords <= 1;
+              byteLanes <= "11111111";
+            when 12 =>
+              doubleWords <= 4;
+              byteLanes <= "11111111";
+            when 13 =>
+              doubleWords <= 12;
+              byteLanes <= "11111111";
+            when 14 =>
+              doubleWords <= 20;
+              byteLanes <= "11111111";
+            when others =>
+              doubleWords <= 28;
+              byteLanes <= "11111111";
+          end case;
+        else
+          case to_integer(unsigned(size)) is
+            when 0 =>
+              doubleWords <= 1;
+              byteLanes <= "00001000";
+            when 1 =>
+              doubleWords <= 1;
+              byteLanes <= "00000100";
+            when 2 =>
+              doubleWords <= 1;
+              byteLanes <= "00000010";
+            when 3 =>
+              doubleWords <= 1;
+              byteLanes <= "00000001";
+            when 4 =>
+              doubleWords <= 1;
+              byteLanes <= "00001100";
+            when 5 =>
+              doubleWords <= 1;
+              byteLanes <= "00000111";
+            when 6 =>
+              doubleWords <= 1;
+              byteLanes <= "00000011";
+            when 7 =>
+              doubleWords <= 1;
+              byteLanes <= "00011111";
+            when 8 =>
+              doubleWords <= 1;
+              byteLanes <= "00001111";
+            when 9 =>
+              doubleWords <= 1;
+              byteLanes <= "00111111";
+            when 10 =>
+              doubleWords <= 1;
+              byteLanes <= "01111111";
+            when 11 =>
+              doubleWords <= 2;
+              byteLanes <= "11111111";
+            when 12 =>
+              doubleWords <= 8;
+              byteLanes <= "11111111";
+            when 13 =>
+              doubleWords <= 16;
+              byteLanes <= "11111111";
+            when 14 =>
+              doubleWords <= 24;
+              byteLanes <= "11111111";
+            when others =>
+              doubleWords <= 32;
+              byteLanes <= "11111111";
+          end case;
+        end if;
       end if;
     end if;
   end process;
@@ -1521,7 +1476,7 @@ begin
   -- Payload content memory.
   -----------------------------------------------------------------------------
   PayloadMemory: MemorySimpleDualPort
-    generic map(ADDRESS_WIDTH=>3, DATA_WIDTH=>64)
+    generic map(ADDRESS_WIDTH=>5, DATA_WIDTH=>64)
     port map(clkA_i=>clk,
              enableA_i=>memoryWrite,
              addressA_i=>memoryAddress,
@@ -1569,7 +1524,6 @@ entity MaintenanceResponseOutbound is
     
     masterCyc_o : out std_logic;
     masterStb_o : out std_logic;
-    masterAdr_o : out std_logic_vector(7 downto 0);
     masterDat_o : out std_logic_vector(31 downto 0);
     masterAck_i : in std_logic);
 end entity;
@@ -1601,7 +1555,7 @@ architecture MaintenanceResponseOutbound of MaintenanceResponseOutbound is
   signal state : StateType;
 
   signal packetIndex : natural range 0 to 33;
-  signal responseHeader : std_logic_vector(15 downto 0);
+  signal responseHeader : std_logic_vector(31 downto 0);
   signal responsePayload : std_logic_vector(63 downto 0);
   
   signal memoryEnable : std_logic;
@@ -1614,8 +1568,6 @@ begin
     x"0000" & "000000" & responseVc_i & responseCrf_i &
     responsePrio_i & responseTt_i & x"8";
 
-  slaveAck_o <= slaveAck;
-  
   MaintenanceResponse: process(clk, areset_n)
   begin
     if (areset_n = '0') then
@@ -1647,7 +1599,7 @@ begin
             -- 
             ---------------------------------------------------------------------
             if (masterAck_i = '1') then
-              if (packetIndex = responseLength_i) then
+              if (packetIndex = unsigned(responsePayloadLength_i)) then
                 masterCyc_o <= '0';
                 masterStb_o <= '0';
                 state <= RESPONSE_DONE;
@@ -1665,21 +1617,23 @@ begin
                     -- transaction & status & targetTID & hop & reserved(7:0)
                     masterDat_o <= "0010" & "0000" & responseTid_i & x"ff" & x"00";
                     responsePayload <= memoryDataRead;
-                    memoryAddress <= memoryAddress + 1;
+                    memoryAddress <=
+                      std_logic_vector(unsigned(memoryAddress) + 1);
                     packetIndex <= packetIndex + 1;
                   when 4 =>
                     -- reserved(15:0) & double-wordN(63:48)
                     masterDat_o <= x"0000" & responsePayload(63 downto 48);
                     packetIndex <= packetIndex + 1;
-                  when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 | 25 | 27 | 29 | 31 | 33 =>
+                  when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 | 25 | 27 | 29 | 31 =>
                     -- double-wordN(47:16)
                     masterDat_o <= responsePayload(47 downto 16);
                     packetIndex <= packetIndex + 1;
-                  when 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | 24 | 26 | 28 | 30 | 32 | 34 =>
+                  when 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | 24 | 26 | 28 | 30 | 32 =>
                     -- double-wordN(15:0) & double-wordN(63:32)
                     masterDat_o <= responsePayload(15 downto 0) & responsePayload_i(63 downto 48);
                     responsePayload <= memoryDataRead;
-                    memoryAddress <= memoryAddress + 1;
+                    memoryAddress <=
+                      std_logic_vector(unsigned(memoryAddress) + 1);
                     packetIndex <= packetIndex + 1;
                   when others =>
                     -- Unallowed response length.
@@ -1724,7 +1678,7 @@ begin
             -- 
             ---------------------------------------------------------------------
             memoryEnable <= '0';
-            if (responseRead_i = '0') and (responseWrite = '0') then
+            if (responseReadReady_i = '0') and (responseWriteReady_i = '0') then
               state <= WAIT_PACKET;
               responseDone_o <= '0';
             else

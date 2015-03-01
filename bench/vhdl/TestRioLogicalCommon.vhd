@@ -96,7 +96,7 @@ architecture TestRioLogicalCommonImpl of TestRioLogicalCommon is
 
       configStb_o : out std_logic;
       configWe_o : out std_logic;
-      configAdr_o : out std_logic_vector(23 downto 0);
+      configAdr_o : out std_logic_vector(20 downto 0);
       configDat_o : out std_logic_vector(63 downto 0);
       configSel_o : out std_logic_vector(7 downto 0);
       configDat_i : in std_logic_vector(63 downto 0);
@@ -170,7 +170,7 @@ architecture TestRioLogicalCommonImpl of TestRioLogicalCommon is
   
   signal configStb, configStbExpected : std_logic;
   signal configWe, configWeExpected : std_logic;
-  signal configAddr, configAddrExpected : std_logic_vector(23 downto 0);
+  signal configAddr, configAddrExpected : std_logic_vector(20 downto 0);
   signal configSel, configSelExpected : std_logic_vector(7 downto 0);
   signal configDataWrite, configDataWriteExpected : std_logic_vector(63 downto 0);
   signal configDataRead, configDataReadExpected : std_logic_vector(63 downto 0);
@@ -315,6 +315,8 @@ begin
 
     frameValid <= '0';
     frameExpected <= '0';
+
+    configAddrExpected(20) <= '0';
     
     wait until clk'event and clk = '1';
     wait until clk'event and clk = '1';
@@ -339,7 +341,7 @@ begin
 
     configStbExpected <= '1';
     configWeExpected <= '0';
-    configAddrExpected <= x"010000";
+    configAddrExpected(19 downto 0) <= x"01000";
     configDataReadExpected <= x"00000000deadbeef";
     
     ReadConfig32(destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -347,7 +349,7 @@ begin
 
     configStbExpected <= '1';
     configWeExpected <= '1';
-    configAddrExpected <= x"010004";
+    configAddrExpected(19 downto 0) <= x"01000";
     configDataWriteExpected <= x"c0debabe00000000";
     
     WriteConfig32(destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",

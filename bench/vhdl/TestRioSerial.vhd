@@ -104,10 +104,14 @@ architecture TestRioSerialImpl of TestRioSerial is
 
   component RioSerial is
     generic(
-      TIMEOUT_WIDTH : natural);
+      TIMEOUT_WIDTH : natural;
+      SYMBOL_COUNTER_WIDTH : natural := 8;
+      TICKS_SEND_STATUS_STARTUP : natural := 15;
+      TICKS_SEND_STATUS_OPERATIONAL : natural := 255);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
+      enable : in std_logic;
 
       portLinkTimeout_i : in std_logic_vector(TIMEOUT_WIDTH-1 downto 0);
       linkInitialized_o : out std_logic;
@@ -142,18 +146,19 @@ architecture TestRioSerialImpl of TestRioSerial is
       writeContentData_o : out std_logic_vector(31 downto 0);
 
       portInitialized_i : in std_logic;
-      outboundSymbolFull_i : in std_logic;
-      outboundSymbolWrite_o : out std_logic;
-      outboundSymbol_o : out std_logic_vector(((2+32)-1) downto 0);
-      inboundSymbolEmpty_i : in std_logic;
-      inboundSymbolRead_o : out std_logic;
-      inboundSymbol_i : in std_logic_vector(((2+32)-1) downto 0));
+      outboundControlValid_o : out std_logic;
+      outboundControlSymbol_o : out std_logic_vector(23 downto 0);
+      outboundDataValid_o : out std_logic;
+      outboundDataSymbol_o : out std_logic_vector(31 downto 0);
+      inboundControlValid_i : in std_logic;
+      inboundControlSymbol_i : in std_logic_vector(23 downto 0);
+      inboundDataValid_i : in std_logic;
+      inboundDataSymbol_i : in std_logic_vector(31 downto 0));
   end component;
 
-  constant NUMBER_WORDS : natural range 1 to 4 := 1;
-  
   signal clk : std_logic;
   signal areset_n : std_logic;
+  signal enable : std_logic;
 
   signal portLinkTimeout : std_logic_vector(10 downto 0);
   signal linkInitialized : std_logic;
@@ -169,14 +174,6 @@ architecture TestRioSerialImpl of TestRioSerial is
   signal outstandingAckIdRead : std_logic_vector(4 downto 0);
   signal outboundAckIdRead : std_logic_vector(4 downto 0);
   
-  signal portInitialized : std_logic;
-  signal outboundSymbolFull : std_logic;
-  signal outboundSymbolWrite : std_logic;
-  signal outboundSymbol : std_logic_vector((2+32)-1 downto 0);
-  signal inboundSymbolEmpty : std_logic;
-  signal inboundSymbolRead : std_logic;
-  signal inboundSymbol : std_logic_vector((2+32)-1 downto 0);
-
   signal readFrameEmpty : std_logic;
   signal readFrame : std_logic;
   signal readFrameRestart : std_logic;
@@ -195,13 +192,28 @@ architecture TestRioSerialImpl of TestRioSerial is
   signal writeContent : std_logic;
   signal writeContentData : std_logic_vector(31 downto 0);
 
+  signal portInitialized : std_logic;
+  signal outboundControlValid : std_logic;
+  signal outboundControlSymbol : std_logic_vector(23 downto 0);
+  signal outboundDataValid : std_logic;
+  signal outboundDataSymbol : std_logic_vector(31 downto 0);
+  signal inboundControlValid : std_logic;
+  signal inboundControlSymbol : std_logic_vector(23 downto 0);
+  signal inboundDataValid : std_logic;
+  signal inboundDataSymbol : std_logic_vector(31 downto 0);
+
   signal frameValid : std_logic_vector(0 to 63);
   signal frameWrite : RioFrameArray(0 to 63);
   signal frameComplete : std_logic_vector(0 to 63);
   signal frameExpected : std_logic;
   signal frameRead : RioFrame;
   signal frameReceived : std_logic;
-  
+
+  signal outboundControlExpected : std_logic;
+  signal outboundControlSymbolExpected : std_logic_vector(23 downto 0);
+  signal outboundDataExpected : std_logic;
+  signal outboundDataSymbolExpected : std_logic_vector(31 downto 0);
+
 begin
   
   -----------------------------------------------------------------------------
@@ -224,59 +236,51 @@ begin
     ---------------------------------------------------------------------------
     -- Procedure to receive a symbol.
     ---------------------------------------------------------------------------
-    procedure ReceiveSymbol(
-      constant symbolType : in std_logic_vector(1 downto 0);
-      constant symbolContent : in std_logic_vector(31 downto 0) := x"00000000";
-      constant acceptIdle : in boolean := true) is
+    procedure ReceiveSymbolIdle is
     begin
-      outboundSymbolFull <= '0';
-      wait until clk'event and clk = '1' and outboundSymbolWrite = '1';
+      outboundControlExpected <= '0';
+      outboundDataExpected <= '0';
+    end procedure;
 
-      if (acceptIdle) then
-        while ((outboundSymbol(33 downto 32) = SYMBOL_IDLE) and
-               (symbolType /= SYMBOL_IDLE)) loop
-          wait until clk'event and clk = '1' and outboundSymbolWrite = '1';
-        end loop;
-      end if;
-      
-      assert symbolType = outboundSymbol(33 downto 32)
-        report "Missmatching symbol type:expected=" &
-        integer'image(to_integer(unsigned(symbolType))) &
-        " got=" &
-        integer'image(to_integer(unsigned(outboundSymbol(33 downto 32))))
-        severity error;
-      
-      if (outboundSymbol(33 downto 32) = SYMBOL_CONTROL) then
-        assert symbolContent(31 downto 8) = outboundSymbol(31 downto 8)
-          report "Missmatching symbol content:expected=" &
-          integer'image(to_integer(unsigned(symbolContent(31 downto 8)))) &
-          " got=" &
-          integer'image(to_integer(unsigned(outboundSymbol(31 downto 8))))
-          severity error;
-      elsif (outboundSymbol(33 downto 32) = SYMBOL_DATA) then
-        assert symbolContent(31 downto 0) = outboundSymbol(31 downto 0)
-          report "Missmatching symbol content:expected=" &
-          integer'image(to_integer(unsigned(symbolContent(31 downto 0)))) &      
-          " got=" &
-          integer'image(to_integer(unsigned(outboundSymbol(31 downto 0))))
-          severity error;
-      end if;
+    procedure ReceiveSymbolControl(constant symbolContent : in std_logic_vector(23 downto 0)) is
+    begin
+      outboundControlExpected <= '1';
+      outboundControlSymbolExpected <= symbolContent;
+      outboundDataExpected <= '0';
+    end procedure;
 
-      outboundSymbolFull <= '1';
+    procedure ReceiveSymbolData(constant symbolContent : in std_logic_vector(31 downto 0)) is
+    begin
+      outboundControlExpected <= '0';
+      outboundDataExpected <= '1';
+      outboundDataSymbolExpected <= symbolContent;
     end procedure;
 
     ---------------------------------------------------------------------------
     -- Procedure to send a symbol.
     ---------------------------------------------------------------------------
-    procedure SendSymbol(
-      constant symbolType : in std_logic_vector(1 downto 0);
-      constant symbolContent : in std_logic_vector(31 downto 0) := x"00000000") is
+    procedure SendSymbolIdle is
     begin
-      inboundSymbolEmpty <= '0';
-      inboundSymbol <= symbolType & symbolContent;
+      inboundControlValid <= '0';
+      inboundControlSymbol <= (others=>'U');
+      inboundDataValid <= '0';
+      inboundDataSymbol <= (others=>'U');
+    end procedure;
 
-      wait until clk'event and clk = '1' and inboundSymbolRead = '1';
-      inboundSymbolEmpty <= '1';
+    procedure SendSymbolControl(constant symbolContent : in std_logic_vector(23 downto 0)) is
+    begin
+      inboundControlValid <= '1';
+      inboundControlSymbol <= symbolContent;
+      inboundDataValid <= '0';
+      inboundDataSymbol <= (others=>'U');
+    end procedure;
+
+    procedure SendSymbolData(constant symbolContent : in std_logic_vector(31 downto 0)) is
+    begin
+      inboundControlValid <= '0';
+      inboundControlSymbol <= (others=>'U');
+      inboundDataValid <= '1';
+      inboundDataSymbol <= symbolContent;
     end procedure;
 
     ---------------------------------------------------------------------------
@@ -295,21 +299,24 @@ begin
 
     frameValid <= (others=>'0');
     frameExpected <= '0';
-
+    
     portLinkTimeout <= (others=>'1');
     inputPortEnable <= '1';
     outputPortEnable <= '1';
     
     portInitialized <= '0';
-    outboundSymbolFull <= '1';
-    inboundSymbolEmpty <= '1';
-    inboundSymbol <= (others => '0');
+    outboundControlExpected <= '0';
+    outboundDataExpected <= '0';
+    inboundControlValid <= '0';
+    inboundDataValid <= '0';
 
     localAckIdWrite <= '0';
     clrOutstandingAckId <= '0';
     inboundAckIdWrite <= (others=>'0');
     outstandingAckIdWrite <= (others=>'0');
     outboundAckIdWrite <= (others=>'0');
+
+    enable <= '1';
     
     -- Generate a startup reset pulse.
     areset_n <= '0';
@@ -335,8 +342,9 @@ begin
     ---------------------------------------------------------------------------
     
     -- Make sure only idle-sequences are transmitted at startup.
+    ReceiveSymbolIdle;
     for i in 0 to 1024 loop
-      ReceiveSymbol(SYMBOL_IDLE);
+      wait until clk = '1';
     end loop;
 
     ---------------------------------------------------------------------------
@@ -358,27 +366,32 @@ begin
     
     -- The transmitter should send idle sequences at startup and a status once
     -- in a while.
-    for i in 0 to 256 loop
-      ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
+    for i in 0 to 17 loop
+      wait until clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                         STYPE1_NOP, "000"),
-                  false);
-    for i in 0 to 254 loop
-      ReceiveSymbol(SYMBOL_IDLE);
+
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                                STYPE1_NOP, "000"));
+    wait until clk = '1';
+
+    ReceiveSymbolIdle;
+    for i in 0 to 16 loop
+      wait until clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                         STYPE1_NOP, "000"),
-                  false);
-    for i in 0 to 254 loop
-      ReceiveSymbol(SYMBOL_IDLE);
+
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                                STYPE1_NOP, "000"));
+    wait until clk = '1';
+
+    ReceiveSymbolIdle;
+    for i in 0 to 16 loop
+      wait until clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                         STYPE1_NOP, "000"),
-                  false);
+
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                                STYPE1_NOP, "000"));
+    wait until clk = '1';
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -394,8 +407,9 @@ begin
     portInitialized <= '0';
     
     -- Make sure only idle-sequences are transmitted at startup.
+    ReceiveSymbolIdle;
     for i in 0 to 1024 loop
-      ReceiveSymbol(SYMBOL_IDLE);
+      wait until clk = '1';
     end loop;
 
     -- Initialize the port to trigger a change of state.
@@ -403,27 +417,32 @@ begin
     
     -- The transmitter should send idle sequences at startup and a status once
     -- in a while.
-    for i in 0 to 256 loop
-      ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
+    for i in 0 to 17 loop
+      wait until clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                         STYPE1_NOP, "000"),
-                  false);
-    for i in 0 to 254 loop
-      ReceiveSymbol(SYMBOL_IDLE);
+
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                                STYPE1_NOP, "000"));
+    wait until clk = '1';
+
+    ReceiveSymbolIdle;
+    for i in 0 to 16 loop
+      wait until clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                         STYPE1_NOP, "000"),
-                  false);
-    for i in 0 to 254 loop
-      ReceiveSymbol(SYMBOL_IDLE);
+
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                                STYPE1_NOP, "000"));
+    wait until clk = '1';
+
+    ReceiveSymbolIdle;
+    for i in 0 to 16 loop
+      wait until clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                         STYPE1_NOP, "000"),
-                  false);
+
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                                STYPE1_NOP, "000"));
+    wait until clk = '1';
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -438,22 +457,34 @@ begin
 
     -- A received error-free status triggers transmission of status symbols in
     -- a more rapid past.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    wait until clk = '1';
+    
+    SendSymbolIdle;
+    ReceiveSymbolIdle;
+    for i in 0 to 15 loop
+      wait until clk = '1';
+    end loop;
 
     -- The transmitter should send at least 15 additional statuses after
     -- receiving an error free status.
-    for j in 0 to 15 loop
-      for i in 0 to 15 loop
-        ReceiveSymbol(SYMBOL_IDLE);
+    for j in 0 to 14 loop      
+      ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                                  STYPE1_NOP, "000"));
+      wait until clk = '1';
+
+      ReceiveSymbolIdle;
+      for i in 0 to 16 loop
+        wait until clk = '1';
       end loop;
-      
-      ReceiveSymbol(SYMBOL_CONTROL,
-                    RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                           STYPE1_NOP, "000"),
-                    false);
     end loop;
+
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                                STYPE1_NOP, "000"));
+    wait until clk = '1';
+    ReceiveSymbolIdle;
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -472,26 +503,29 @@ begin
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
     PrintS("Step 5:");
-    PrintS("Action: Send one errornous status symbol to restart the status ");
-    PrintS("        counting.");
-    PrintS("Result: Idle sequence and status symbols should be read but ");
-    PrintS("        status symbols should still be received more often.");
+    PrintS("Action: Send seven additional status symbols.");
+    PrintS("Result: The link should become fully initialized.");
     ---------------------------------------------------------------------------
     PrintR("TG_RioSerial-TC2-Step5");
     ---------------------------------------------------------------------------
-    
+
     -- Make the link fully initialized by sending 7 additional statuses.
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_NOP, "000"));
     for i in 0 to 6 loop
-      SendSymbol(SYMBOL_CONTROL,
-                 RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                        STYPE1_NOP, "000"));
+      wait until clk = '1';
     end loop;
+    SendSymbolIdle;
+    for i in 0 to 8 loop
+      wait until clk = '1';
+    end loop;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                                STYPE1_NOP, "000"));
 
     -- Tick the transmitter by reading it and check that the link is initialized.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_IDLE);
-    wait until linkInitialized = '1';
+    if (linkInitialized = '0') then
+      wait until linkInitialized = '1';
+    end if;
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -517,31 +551,28 @@ begin
     frameRead <= frame;
     
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Send the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
     
     -- End the reception of the frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
 
     -- Check that the frame has been received in the frame buffer.
     wait until frameReceived = '1';
     frameExpected <= '0';
     
     -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
     
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00000", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00000", "11111",
+                                                STYPE1_NOP, "000"));
     
     
     ---------------------------------------------------------------------------
@@ -564,31 +595,28 @@ begin
     frameRead <= frame;
     
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Send the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
     
     -- End the reception of the frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
 
     -- Check that the frame has been received in the frame buffer.
     wait until frameReceived = '1';
     frameExpected <= '0';
     
     -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive acknowledge for the transmited frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00001", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00001", "11111",
+                                                STYPE1_NOP, "000"));
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -610,31 +638,28 @@ begin
     frameRead <= frame;
     
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Send the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
     
     -- End the reception of the frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
 
     -- Check that the frame has been received in the frame buffer.
     wait until frameReceived = '1';
     frameExpected <= '0';
     
     -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00010", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00010", "11111",
+                                                STYPE1_NOP, "000"));
 
     
     ---------------------------------------------------------------------------
@@ -657,19 +682,17 @@ begin
     frameRead <= frame;
     
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Send the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
     
     -- Start the reception of a frame, implicitly ending the previous.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Check that the frame has been received in the frame buffer.
     wait until frameReceived = '1';
@@ -677,12 +700,11 @@ begin
     wait until clk'event and clk = '1';
     
     -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00011", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00011", "11111",
+                                                STYPE1_NOP, "000"));
 
     -- Create the second frame.
     CreateRandomPayload(payload.data, seed1, seed2);
@@ -696,25 +718,23 @@ begin
     
     -- Send the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
     
     -- End the reception of the frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
 
     -- Check that the frame has been received in the frame buffer.
     wait until frameReceived = '1';
     frameExpected <= '0';
     
     -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00100", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00100", "11111",
+                                                STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -738,35 +758,31 @@ begin
     frameRead <= frame;
     
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Send the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
     
     -- Abort the reception of the frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_STOMP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_STOMP, "000"));
 
     -- Dont expect the aborted frame anymore.
     frameExpected <= '0';
     
     -- Receive an idle symbol left in the FIFO before the retry was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_RETRY, "00101", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_RETRY, "00101", "11111",
+                                                STYPE1_NOP, "000"));
 
     -- Acknowledge the canceled packet.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_RESTART_FROM_RETRY, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_RESTART_FROM_RETRY, "000"));
 
     -- Create a new frame.
     CreateRandomPayload(payload.data, seed1, seed2);
@@ -779,31 +795,28 @@ begin
     frameRead <= frame;
     
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Send the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
     
     -- Abort the reception of the frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
     
     -- Check that the frame has been received in the frame buffer.
     wait until frameReceived = '1';
     frameExpected <= '0';
     
     -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00101", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00101", "11111",
+                                                STYPE1_NOP, "000"));
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -817,27 +830,23 @@ begin
     ---------------------------------------------------------------------------
     
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Abort the reception of the frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_STOMP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_STOMP, "000"));
 
     -- Receive an idle symbol left in the FIFO before the retry was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_RETRY, "00110", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_RETRY, "00110", "11111",
+                                                STYPE1_NOP, "000"));
 
     -- Acknowledge the canceled packet.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_RESTART_FROM_RETRY, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_RESTART_FROM_RETRY, "000"));
 
     -- Create a new frame.
     CreateRandomPayload(payload.data, seed1, seed2);
@@ -850,31 +859,28 @@ begin
     frameRead <= frame;
 
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Send the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
     
     -- Abort the reception of the frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
     
     -- Check that the frame has been received in the frame buffer.
     wait until frameReceived = '1';
     frameExpected <= '0';
     
     -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00110", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00110", "11111",
+                                                STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -899,30 +905,27 @@ begin
     frameRead <= frame;
 
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Send the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
     
     -- Send a link-request/input-status to abort the current packet.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_LINK_REQUEST, "100"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_LINK_REQUEST, "100"));
 
     -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- The frame should be canceled by the link-request, dont expect it anymore.
     frameExpected <= '0';
     
     -- Receive link-response indicating normal operation and expected ackId.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "00111", "10000",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "00111", "10000",
+                                                STYPE1_NOP, "000"));
 
     -- Create a new frame.
     CreateRandomPayload(payload.data, seed1, seed2);
@@ -935,31 +938,28 @@ begin
     frameRead <= frame;
 
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Send the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
     
     -- Abort the reception of the frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
     
     -- Check that the frame has been received in the frame buffer.
     wait until frameReceived = '1';
     frameExpected <= '0';
 
     -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00111", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00111", "11111",
+                                                STYPE1_NOP, "000"));
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -977,25 +977,22 @@ begin
     frameExpected <= '1';
     
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Send a link-request/input-status to abort the current packet.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_LINK_REQUEST, "100"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_LINK_REQUEST, "100"));
 
     -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Dont expect any frames anymore.
     frameExpected <= '0';
     
     -- Receive link-response indicating normal operation and expected ackId.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01000", "10000",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01000", "10000",
+                                                STYPE1_NOP, "000"));
 
     -- Create a new frame.
     CreateRandomPayload(payload.data, seed1, seed2);
@@ -1008,31 +1005,28 @@ begin
     frameRead <= frame;
 
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
 
     -- Send the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
     
     -- Abort the reception of the frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
     
     -- Check that the frame has been received in the frame buffer.
     wait until frameReceived = '1';
     frameExpected <= '0';
     
     -- Receive an idle symbol left in the FIFO before the ack was generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01000", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01000", "11111",
+                                                STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1054,35 +1048,29 @@ begin
                             payload=>payload);
     
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
-    SendSymbol(SYMBOL_DATA, frame.payload(0));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
+    SendSymbolData(frame.payload(0));
 
     -- Receive notification about that the packet needs to be retried.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_RETRY, "01001", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_RETRY, "01001", "11111",
+                                                STYPE1_NOP, "000"));
 
     -- Check the status of the input port and verify the input-retry-stopped state.
     -- This should also set the receiver into normal operation.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_LINK_REQUEST, "100"));
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01001", "00100",
-                                         STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01001", "00100",
+                                                STYPE1_NOP, "000"));
 
     -- Check the status of the input port and verify the input-retry-stopped state.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_LINK_REQUEST, "100"));
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01001", "10000",
-                                         STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01001", "10000",
+                                                STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1104,30 +1092,25 @@ begin
                             payload=>payload);
     
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
-    SendSymbol(SYMBOL_DATA, frame.payload(0));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
+    SendSymbolData(frame.payload(0));
 
     -- Receive notification about that the packet needs to be retried.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_RETRY, "01001", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_RETRY, "01001", "11111",
+                                                STYPE1_NOP, "000"));
 
     -- Acknowledge the retried packet.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_RESTART_FROM_RETRY, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_RESTART_FROM_RETRY, "000"));
 
     -- Check the status of the input port and verify the input-retry-stopped state.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_LINK_REQUEST, "100"));
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01001", "10000",
-                                         STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01001", "10000",
+                                                STYPE1_NOP, "000"));
 
     -- Always receive a status after a link response when leaving input-error-stopped.
 --    ReceiveSymbol(SYMBOL_CONTROL,
@@ -1152,16 +1135,14 @@ begin
                             payload=>payload);
     
     -- Start the reception of a frame.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
-    SendSymbol(SYMBOL_DATA, frame.payload(0));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
+    SendSymbolData(frame.payload(0));
 
     -- Receive notification about that the packet needs to be retried.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_RETRY, "01001", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_RETRY, "01001", "11111",
+                                                STYPE1_NOP, "000"));
 
     -- Create a packet and send it. It should be discarded.
     CreateRandomPayload(payload.data, seed1, seed2);
@@ -1170,20 +1151,17 @@ begin
                             tt=>"01", ftype=>"0000",
                             sourceId=>x"0000", destId=>x"0000",
                             payload=>payload);
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
     
     -- Acknowledge the retried packet.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_RESTART_FROM_RETRY, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_RESTART_FROM_RETRY, "000"));
 
     -- Create a packet and send it.
     CreateRandomPayload(payload.data, seed1, seed2);
@@ -1194,23 +1172,20 @@ begin
                             payload=>payload);
     frameExpected <= '1';
     frameRead <= frame;
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
     wait until frameReceived = '1';
     frameExpected <= '0';
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01001", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01001", "11111",
+                                                STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1224,15 +1199,13 @@ begin
     ---------------------------------------------------------------------------
 
     -- Create, corrupt and send a control symbol.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000") xor x"00100000");
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000") xor x"00100000");
 
     -- Receive a packet-not-accepted indicating error in control-symbol crc.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_NOT_ACCEPTED, "00000", "00010",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_NOT_ACCEPTED, "00000", "00010",
+                                                STYPE1_NOP, "000"));
 
     -- Create a packet and send it. It should be discarded.
     CreateRandomPayload(payload.data, seed1, seed2);
@@ -1241,25 +1214,21 @@ begin
                             tt=>"01", ftype=>"0000",
                             sourceId=>x"0000", destId=>x"0000",
                             payload=>payload);
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
     
     -- Make the receiver go back to normal operation by sending a link-request.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_LINK_REQUEST, "100"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_LINK_REQUEST, "100"));
 
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01010", "00101",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01010", "00101",
+                                                STYPE1_NOP, "000"));
 
     -- Always receive a status after a link response when leaving input-error-stopped.
 --    ReceiveSymbol(SYMBOL_CONTROL,
@@ -1275,23 +1244,20 @@ begin
                             payload=>payload);
     frameExpected <= '1';
     frameRead <= frame;
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
     wait until frameReceived = '1';
     frameExpected <= '0';
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01010", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01010", "11111",
+                                                STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1313,34 +1279,29 @@ begin
     frame.payload(0) := frame.payload(0) xor x"00000010";
     frameExpected <= '1';
     frameRead <= frame;
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
     
     -- Receive a packet-not-accepted indicating error in control-symbol crc.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_NOT_ACCEPTED, "00000", "00100",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_NOT_ACCEPTED, "00000", "00100",
+                                                STYPE1_NOP, "000"));
 
     -- Dont expect any frame anymore.
     frameExpected <= '0';
 
     -- Make the receiver go back to normal operation by sending a link-request.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_LINK_REQUEST, "100"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_LINK_REQUEST, "100"));
 
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01011", "00101",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01011", "00101",
+                                                STYPE1_NOP, "000"));
 
     -- Send a new frame without error.
     CreateRandomPayload(payload.data, seed1, seed2);
@@ -1351,23 +1312,20 @@ begin
                             payload=>payload);
     frameExpected <= '1';
     frameRead <= frame;
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_START_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      SendSymbol(SYMBOL_DATA, frame.payload(i));
+      SendSymbolData(frame.payload(i));
     end loop;
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
-                                      STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00000", "11111",
+                                             STYPE1_END_OF_PACKET, "000"));
     wait until frameReceived = '1';
     frameExpected <= '0';
 
     -- Receive acknowledge for the transmitted frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01011", "11111",
-                                         STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01011", "11111",
+                                                STYPE1_NOP, "000"));
 
     -- REMARK: Complete with some more error situations: invalid ackId, too
     -- short packet, too long packet, etc...
@@ -1402,16 +1360,15 @@ begin
 
     -- Receive an idle symbol left in the FIFO before the start of the frame was
     -- generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive the start of the frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
 
     -- Receive the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     -- Wait for the frame to complete.
@@ -1419,14 +1376,12 @@ begin
     frameValid(0) <= '0';
     
     -- Receive the end of the frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
 
     -- Send acknowledge that the frame was received.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00000", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00000", "11111",
+                                             STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1449,16 +1404,15 @@ begin
 
     -- Receive an idle symbol left in the FIFO before the start of the frame was
     -- generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive the start of the frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
 
     -- Receive the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     -- Wait for the frame to complete.
@@ -1466,14 +1420,12 @@ begin
     frameValid(1) <= '0';
     
     -- Receive the end of the frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
 
     -- Send acknowledge that the frame was received.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00001", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00001", "11111",
+                                             STYPE1_NOP, "000"));
 
      ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1497,42 +1449,37 @@ begin
 
     -- Receive an idle symbol left in the FIFO before the start of the frame was
     -- generated.
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
 
     -- Receive the start of the frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
 
     -- Receive the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     -- Receive the end of the frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
 
     -- Send packet-retry that the frame should be retransmitted.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_RETRY, "00010", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_RETRY, "00010", "11111",
+                                             STYPE1_NOP, "000"));
 
     -- Receive the acknowledgement for the retransmission.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_RESTART_FROM_RETRY, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_RESTART_FROM_RETRY, "000"));
 
     -- Receive the start of the retransmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
 
     -- Receive the data symbols of the retransmitted frame.
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     -- Wait for the frame to complete.
@@ -1540,14 +1487,12 @@ begin
     frameValid(2) <= '0';
     
     -- Receive the end of the retransmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
 
     -- Send acknowledge that the frame was received.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00010", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00010", "11111",
+                                             STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1570,44 +1515,38 @@ begin
     frameWrite(3) <= frame;
 
     -- Receive the start of the frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
 
     -- Receive the data symbols of the frame.
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     -- Receive the end of the frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
 
     -- Send packet-retry that the frame should be retransmitted.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_NOT_ACCEPTED, "00000", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_NOT_ACCEPTED, "00000", "11111",
+                                             STYPE1_NOP, "000"));
 
     -- Receive the acknowledgement for the retransmission.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_LINK_REQUEST, "100"));
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "00011", "11111",
-                                      STYPE1_NOP, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_LINK_REQUEST, "100"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "00011", "11111",
+                                             STYPE1_NOP, "000"));
 
     -- Receive the start of the retransmitted frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
 
     -- Receive the data symbols of the retransmitted frame.
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     -- Wait for the frame to complete.
@@ -1615,14 +1554,12 @@ begin
     frameValid(3) <= '0';
     
     -- Receive the end of the retransmitted frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
 
     -- Send acknowledge that the frame was received.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00011", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00011", "11111",
+                                             STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1645,53 +1582,46 @@ begin
     frameWrite(4) <= frame;
 
     -- Receive the frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
 
     -- Wait a while to let the timer expire and receive the link-request.
     for i in 0 to 2048 loop
       wait until clk'event and clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_LINK_REQUEST, "100"));
 
     -- Send a link-response to make the transmitter to back to normal mode.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "00100", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "00100", "11111",
+                                             STYPE1_NOP, "000"));
     
     -- Receive the retransmitted frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     -- Wait for the frame to complete.
     wait until frameComplete(4) = '1' and clk'event and clk = '1';
     frameValid(4) <= '0';
     
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
 
     -- Send acknowledge that the frame was received.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00100", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00100", "11111",
+                                             STYPE1_NOP, "000"));
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1715,35 +1645,31 @@ begin
     frameWrite(5) <= frame;
 
     -- Receive the frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     wait until frameComplete(5) = '1' and clk'event and clk = '1';
     frameValid(5) <= '0';
     
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
 
     -- Wait a while to let the timer expire and receive the link-request.
     for i in 0 to 2048 loop
       wait until clk'event and clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_LINK_REQUEST, "100"));
 
     -- Send a link-response that indicates that the frame was received to make
     -- the transmitter to back to normal mode.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "00110", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "00110", "11111",
+                                             STYPE1_NOP, "000"));
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1766,43 +1692,38 @@ begin
     frameWrite(6) <= frame;
 
     -- Receive the frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
 
     -- Wait a while to let the timer expire and receive the link-request.
     for i in 0 to 2048 loop
       wait until clk'event and clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_LINK_REQUEST, "100"));
 
     -- Wait a while to let the timer expire and receive the link-request.
     for i in 0 to 2048 loop
       wait until clk'event and clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_LINK_REQUEST, "100"));
 
     -- Wait a while to let the timer expire and receive the link-request.
     for i in 0 to 2048 loop
       wait until clk'event and clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_LINK_REQUEST, "100"));
 
     -- Wait a while to let the timer expire and receive the link-request.
     for i in 0 to 2048 loop
@@ -1811,40 +1732,34 @@ begin
 
     -- Reinitialize the transmitter.
     for i in 0 to 255 loop
-      ReceiveSymbol(SYMBOL_IDLE);
+      ReceiveSymbolIdle;
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_NOP, "000"));
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00110", "11111",
-                                      STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00110", "11111",
+                                             STYPE1_NOP, "000"));
     for j in 0 to 14 loop
       for i in 0 to 15 loop
-        ReceiveSymbol(SYMBOL_IDLE);
+        ReceiveSymbolIdle;
       end loop;
-      ReceiveSymbol(SYMBOL_CONTROL,
-                    RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                           STYPE1_NOP, "000"));
+      ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                  STYPE1_NOP, "000"));
     end loop;
 
     -- Receive the frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     wait until frameComplete(6) = '1' and clk'event and clk = '1';
     frameValid(6) <= '0';
     
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00110", "11111",
-                                      STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00110", "11111",
+                                             STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1868,67 +1783,57 @@ begin
     frameWrite(7) <= frame;
 
     -- Receive the frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
 
     -- Wait a while to let the timer expire and receive the link-request.
     for i in 0 to 2048 loop
       wait until clk'event and clk = '1';
     end loop;
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_LINK_REQUEST, "100"));
 
     -- Send a link-response with unexpected ackId.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "10000", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "10000", "11111",
+                                             STYPE1_NOP, "000"));
     
     -- Reinitialize the transmitter.
     for i in 0 to 255 loop
-      ReceiveSymbol(SYMBOL_IDLE);
+      ReceiveSymbolIdle;
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_NOP, "000"));
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "00111", "11111",
-                                      STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "00111", "11111",
+                                             STYPE1_NOP, "000"));
     for j in 0 to 14 loop
       for i in 0 to 15 loop
-        ReceiveSymbol(SYMBOL_IDLE);
+        ReceiveSymbolIdle;
       end loop;
-      ReceiveSymbol(SYMBOL_CONTROL,
-                    RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                           STYPE1_NOP, "000"));
+      ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                  STYPE1_NOP, "000"));
     end loop;
 
     -- Receive the frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     wait until frameComplete(7) = '1' and clk'event and clk = '1';
     frameValid(7) <= '0';
     
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00111", "11111",
-                                      STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "00111", "11111",
+                                             STYPE1_NOP, "000"));
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1940,13 +1845,12 @@ begin
     ---------------------------------------------------------------------------
 
     -- Send a status with unexpected ackId.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_STATUS, "10000", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "10000", "11111",
+                                             STYPE1_NOP, "000"));
 
     -- Receive no change.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
+    ReceiveSymbolIdle;
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -1958,20 +1862,17 @@ begin
     ---------------------------------------------------------------------------
     
     -- Send a packet-retry with unexpected ackId.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_RETRY, "10000", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_RETRY, "10000", "11111",
+                                             STYPE1_NOP, "000"));
 
     -- Receive link-request.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_LINK_REQUEST, "100"));
 
     -- Send a link-response with unexpected ackId.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01000", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01000", "11111",
+                                             STYPE1_NOP, "000"));
         
     -- Create the frame.
     CreateRandomPayload(payload.data, seed1, seed2);
@@ -1984,23 +1885,20 @@ begin
     frameWrite(8) <= frame;
 
     -- Receive the frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     wait until frameComplete(8) = '1' and clk'event and clk = '1';
     frameValid(8) <= '0';
 
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01000", "11111",
-                                      STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01000", "11111",
+                                             STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -2013,20 +1911,17 @@ begin
     ---------------------------------------------------------------------------
 
     -- Send a packet-accepted with unexpected ackId.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "10000", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "10000", "11111",
+                                             STYPE1_NOP, "000"));
 
     -- Receive link-request.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_LINK_REQUEST, "100"));
 
     -- Send a link-response with unexpected ackId.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01001", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01001", "11111",
+                                             STYPE1_NOP, "000"));
         
     -- Create the frame.
     CreateRandomPayload(payload.data, seed1, seed2);
@@ -2039,23 +1934,20 @@ begin
     frameWrite(9) <= frame;
 
     -- Receive the frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     wait until frameComplete(9) = '1' and clk'event and clk = '1';
     frameValid(9) <= '0';
 
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01001", "11111",
-                                      STYPE1_NOP, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01001", "11111",
+                                             STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -2077,36 +1969,31 @@ begin
     frameWrite(10) <= frame;
 
     -- Receive the frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frame.length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frame.payload(i));
+      ReceiveSymbolData(frame.payload(i));
     end loop;
 
     wait until frameComplete(10) = '1' and clk'event and clk = '1';
     frameValid(10) <= '0';
 
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
     
     -- Send unexpected ackId in packet-accepted.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "10000", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "10000", "11111",
+                                             STYPE1_NOP, "000"));
 
     -- Receive link-request.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_LINK_REQUEST, "100"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_LINK_REQUEST, "100"));
 
     -- Send a link-response with expected ackId.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01011", "11111",
-                                      STYPE1_NOP, "000"));        
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_LINK_RESPONSE, "01011", "11111",
+                                             STYPE1_NOP, "000"));        
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -2139,20 +2026,18 @@ begin
     frameWrite(12) <= frame;
 
     -- Receive the frame.
-    ReceiveSymbol(SYMBOL_IDLE);
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolIdle;
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frameWrite(11).length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frameWrite(11).payload(i));
+      ReceiveSymbolData(frameWrite(11).payload(i));
     end loop;
 
     -- Receive the frame.
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frameWrite(12).length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frameWrite(12).payload(i));
+      ReceiveSymbolData(frameWrite(12).payload(i));
     end loop;
 
     wait until frameComplete(11) = '1' and clk'event and clk = '1';
@@ -2160,17 +2045,14 @@ begin
     wait until frameComplete(12) = '1' and clk'event and clk = '1';
     frameValid(12) <= '0';
     
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
     
     -- Send packet-accepted for both packets.
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01011", "11111",
-                                      STYPE1_NOP, "000"));
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01100", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01011", "11111",
+                                             STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01100", "11111",
+                                             STYPE1_NOP, "000"));
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -2202,36 +2084,32 @@ begin
     -- Receive the frames.
     ---------------------------------------------------------------------------
 
-    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbolIdle;
     
     for j in 0 to 29 loop
-      ReceiveSymbol(SYMBOL_CONTROL,
-                    RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                           STYPE1_START_OF_PACKET, "000"));
+      ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                  STYPE1_START_OF_PACKET, "000"));
       for i in 0 to frameWrite(j+13).length-1 loop
-        ReceiveSymbol(SYMBOL_DATA, frameWrite(j+13).payload(i));
+        ReceiveSymbolData(frameWrite(j+13).payload(i));
       end loop;
 
       wait until frameComplete(j+13) = '1' and clk'event and clk = '1';
       frameValid(j+13) <= '0';
     end loop;
 
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_START_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_START_OF_PACKET, "000"));
     for i in 0 to frameWrite(43).length-1 loop
-      ReceiveSymbol(SYMBOL_DATA, frameWrite(43).payload(i));
+      ReceiveSymbolData(frameWrite(43).payload(i));
     end loop;
-    ReceiveSymbol(SYMBOL_CONTROL,
-                  RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
-                                         STYPE1_END_OF_PACKET, "000"));
+    ReceiveSymbolControl(RioControlSymbolCreate(STYPE0_STATUS, "01100", "11111",
+                                                STYPE1_END_OF_PACKET, "000"));
     wait until frameComplete(43) = '1' and clk'event and clk = '1';
     frameValid(43) <= '0';
 
     -- REMARK: Complete the testcase and acknowledge all transmitted packets...
-    SendSymbol(SYMBOL_CONTROL,
-               RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01101", "11111",
-                                      STYPE1_NOP, "000"));
+    SendSymbolControl(RioControlSymbolCreate(STYPE0_PACKET_ACCEPTED, "01101", "11111",
+                                             STYPE1_NOP, "000"));
 
     
     ---------------------------------------------------------------------------
@@ -2265,9 +2143,41 @@ begin
     TestEnd;
   end process;
 
+  -----------------------------------------------------------------------------
+  -- 
+  -----------------------------------------------------------------------------
+  OutboundSymbolCheck: process
+  begin
+    wait until clk = '1';
+    assert not ((outboundControlValid = '1') and (outboundDataValid = '1'))
+      report "Unallowed symbol sent."
+      severity error;
+    if (outboundControlExpected = '1') then
+      assert outboundControlValid = '1'
+        report "Expected an outbound control symbol."
+        severity error;
+      assert outboundControlSymbol = outboundControlSymbolExpected
+        report "Unexpected outbound control symbol content."
+        severity error;
+    elsif (outboundDataExpected = '1') then
+      assert outboundDataValid = '1'
+        report "Expected an outbound data symbol."
+        severity error;
+      assert outboundDataSymbol = outboundDataSymbolExpected
+        report "Unexpected outbound data symbol content."
+        severity error;
+    else
+      assert outboundControlValid = '0'
+        report "Not expecting outbound control symbol."
+        severity error;
+      assert outboundDataValid = '0'
+        report "Not expecting outbound data symbol."
+        severity error;
+    end if;
+  end process;
   
   -----------------------------------------------------------------------------
-  -- Instantiate the uart.
+  -- Instantiate a SwitchPort emulator.
   -----------------------------------------------------------------------------
 
   TestPort: TestSwitchPort
@@ -2286,11 +2196,15 @@ begin
       writeFrameFull_o=>writeFrameFull, writeFrame_i=>writeFrame, writeFrameAbort_i=>writeFrameAbort,
       writeContent_i=>writeContent, writeContentData_i=>writeContentData);
 
-  TestPhy: RioSerial
+  -----------------------------------------------------------------------------
+  -- Instantiate the test object.
+  -----------------------------------------------------------------------------
+  TestObject: RioSerial
     generic map(
-      TIMEOUT_WIDTH=>11)
+      TIMEOUT_WIDTH=>11, SYMBOL_COUNTER_WIDTH=>8,
+      TICKS_SEND_STATUS_STARTUP=>15, TICKS_SEND_STATUS_OPERATIONAL=>255)
     port map(
-      clk=>clk, areset_n=>areset_n,
+      clk=>clk, areset_n=>areset_n, enable=>enable,
       portLinkTimeout_i=>portLinkTimeout,
       linkInitialized_o=>linkInitialized,
       inputPortEnable_i=>inputPortEnable,
@@ -2303,21 +2217,31 @@ begin
       inboundAckId_o=>inboundAckIdRead, 
       outstandingAckId_o=>outstandingAckIdRead, 
       outboundAckId_o=>outboundAckIdRead, 
-      readFrameEmpty_i=>readFrameEmpty, readFrame_o=>readFrame, readFrameRestart_o=>readFrameRestart, 
+      readFrameEmpty_i=>readFrameEmpty,
+      readFrame_o=>readFrame,
+      readFrameRestart_o=>readFrameRestart, 
       readFrameAborted_i=>readFrameAborted,
       readWindowEmpty_i=>readWindowEmpty,
-      readWindowReset_o=>readWindowReset, readWindowNext_o=>readWindowNext,
+      readWindowReset_o=>readWindowReset,
+      readWindowNext_o=>readWindowNext,
       readContentEmpty_i=>readContentEmpty,
-      readContent_o=>readContent, readContentEnd_i=>readContentEnd, readContentData_i=>readContentData,
-      writeFrameFull_i=>writeFrameFull, writeFrame_o=>writeFrame, writeFrameAbort_o=>writeFrameAbort,
-      writeContent_o=>writeContent, writeContentData_o=>writeContentData,
+      readContent_o=>readContent,
+      readContentEnd_i=>readContentEnd,
+      readContentData_i=>readContentData,
+      writeFrameFull_i=>writeFrameFull,
+      writeFrame_o=>writeFrame,
+      writeFrameAbort_o=>writeFrameAbort,
+      writeContent_o=>writeContent,
+      writeContentData_o=>writeContentData,
       portInitialized_i=>portInitialized,
-      outboundSymbolFull_i=>outboundSymbolFull,
-      outboundSymbolWrite_o=>outboundSymbolWrite,
-      outboundSymbol_o=>outboundSymbol,
-      inboundSymbolEmpty_i=>inboundSymbolEmpty,
-      inboundSymbolRead_o=>inboundSymbolRead,
-      inboundSymbol_i=>inboundSymbol);
+      outboundControlValid_o=>outboundControlValid, 
+      outboundControlSymbol_o=>outboundControlSymbol, 
+      outboundDataValid_o=>outboundDataValid, 
+      outboundDataSymbol_o=>outboundDataSymbol, 
+      inboundControlValid_i=>inboundControlValid, 
+      inboundControlSymbol_i=>inboundControlSymbol, 
+      inboundDataValid_i=>inboundDataValid, 
+      inboundDataSymbol_i=>inboundDataSymbol);
 
 end architecture;
 

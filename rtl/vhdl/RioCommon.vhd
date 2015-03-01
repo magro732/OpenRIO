@@ -87,12 +87,6 @@ package rio_common is
   -- Commonly used constants.
   -----------------------------------------------------------------------------
   
-  -- Symbol types between the serial and the PCS layer.
-  constant SYMBOL_IDLE : std_logic_vector(1 downto 0) := "00";
-  constant SYMBOL_CONTROL : std_logic_vector(1 downto 0) := "01";
-  constant SYMBOL_ERROR : std_logic_vector(1 downto 0) := "10";
-  constant SYMBOL_DATA : std_logic_vector(1 downto 0) := "11";
-  
   -- STYPE0 constants.
   constant STYPE0_PACKET_ACCEPTED : std_logic_vector(2 downto 0) := "000";
   constant STYPE0_PACKET_RETRY : std_logic_vector(2 downto 0) := "001";
@@ -343,7 +337,7 @@ package body rio_common is
     constant stype1 : in std_logic_vector(2 downto 0);
     constant cmd : in std_logic_vector(2 downto 0))
     return std_logic_vector is
-    variable returnValue : std_logic_vector(31 downto 0);
+    variable returnValue : std_logic_vector(23 downto 0);
     variable symbolData : std_logic_vector(18 downto 0);
   begin
     symbolData(18 downto 16) := stype0;
@@ -352,9 +346,8 @@ package body rio_common is
     symbolData(5 downto 3) := stype1;
     symbolData(2 downto 0) := cmd;
 
-    returnValue(31 downto 13) := symbolData;
-    returnValue(12 downto 8) := Crc5(symbolData, "11111");
-    returnValue(7 downto 0) := x"00";
+    returnValue(23 downto 5) := symbolData;
+    returnValue(4 downto 0) := Crc5(symbolData, "11111");
 
     return returnValue;
   end function;
