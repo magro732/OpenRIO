@@ -10,7 +10,22 @@
 -- entity RioSwitch.
 -- 
 -- To Do:
--- -
+-- - Add configAck to external interface.
+-- - Complete forwarding of maintenance packets.
+-- - Remove all common component-declarations and move them to RioCommon.
+-- - Add support for longer maintenance packets.
+-- - Add support for portWrite maintenance packets.
+-- - Add a real crossbar as interconnect.
+-- - Change the internal addressing to one-hot.
+-- - Remove acknowledge cycle when transfering packets between ports to double
+--   the bandwidth.
+-- - Add hot-swap.
+-- - Connect linkInitialized to all ports and read it from the source port
+--   using the interconnect. This will allow alternative routes since the
+--   sending port can see if a receiving port is up or not.
+-- - Add support for extended route.
+-- - Add validity-bit to know if a route has been activly set for a particular
+--   deviceId.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 
@@ -215,6 +230,7 @@ architecture RioSwitchImpl of RioSwitch is
   
   component SwitchPort is
     generic(
+      MAINTENANCE_LOOKUP : boolean;
       PORT_INDEX : natural);
     port(
       clk : in std_logic;
@@ -249,6 +265,7 @@ architecture RioSwitchImpl of RioSwitch is
       readContent_o : out std_logic;
       readContentEnd_i : in std_logic;
       readContentData_i : in std_logic_vector(31 downto 0);
+      writeFramePort_o : out std_logic_vector(9 downto 0);
       writeFrameFull_i : in std_logic;
       writeFrame_o : out std_logic;
       writeFrameAbort_o : out std_logic;
@@ -316,6 +333,7 @@ begin
   PortGeneration: for portIndex in 0 to SWITCH_PORTS-1 generate
     PortInst: SwitchPort
       generic map(
+        MAINTENANCE_LOOKUP=>false,
         PORT_INDEX=>portIndex)
       port map(
         clk=>clk, areset_n=>areset_n,
@@ -335,6 +353,7 @@ begin
         readFrameAborted_i=>readFrameAborted_i(portIndex), 
         readContentEmpty_i=>readContentEmpty_i(portIndex), readContent_o=>readContent_o(portIndex), 
         readContentEnd_i=>readContentEnd_i(portIndex), readContentData_i=>readContentData_i(portIndex), 
+        writeFramePort_o=>open,
         writeFrameFull_i=>writeFrameFull_i(portIndex), writeFrame_o=>writeFrame_o(portIndex), 
         writeFrameAbort_o=>writeFrameAbort_o(portIndex), writeContent_o=>writeContent_o(portIndex), 
         writeContentData_o=>writeContentData_o(portIndex));
@@ -382,9 +401,8 @@ end architecture;
 
 
 -------------------------------------------------------------------------------
--- SwitchPort
+-- SwitchPort.
 -------------------------------------------------------------------------------
-
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all; 
@@ -396,6 +414,7 @@ use work.rio_common.all;
 -------------------------------------------------------------------------------
 entity SwitchPort is
   generic(
+    MAINTENANCE_LOOKUP : boolean;
     PORT_INDEX : natural);
   port(
     clk : in std_logic;
@@ -436,6 +455,7 @@ entity SwitchPort is
     readContent_o : out std_logic;
     readContentEnd_i : in std_logic;
     readContentData_i : in std_logic_vector(31 downto 0);
+    writeFramePort_o : out std_logic_vector(7 downto 0);
     writeFrameFull_i : in std_logic;
     writeFrame_o : out std_logic;
     writeFrameAbort_o : out std_logic;
@@ -457,12 +477,11 @@ architecture SwitchPortImpl of SwitchPort is
                            STATE_WAIT_TARGET_WRITE,
                            STATE_WAIT_COMPLETE);
   signal masterState : MasterStateType;
-
-  type SlaveStateType is (STATE_IDLE, STATE_SEND_ACK);
-  signal slaveState : SlaveStateType;
-  
   alias ftype : std_logic_vector(3 downto 0) is readContentData_i(19 downto 16);
   alias tt : std_logic_vector(1 downto 0) is readContentData_i(21 downto 20);
+  
+  type SlaveStateType is (STATE_IDLE, STATE_SEND_ACK);
+  signal slaveState : SlaveStateType;
   
 begin
 
@@ -542,7 +561,7 @@ begin
               masterData_o <= readContentData_i;
 
               -- Check if this is a maintenance frame.
-              if (ftype = FTYPE_MAINTENANCE_CLASS) then
+              if ((not MAINTENANCE_LOOKUP) and (ftype = FTYPE_MAINTENANCE_CLASS)) then
                 -- This is a maintenance frame.
 
                 -- Always route these frames to the maintenance module in the
@@ -714,13 +733,12 @@ begin
     end if;
   end process;
 
-
   -----------------------------------------------------------------------------
   -- Slave interface process.
-  -----------------------------------------------------------------------------
   -- Addr |  Read  | Write
   --    0 |  full  | abort & complete
   --    1 |  full  | frameData
+  -----------------------------------------------------------------------------
   writeContentData_o <= slaveData_i;
   Slave: process(clk, areset_n)
   begin
@@ -729,6 +747,7 @@ begin
 
       slaveData_o <= '0';
 
+      writeFramePort_o <= (others=>'0');
       writeFrame_o <= '0';
       writeFrameAbort_o <= '0';
       writeContent_o <= '0';
@@ -757,6 +776,7 @@ begin
                 -- Writing the status address.
                 -- Update the buffering output signals according to the input
                 -- data.
+                writeFramePort_o <= slaveAddr_i(8 downto 1);
                 writeFrame_o <= slaveData_i(0);
                 writeFrameAbort_o <= slaveData_i(1);
               else
@@ -801,6 +821,8 @@ begin
   slaveAck_o <= '1' when (slaveState = STATE_SEND_ACK) else '0';
   
 end architecture;
+
+
 
 
 
@@ -892,113 +914,157 @@ end entity;
 -------------------------------------------------------------------------------
 architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
 
-  component MemoryDualPort is
+  component SwitchPort is
     generic(
-      ADDRESS_WIDTH : natural := 1;
-      DATA_WIDTH : natural := 1);
+      MAINTENANCE_LOOKUP : boolean;
+      PORT_INDEX : natural);
     port(
-      clkA_i : in std_logic;
-      enableA_i : in std_logic;
-      writeEnableA_i : in std_logic;
-      addressA_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-      dataA_i : in std_logic_vector(DATA_WIDTH-1 downto 0);
-      dataA_o : out std_logic_vector(DATA_WIDTH-1 downto 0);
+      clk : in std_logic;
+      areset_n : in std_logic;
 
-      clkB_i : in std_logic;
-      enableB_i : in std_logic;
-      addressB_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-      dataB_o : out std_logic_vector(DATA_WIDTH-1 downto 0));
+      masterCyc_o : out std_logic;
+      masterStb_o : out std_logic;
+      masterWe_o : out std_logic;
+      masterAddr_o : out std_logic_vector(9 downto 0);
+      masterData_o : out std_logic_vector(31 downto 0);
+      masterData_i : in std_logic;
+      masterAck_i : in std_logic;
+
+      slaveCyc_i : in std_logic;
+      slaveStb_i : in std_logic;
+      slaveWe_i : in std_logic;
+      slaveAddr_i : in std_logic_vector(9 downto 0);
+      slaveData_i : in std_logic_vector(31 downto 0);
+      slaveData_o : out std_logic;
+      slaveAck_o : out std_logic;
+
+      lookupStb_o : out std_logic;
+      lookupAddr_o : out std_logic_vector(15 downto 0);
+      lookupData_i : in std_logic_vector(7 downto 0);
+      lookupAck_i : in std_logic;
+
+      readFrameEmpty_i : in std_logic;
+      readFrame_o : out std_logic;
+      readFrameRestart_o : out std_logic;
+      readFrameAborted_i : in std_logic;
+      readContentEmpty_i : in std_logic;
+      readContent_o : out std_logic;
+      readContentEnd_i : in std_logic;
+      readContentData_i : in std_logic_vector(31 downto 0);
+      writeFramePort_o : out std_logic_vector(7 downto 0);
+      writeFrameFull_i : in std_logic;
+      writeFrame_o : out std_logic;
+      writeFrameAbort_o : out std_logic;
+      writeContent_o : out std_logic;
+      writeContentData_o : out std_logic_vector(31 downto 0));
   end component;
+
+  -----------------------------------------------------------------------------
+  -- Signals between the port and the packet-queue.
+  -----------------------------------------------------------------------------
   
-  component MemorySinglePort is
-    generic(
-      ADDRESS_WIDTH : natural := 1;
-      DATA_WIDTH : natural := 1);
-    port(
-      clk_i : in std_logic;
-      enable_i : in std_logic;
-      writeEnable_i : in std_logic;
-      address_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-      data_i : in std_logic_vector(DATA_WIDTH-1 downto 0);
-      data_o : out std_logic_vector(DATA_WIDTH-1 downto 0));
-  end component;
-
-  component Crc16CITT is
-    port(
-      d_i : in std_logic_vector(15 downto 0);
-      crc_i : in std_logic_vector(15 downto 0);
-      crc_o : out std_logic_vector(15 downto 0));
-  end component;
-
-  type MasterStateType is (STATE_IDLE,
-                           STATE_CHECK_FRAME,
-                           STATE_RELAY_READ_RESPONSE,
-                           STATE_RELAY_WRITE_RESPONSE,
-                           STATE_SEND_READ_REQUEST,
-                           STATE_SEND_WRITE_REQUEST,
-                           STATE_SEND_READ_RESPONSE,
-                           STATE_SEND_WRITE_RESPONSE,
-                           STATE_START_PORT_LOOKUP,
-                           STATE_READ_PORT_LOOKUP,
-                           STATE_READ_TARGET_PORT,
-                           STATE_WAIT_TARGET_PORT,
-                           STATE_WAIT_TARGET_WRITE,
-                           STATE_WAIT_COMPLETE,
-                           STATE_WAIT_SLAVE);
-  signal masterState : MasterStateType;
-
-  signal crc16Data : std_logic_vector(31 downto 0);
-  signal crc16Current : std_logic_vector(15 downto 0);
-  signal crc16Temp : std_logic_vector(15 downto 0);
-  signal crc16Next : std_logic_vector(15 downto 0);
-
-  signal configEnable : std_logic;
-  signal configWrite : std_logic;
-  signal configAddress : std_logic_vector(23 downto 0);
-  signal configDataWrite : std_logic_vector(31 downto 0);
-  signal configDataRead, configDataReadInternal : std_logic_vector(31 downto 0);
-
-  signal outboundFrameEnable : std_logic;
-  signal outboundFrameWrite : std_logic;
-  signal outboundFrameAddress : std_logic_vector(2 downto 0);
-  signal outboundFrameDataWrite : std_logic_vector(31 downto 0);
-  signal outboundFrameDataRead : std_logic_vector(31 downto 0);
-  signal outboundFrameLength : std_logic_vector(2 downto 0);
-
-  type SlaveStateType is (STATE_READY,
-                          STATE_BUSY);
-  signal slaveState : SlaveStateType;
-  signal slaveAck : std_logic;
-  
-  signal inboundFrameReady : std_logic;
+  signal outboundFramePort : std_logic_vector(7 downto 0);
+  signal outboundReadFrameEmpty : std_logic;
+  signal outboundReadFrame : std_logic;
+  signal outboundReadContent : std_logic;
+  signal outboundReadContentEnd : std_logic;
+  signal outboundReadContentData : std_logic_vector(31 downto 0);
   signal inboundFramePort : std_logic_vector(7 downto 0);
-  signal inboundFrameLength : natural range 0 to 7;
-  signal inboundFrameComplete : std_logic;
-  
+  signal inboundWriteFrameFull : std_logic;
+  signal inboundWriteFrame : std_logic;
+  signal inboundWriteFrameAbort : std_logic;
+  signal inboundWriteContent : std_logic;
+  signal inboundWriteContentData : std_logic_vector(31 downto 0);
+
+  -----------------------------------------------------------------------------
+  -- Signals between the packet-queue and RioLogicalCommon.
+  -----------------------------------------------------------------------------
+
+  signal inboundReadFrameEmpty : std_logic;
+  signal inboundReadFrame : std_logic;
+  signal inboundReadContent : std_logic;
+  signal inboundReadContentEnd : std_logic;
+  signal inboundReadContentData : std_logic_vector(31 downto 0);
+  signal outboundWriteFrameFull : std_logic;
+  signal outboundWriteFrame : std_logic;
+  signal outboundWriteFrameAbort : std_logic;
+  signal outboundWriteContent : std_logic;
+  signal outboundWriteContentData : std_logic_vector(31 downto 0);
+
+  -----------------------------------------------------------------------------
+  -- Signals between RioLogicalCommon and PacketHandler.
+  -----------------------------------------------------------------------------
+
+  signal inboundCyc : std_logic;
+  signal inboundStb : std_logic;
+  signal inboundAdr : std_logic_vector(7 downto 0);
+  signal inboundDat : std_logic_vector(31 downto 0);
+  signal inboundAck : std_logic;
+  signal outboundCyc : std_logic_vector(0 downto 0);
+  signal outboundStb : std_logic_vector(0 downto 0);
+  signal outboundDat : std_logic_vector(31 downto 0);
+  signal outboundAck : std_logic_vector(0 downto 0);
+
+  -----------------------------------------------------------------------------
+  -- Signals between PacketHandlers and maintenance controllers.
+  -----------------------------------------------------------------------------
+
   signal vc : std_logic;
   signal crf : std_logic;
   signal prio : std_logic_vector(1 downto 0);
   signal tt : std_logic_vector(1 downto 0);
-  signal ftype : std_logic_vector(3 downto 0);
-  signal destinationId : std_logic_vector(15 downto 0);
-  signal sourceId : std_logic_vector(15 downto 0);
-  signal transaction : std_logic_vector(3 downto 0);
-  signal size : std_logic_vector(3 downto 0);
-  signal srcTid : std_logic_vector(7 downto 0);
-  signal hopCount : std_logic_vector(7 downto 0);
-  signal configOffset : std_logic_vector(20 downto 0);
-  signal wdptr : std_logic;
-  signal content : std_logic_vector(63 downto 0);
+  signal tid : std_logic_vector(7 downto 0);
 
+  signal readRequestInbound : std_logic;
+  signal writeRequestInbound : std_logic;
+  signal readResponseInbound : std_logic;
+  signal writeResponseInbound : std_logic;
+  signal portWriteInbound : std_logic;
+  signal dstIdInbound : std_logic_vector(31 downto 0);
+  signal srcIdInbound : std_logic_vector(31 downto 0);
+  signal hopInbound : std_logic_vector(7 downto 0);
+  signal offsetInbound : std_logic_vector(20 downto 0);
+  signal wdptrInbound: std_logic;
+  signal payloadLengthInbound : std_logic_vector(3 downto 0);
+  signal payloadIndexInbound : std_logic_vector(3 downto 0);
+  signal payloadInbound : std_logic_vector(31 downto 0);
+  signal doneInbound : std_logic;
+
+  signal readRequestOutbound : std_logic;
+  signal writeRequestOutbound : std_logic;
+  signal readResponseOutbound : std_logic;
+  signal writeResponseOutbound : std_logic;
+  signal portWriteOutbound : std_logic;
+  signal dstIdOutbound : std_logic_vector(31 downto 0);
+  signal srcIdOutbound : std_logic_vector(31 downto 0);
+  signal hopOutbound : std_logic_vector(7 downto 0);
+  signal wdptrOutbound: std_logic;
+  signal payloadLengthOutbound : std_logic_vector(3 downto 0);
+  signal payloadIndexOutbound : std_logic_vector(3 downto 0);
+  signal payloadOutbound : std_logic_vector(31 downto 0);
+  signal doneOutbound : std_logic;
+
+  signal readRequestMaint : std_logic;
+  signal writeRequestMaint : std_logic;
+  signal readResponseMaint : std_logic;
+  signal writeResponseMaint : std_logic;
+  signal wdptrMaint : std_logic;
+  signal payloadLengthMaint : std_logic_vector(3 downto 0);
+  signal payloadIndexMaint : std_logic_vector(3 downto 0);
+  signal payloadMaint : std_logic_vector(31 downto 0);
+  signal doneMaint : std_logic;
+  
+  -----------------------------------------------------------------------------
+  -- 
+  -----------------------------------------------------------------------------
+
+  signal sendPacket : std_logic;
+  signal forwardPacket : std_logic;
+  
   -----------------------------------------------------------------------------
   -- Route table access signals.
   -----------------------------------------------------------------------------
 
-  signal address0 : std_logic_vector(7 downto 0);
-  signal address1 : std_logic_vector(7 downto 0);
-  signal address2 : std_logic_vector(7 downto 0);
-  signal address3 : std_logic_vector(7 downto 0);
-  
   signal lookupEnable : std_logic;
   signal lookupAddress : std_logic_vector(10 downto 0);
   signal lookupData : std_logic_vector(7 downto 0);
@@ -1015,473 +1081,256 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
   -----------------------------------------------------------------------------
   -- Configuration space signals.
   -----------------------------------------------------------------------------
-  
+
+  signal configStb : std_logic;
+  signal configWe : std_logic;
+  signal configAdr : std_logic_vector(23 downto 0);
+  signal configDataWrite : std_logic_vector(31 downto 0);
+  signal configDataRead, configDataReadInternal : std_logic_vector(31 downto 0);
+  signal configAck : std_logic;
+
+  -- REMARK: Make these variables instead...
   signal discovered : std_logic;
-  
   signal hostBaseDeviceIdLocked : std_logic;
   signal hostBaseDeviceId : std_logic_vector(15 downto 0);
   signal componentTag : std_logic_vector(31 downto 0);
-
   signal portLinkTimeout : std_logic_vector(23 downto 0);
-  
   signal outputPortEnable : Array1(SWITCH_PORTS-1 downto 0);
   signal inputPortEnable : Array1(SWITCH_PORTS-1 downto 0);
   
 begin
 
   -----------------------------------------------------------------------------
-  -- Memory to contain the outbound frame.
+  -- Normal switch port instance interfacing the switch interconnect.
   -----------------------------------------------------------------------------
-  
-  OutboundFrameMemory: MemorySinglePort
+  -- REMARK: PORT_INDEX is not used in this instantiation.
+  -- REMARK: Add generic to disable the maintenance routing to this port...
+  PortInst: SwitchPort
     generic map(
-      ADDRESS_WIDTH=>3, DATA_WIDTH=>32)
+      MAINTENANCE_LOOKUP=>true,
+      PORT_INDEX=>0)
     port map(
-      clk_i=>clk,
-      enable_i=>outboundFrameEnable, writeEnable_i=>outboundFrameWrite,
-      address_i=>outboundFrameAddress,
-      data_i=>outboundFrameDataWrite, data_o=>outboundFrameDataRead);
-  
-  -----------------------------------------------------------------------------
-  -- CRC generation for outbound frames.
-  -----------------------------------------------------------------------------
+      clk=>clk, areset_n=>areset_n,
+      masterCyc_o=>masterCyc_o,
+      masterStb_o=>masterStb_o,
+      masterWe_o=>masterWe_o,
+      masterAddr_o=>masterAddr_o,
+      masterData_o=>masterData_o,
+      masterData_i=>masterData_i,
+      masterAck_i=>masterAck_i,
+      slaveCyc_i=>slaveCyc_i,
+      slaveStb_i=>slaveStb_i,
+      slaveWe_i=>slaveWe_i,
+      slaveAddr_i=>slaveAddr_i,
+      slaveData_i=>slaveData_i,
+      slaveData_o=>slaveData_o,
+      slaveAck_o=>slaveAck_o,
+      lookupStb_o=>open,
+      lookupAddr_o=>open, 
+      lookupData_i=>outboundFramePort,
+      lookupAck_i=>'1',
+      readFrameEmpty_i=>outboundReadFrameEmpty,
+      readFrame_o=>outboundReadFrame, 
+      readFrameRestart_o=>open,
+      readFrameAborted_i=>'0', 
+      readContentEmpty_i=>'0',
+      readContent_o=>outboundReadContent, 
+      readContentEnd_i=>outboundReadContentEnd,
+      readContentData_i=>outboundReadContentData, 
+      writeFramePort_o=>inboundFramePort,
+      writeFrameFull_i=>inboundWriteFrameFull,
+      writeFrame_o=>inboundWriteFrame, 
+      writeFrameAbort_o=>inboundWriteFrameAbort,
+      writeContent_o=>inboundWriteContent, 
+      writeContentData_o=>inboundWriteContentData);
 
-  crc16Data <= outboundFrameDataWrite;
-  
-  -- REMARK: Insert FFs here to make the critical path shorter...
-  Crc16High: Crc16CITT
+  -----------------------------------------------------------------------------
+  -- Packet queue.
+  -- This queue should only contain one packet.
+  -----------------------------------------------------------------------------
+  -- REMARK: Use a packet-buffer with a configurable maximum sized packet...
+  PacketQueue: RioPacketBuffer
+    generic map(SIZE_ADDRESS_WIDTH=>1, CONTENT_ADDRESS_WIDTH=>7)
     port map(
-      d_i=>crc16Data(31 downto 16), crc_i=>crc16Current, crc_o=>crc16Temp);
-  Crc16Low: Crc16CITT
-    port map(
-      d_i=>crc16Data(15 downto 0), crc_i=>crc16Temp, crc_o=>crc16Next);
+      clk=>clk, areset_n=>areset_n, 
+      inboundWriteFrameFull_o=>inboundWriteFrameFull, 
+      inboundWriteFrame_i=>inboundWriteFrame, 
+      inboundWriteFrameAbort_i=>inboundWriteFrameAbort, 
+      inboundWriteContent_i=>inboundWriteContent, 
+      inboundWriteContentData_i=>inboundWriteContentData, 
+      inboundReadFrameEmpty_o=>inboundReadFrameEmpty, 
+      inboundReadFrame_i=>inboundReadFrame, 
+      inboundReadFrameRestart_i=>'0', 
+      inboundReadFrameAborted_o=>open, 
+      inboundReadContentEmpty_o=>open, 
+      inboundReadContent_i=>inboundReadContent, 
+      inboundReadContentEnd_o=>inboundReadContentEnd, 
+      inboundReadContentData_o=>inboundReadContentData, 
+      outboundWriteFrameFull_o=>outboundWriteFrameFull, 
+      outboundWriteFrame_i=>outboundWriteFrame, 
+      outboundWriteFrameAbort_i=>outboundWriteFrameAbort, 
+      outboundWriteContent_i=>outboundWriteContent, 
+      outboundWriteContentData_i=>outboundWriteContentData, 
+      outboundReadFrameEmpty_o=>outboundReadFrameEmpty, 
+      outboundReadFrame_i=>outboundReadFrame, 
+      outboundReadFrameRestart_i=>'0', 
+      outboundReadFrameAborted_o=>open, 
+      outboundReadContentEmpty_o=>open, 
+      outboundReadContent_i=>outboundReadContent, 
+      outboundReadContentEnd_o=>outboundReadContentEnd, 
+      outboundReadContentData_o=>outboundReadContentData);
   
   -----------------------------------------------------------------------------
-  -- Master interface process.
+  -- Logical common packet parser.
+  -- This module removes CRC and unpack addresses in the inbound direction and
+  -- adds CRC and packs addresses in the outbound direction.
   -----------------------------------------------------------------------------
-  Master: process(clk, areset_n)
+  LogicalCommon: RioLogicalCommon
+    generic map(PORTS=>1)
+    port map(
+      clk=>clk, areset_n=>areset_n, enable=>'1', 
+      readFrameEmpty_i=>inboundReadFrameEmpty, 
+      readFrame_o=>inboundReadFrame, 
+      readContent_o=>inboundReadContent, 
+      readContentEnd_i=>inboundReadContentEnd, 
+      readContentData_i=>inboundReadContentData, 
+      writeFrameFull_i=>outboundWriteFrameFull, 
+      writeFrame_o=>outboundWriteFrame, 
+      writeFrameAbort_o=>outboundWriteFrameAbort, 
+      writeContent_o=>outboundWriteContent, 
+      writeContentData_o=>outboundWriteContentData, 
+      inboundCyc_o=>inboundCyc, 
+      inboundStb_o=>inboundStb, 
+      inboundAdr_o=>inboundAdr, 
+      inboundDat_o=>inboundDat, 
+      inboundAck_i=>inboundAck, 
+      outboundCyc_i=>outboundCyc, 
+      outboundStb_i=>outboundStb, 
+      outboundDat_i=>outboundDat, 
+      outboundAck_o=>outboundAck);
+
+  -----------------------------------------------------------------------------
+  -- Inbound maintenance packet parser.
+  -- Unpack inbound maintenance packets.
+  -----------------------------------------------------------------------------
+  -- REMARK: add another receiver that discards all other packet types...
+  -- REMARK: Connect enable to something...
+  payloadIndexInbound <= payloadIndexOutbound when (forwardPacket = '1') else payloadIndexMaint;
+  doneInbound <= doneOutbound when (forwardPacket = '1') else doneMaint;
+  InboundPacket: MaintenanceInbound
+    port map(
+      clk=>clk, areset_n=>areset_n, enable=>'1', 
+      readRequestReady_o=>readRequestInbound,
+      writeRequestReady_o=>writeRequestInbound,
+      readResponseReady_o=>readResponseInbound,
+      writeResponseReady_o=>writeResponseInbound,
+      portWriteReady_o=>portWriteInbound,
+      vc_o=>vc, 
+      crf_o=>crf, 
+      prio_o=>prio, 
+      tt_o=>tt, 
+      dstid_o=>dstIdInbound, 
+      srcid_o=>srcIdInbound,
+      tid_o=>tid,
+      hop_o=>hopInbound,
+      offset_o=>offsetInbound,
+      wdptr_o=>wdptrInbound,
+      payloadLength_o=>payloadLengthInbound, 
+      payloadIndex_i=>payloadIndexInbound, 
+      payload_o=>payloadInbound, 
+      done_i=>doneInbound, 
+      inboundCyc_i=>inboundCyc, 
+      inboundStb_i=>inboundStb, 
+      inboundAdr_i=>inboundAdr, 
+      inboundDat_i=>inboundDat, 
+      inboundAck_o=>inboundAck);
+
+  -----------------------------------------------------------------------------
+  -- Outbound maintenance packet generator.
+  -----------------------------------------------------------------------------
+  readRequestOutbound <= (readRequestInbound and sendPacket) when (forwardPacket = '1') else '0';
+  writeRequestOutbound <= (writeRequestInbound and sendPacket) when (forwardPacket = '1') else '0';
+  readResponseOutbound <= (readResponseInbound and sendPacket) when (forwardPacket = '1') else readResponseMaint;
+  writeResponseOutbound <= (writeResponseInbound and sendPacket) when (forwardPacket = '1') else writeResponseMaint;
+  portWriteOutbound <= (portWriteInbound and sendPacket) when (forwardPacket = '1') else '0';
+  srcIdOutbound <= srcIdInbound when (forwardPacket = '1') else dstIdInbound;
+  dstIdOutbound <= dstIdInbound when (forwardPacket = '1') else srcIdInbound;
+  hopOutbound <= std_logic_vector(unsigned(hopInbound)-1) when (forwardPacket = '1') else x"ff";
+  wdptrOutbound <= wdptrInbound when (forwardPacket = '1') else wdptrMaint;
+  payloadLengthOutbound <= payloadLengthInbound when (forwardPacket = '1') else payloadLengthMaint;
+  payloadOutbound <= payloadInbound when (forwardPacket = '1') else payloadMaint;
+  -- REMARK: Connect enable to something...
+  OutboundPacket: MaintenanceOutbound
+    port map(
+      clk=>clk, areset_n=>areset_n, enable=>'1', 
+      readRequestReady_i=>readRequestOutbound,
+      writeRequestReady_i=>writeRequestOutbound,
+      readResponseReady_i=>readResponseOutbound, 
+      writeResponseReady_i=>writeResponseOutbound, 
+      portWriteReady_i=>portWriteOutbound,
+      vc_i=>vc, 
+      crf_i=>crf, 
+      prio_i=>prio, 
+      tt_i=>tt, 
+      dstid_i=>dstIdOutbound, 
+      srcid_i=>srcIdOutbound,
+      status_i=>"0000",
+      tid_i=>tid,
+      hop_i=>hopOutbound,
+      offset_i=>offsetInbound,
+      wdptr_i=>wdptrOutbound,
+      payloadLength_i=>payloadLengthOutbound, 
+      payloadIndex_o=>payloadIndexOutbound, 
+      payload_i=>payloadOutbound, 
+      done_o=>doneOutbound, 
+      outboundCyc_o=>outboundCyc(0), 
+      outboundStb_o=>outboundStb(0), 
+      outboundDat_o=>outboundDat, 
+      outboundAck_i=>outboundAck(0));
+
+  -----------------------------------------------------------------------------
+  -- Main switch maintenance controller.
+  -- This controller decides when to forward packets and when to consume and
+  -- produce responses instead.
+  -- It also determines when portWrite-packets are allowed to be sent.
+  -----------------------------------------------------------------------------
+  RioSwitchMaintenance: process(clk, areset_n)
+    type MasterStateType is (STATE_IDLE,
+                             STATE_START_PORT_LOOKUP,
+                             STATE_READ_PORT_LOOKUP,
+                             STATE_WAIT_COMPLETE);
+    variable masterState : MasterStateType;
   begin
     if (areset_n = '0') then
-      masterState <= STATE_IDLE;
+      masterState := STATE_IDLE;
 
+      sendPacket <= '0';
+      forwardPacket <= '0';
+      outboundFramePort <= (others=>'0');
+      
       lookupStb_o <= '0';
       lookupAddr_o <= (others => '0');
-      
-      masterCyc_o <= '0';
-      masterStb_o <= '0';
-      masterWe_o <= '0';
-      masterAddr_o <= (others => '0');
-      masterData_o <= (others => '0');
-
-      configEnable <= '0';
-      configWrite <= '0';
-      configAddress <= (others => '0');
-      configDataWrite <= (others => '0');
-
-      outboundFrameEnable <= '0';
-      outboundFrameWrite <= '0';
-      outboundFrameAddress <= (others=>'0');
-      outboundFrameDataWrite <= (others=>'0');
-      outboundFrameLength <= (others=>'0');
-
-      inboundFrameComplete <= '0';
     elsif (clk'event and clk = '1') then
-      configEnable <= '0';
-      configWrite <= '0';
-      inboundFrameComplete <= '0';
-
       case masterState is
 
         when STATE_IDLE =>
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          
-          -- Wait for a full frame to be available.
-          if (inboundFrameReady = '1') then
-            if (inboundFrameLength > 3) then
-              masterState <= STATE_CHECK_FRAME;
-            else
-              -- Frame is too short.
-              -- REMARK: Discard the frame.
-            end if;
+          -- Wait for frame to be available.
+          -- REMARK: Discard erronous frames.
+          sendPacket <= '0';
+          if (((readRequestInbound = '1') or (writeRequestInbound = '1')) and (hopInbound = x"00")) then
+            masterState := STATE_WAIT_COMPLETE;
+            forwardPacket <= '0';
+            outboundFramePort <= inboundFramePort;
+          elsif (((readResponseInbound = '1') or ((readRequestInbound = '1') and (hopInbound /= x"00"))) or
+                 ((writeResponseInbound = '1') or ((writeRequestInbound = '1') and (hopInbound /= x"00"))) or
+                 (portWriteInbound = '1')) then
+            masterState := STATE_START_PORT_LOOKUP;
+            forwardPacket <= '1';
           end if;
           
-        when STATE_CHECK_FRAME =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-
-          -- Check if the frame has 16-bit addresses and is a maintenance frame.
-          if (tt = "01") and (ftype = FTYPE_MAINTENANCE_CLASS) then
-            -- Maintenance class frame and 16-bit addresses.
-
-            -- Check the frame type.
-            case transaction is
-              
-              when "0000" =>
-                ---------------------------------------------------------------
-                -- Maintenance read request.
-                ---------------------------------------------------------------
-
-                -- Check if the frame is for us.
-                if (hopCount = x"00") then
-                  -- This frame is for us.
-                  configEnable <= '1';
-                  configWrite <= '0';
-                  configAddress <= configOffset & wdptr & "00";
-                  
-                  outboundFrameEnable <= '1';
-                  outboundFrameWrite <= '1';
-                  outboundFrameAddress <= (others=>'0');
-                  outboundFrameDataWrite <= "000000" & vc & crf & prio & tt & ftype & sourceId;
-                  crc16Current <= x"ffff";
-                  
-                  masterState <= STATE_SEND_READ_RESPONSE;
-                else
-                  -- This frame is not for us.
-                  -- Decrement hop_count and relay.
-                  outboundFrameEnable <= '1';
-                  outboundFrameWrite <= '1';
-                  outboundFrameAddress <= (others=>'0');
-                  outboundFrameDataWrite <= "000000" & vc & crf & prio & tt & ftype & destinationId;
-                  crc16Current <= x"ffff";
-
-                  masterState <= STATE_SEND_READ_REQUEST;
-                end if;
-                
-              when "0001" =>
-                ---------------------------------------------------------------
-                -- Maintenance write request.
-                ---------------------------------------------------------------
-
-                -- Check if the frame is for us.
-                if (hopCount = x"00") then
-                  -- This frame is for us.
-                  configEnable <= '1';
-                  configWrite <= '1';
-                  configAddress <= configOffset & wdptr & "00";
-                  
-                  if (wdptr = '0') then
-                    configDataWrite <= content(63 downto 32);
-                  else
-                    configDataWrite <= content(31 downto 0);
-                  end if;
-                  
-                  outboundFrameEnable <= '1';
-                  outboundFrameWrite <= '1';
-                  outboundFrameAddress <= (others=>'0');
-                  outboundFrameDataWrite <= "000000" & vc & crf & prio & tt & ftype & sourceId;
-                  crc16Current <= x"ffff";
-                  
-                  masterState <= STATE_SEND_WRITE_RESPONSE;
-                else
-                  -- This frame is not for us.
-                  -- Decrement hop_count and relay.
-                  outboundFrameEnable <= '1';
-                  outboundFrameWrite <= '1';
-                  outboundFrameAddress <= (others=>'0');
-                  outboundFrameDataWrite <= "000000" & vc & crf & prio & tt & ftype & destinationId;
-                  crc16Current <= x"ffff";
-
-                  masterState <= STATE_SEND_WRITE_REQUEST;
-                end if;
-              
-              when "0010" =>
-                ---------------------------------------------------------------
-                -- Maintenance read response frame.
-                ---------------------------------------------------------------
-
-                outboundFrameEnable <= '1';
-                outboundFrameWrite <= '1';
-                outboundFrameAddress <= (others=>'0');
-                outboundFrameDataWrite <= "000000" & vc & crf & prio & tt & ftype & destinationId;
-                crc16Current <= x"ffff";
-                
-                -- Relay frame.
-                masterState <= STATE_RELAY_READ_RESPONSE;
-                
-              when "0011" =>
-                ---------------------------------------------------------------
-                -- Maintenance write response frame.
-                ---------------------------------------------------------------
-
-                outboundFrameEnable <= '1';
-                outboundFrameWrite <= '1';
-                outboundFrameAddress <= (others=>'0');
-                outboundFrameDataWrite <= "000000" & vc & crf & prio & tt & ftype & destinationId;
-                crc16Current <= x"ffff";
-                
-                -- Relay frame.
-                masterState <= STATE_RELAY_WRITE_RESPONSE;
-                
-              when "0100" =>
-                ---------------------------------------------------------------
-                -- Maintenance port write frame.
-                ---------------------------------------------------------------
-
-                -- REMARK: Support these???
-                
-              when others =>
-                ---------------------------------------------------------------
-                -- Unsupported frame type.
-                ---------------------------------------------------------------
-                
-                -- REMARK: Support these???
-            end case;
-          else
-            -- Non-maintenance class frame or unsupported address type.
-            -- REMARK: These should not end up here... discard them???
-          end if;
-
-        when STATE_RELAY_READ_RESPONSE =>
-          ---------------------------------------------------------------------
-          -- A maintenance response has been received. It should be relayed as
-          -- is using the destinationId. 
-          ---------------------------------------------------------------------
-          
-          case to_integer(unsigned(outboundFrameAddress)) is
-            when 0 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= sourceId & transaction & size & srcTid;
-              crc16Current <= crc16Next;
-            when 1 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= hopCount & configOffset & wdptr & "00";
-              crc16Current <= crc16Next;
-            when 2 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= content(63 downto 32);
-              crc16Current <= crc16Next;
-            when 3 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= content(31 downto 0);
-              crc16Current <= crc16Next;
-            when 4 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite(31 downto 16) <= crc16Next;
-              outboundFrameDataWrite(15 downto 0) <= x"0000";
-            when others =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '0';
-              outboundFrameAddress <= (others=>'0');
-              outboundFrameLength <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              masterState <= STATE_START_PORT_LOOKUP;
-          end case;
-          
-        when STATE_RELAY_WRITE_RESPONSE =>
-          ---------------------------------------------------------------------
-          -- A maintenance response has been received. It should be relayed as
-          -- is using the destinationId. 
-          ---------------------------------------------------------------------
-
-          case to_integer(unsigned(outboundFrameAddress)) is
-            when 0 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= sourceId & transaction & size & srcTid;
-              crc16Current <= crc16Next;
-            when 1 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= hopCount & configOffset & wdptr & "00";
-              crc16Current <= crc16Next;
-            when 2 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite(31 downto 16) <= crc16Next;
-              outboundFrameDataWrite(15 downto 0) <= x"0000";
-            when others =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '0';
-              outboundFrameAddress <= (others=>'0');
-              outboundFrameLength <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              masterState <= STATE_START_PORT_LOOKUP;
-          end case;          
-
-        when STATE_SEND_READ_REQUEST =>
-          ---------------------------------------------------------------------
-          -- A read request has been received but the hopcount is larger than
-          -- zero. Decrement the hopcount, recalculate the crc and relay the
-          -- frame using the destinationId. 
-          ---------------------------------------------------------------------
-          
-          case to_integer(unsigned(outboundFrameAddress)) is
-            when 0 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= sourceId & transaction & size & srcTid;
-              crc16Current <= crc16Next;
-            when 1 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= std_logic_vector(unsigned(hopCount) - 1) & configOffset & wdptr & "00";
-              crc16Current <= crc16Next;
-            when 2 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite(31 downto 16) <= crc16Next;
-              outboundFrameDataWrite(15 downto 0) <= x"0000";
-            when others =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '0';
-              outboundFrameAddress <= (others=>'0');
-              outboundFrameLength <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              masterState <= STATE_START_PORT_LOOKUP;
-          end case;
-          
-        when STATE_SEND_WRITE_REQUEST =>
-          ---------------------------------------------------------------------
-          -- A write request has been received but the hopcount is larger than
-          -- zero. Decrement the hopcount, recalculate the crc and relay the
-          -- frame using the destinationId. 
-          ---------------------------------------------------------------------
-          
-          case to_integer(unsigned(outboundFrameAddress)) is
-            when 0 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= sourceId & transaction & size & srcTid;
-              crc16Current <= crc16Next;
-            when 1 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= std_logic_vector(unsigned(hopCount) - 1) & configOffset & wdptr & "00";
-              crc16Current <= crc16Next;
-            when 2 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= content(63 downto 32);
-              crc16Current <= crc16Next;
-            when 3 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= content(31 downto 0);
-              crc16Current <= crc16Next;
-            when 4 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite(31 downto 16) <= crc16Next;
-              outboundFrameDataWrite(15 downto 0) <= x"0000";
-            when others =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '0';
-              outboundFrameAddress <= (others=>'0');
-              outboundFrameLength <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              masterState <= STATE_START_PORT_LOOKUP;
-          end case;
-          
-        when STATE_SEND_READ_RESPONSE =>
-          ---------------------------------------------------------------------
-          -- A read request has been received with a hopcount that are zero.
-          -- Create a read response, calculate crc and write it to the port it
-          -- came from.
-          ---------------------------------------------------------------------
-          
-          case to_integer(unsigned(outboundFrameAddress)) is
-            when 0 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= destinationId & "0010" & "0000" & srcTid;
-              crc16Current <= crc16Next;
-            when 1 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= x"ff" & x"000000";
-              crc16Current <= crc16Next;
-            when 2 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              if (wdptr = '1') then
-                outboundFrameDataWrite <= (others => '0');
-              else
-                outboundFrameDataWrite <= configDataRead(31 downto 0);
-              end if;
-              crc16Current <= crc16Next;
-            when 3 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              if (wdptr = '1') then
-                outboundFrameDataWrite <= configDataRead(31 downto 0);
-              else
-                outboundFrameDataWrite <= (others => '0');
-              end if;
-              crc16Current <= crc16Next;
-            when 4 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite(31 downto 16) <= crc16Next;
-              outboundFrameDataWrite(15 downto 0) <= x"0000";
-            when others =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '0';
-              outboundFrameAddress <= (others=>'0');
-              outboundFrameLength <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              masterAddr_o <= '0' & inboundFramePort & '0';
-              masterState <= STATE_READ_TARGET_PORT;
-          end case;
-          
-        when STATE_SEND_WRITE_RESPONSE =>
-          ---------------------------------------------------------------------
-          -- A write request has been received with a hopcount that are zero.
-          -- Create a write response, calculate crc and write it to the port it
-          -- came from.
-          ---------------------------------------------------------------------
-
-          case to_integer(unsigned(outboundFrameAddress)) is
-            when 0 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= destinationId & "0011" & "0000" & srcTid;
-              crc16Current <= crc16Next;
-            when 1 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite <= x"ff" & x"000000";
-              crc16Current <= crc16Next;
-            when 2 =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '1';
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              outboundFrameDataWrite(31 downto 16) <= crc16Next;
-              outboundFrameDataWrite(15 downto 0) <= x"0000";
-            when others =>
-              outboundFrameEnable <= '1';
-              outboundFrameWrite <= '0';
-              outboundFrameAddress <= (others=>'0');
-              outboundFrameLength <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              masterAddr_o <= '0' & inboundFramePort & '0';
-              masterState <= STATE_READ_TARGET_PORT;
-          end case;
-
         when STATE_START_PORT_LOOKUP =>
           ---------------------------------------------------------------------
           -- 
@@ -1489,8 +1338,8 @@ begin
 
           -- Initiate a port-lookup of the destination address.
           lookupStb_o <= '1';
-          lookupAddr_o <= destinationId;
-          masterState <= STATE_READ_PORT_LOOKUP;
+          lookupAddr_o <= dstIdInbound(15 downto 0);
+          masterState := STATE_READ_PORT_LOOKUP;
 
         when STATE_READ_PORT_LOOKUP =>
           ---------------------------------------------------------------------
@@ -1505,118 +1354,23 @@ begin
             lookupStb_o <= '0';
 
             -- Wait for the target port to reply.
-            masterAddr_o <= '0' & lookupData_i & '0';
-            masterState <= STATE_READ_TARGET_PORT;
+            outboundFramePort <= lookupData_i;
+            masterState := STATE_WAIT_COMPLETE;
           else
             -- Wait until the address lookup is complete.
             -- REMARK: Timeout here???
           end if;
 
-        when STATE_READ_TARGET_PORT =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-
-          -- Read the status of the target port using the result from the
-          -- lookup in the routing table.
-          masterCyc_o <= '1';
-          masterStb_o <= '1';
-          masterWe_o <= '0';
-          masterState <= STATE_WAIT_TARGET_PORT;
-
-        when STATE_WAIT_TARGET_PORT =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-
-          -- Wait for the target port to complete the request.
-          if (masterAck_i = '1') then
-            if (masterData_i = '0') then
-              -- The target port has empty buffers to receive the frame.
-
-              -- Write the first word of the frame to the target port.
-              -- The masterData_o has already been assigned.
-              masterCyc_o <= '1';
-              masterStb_o <= '1';
-              masterWe_o <= '1';
-              masterAddr_o(0) <= '1';
-
-              -- Read the first word in the frame and update the frame address.
-              masterData_o <= outboundFrameDataRead;
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-              
-              -- Change state to transfer the frame.
-              masterState <= STATE_WAIT_TARGET_WRITE;
-            else
-              -- The target port has no empty buffer to receive the frame.
-              -- Terminate the cycle and retry later.
-              masterCyc_o <= '0';
-              masterStb_o <= '0';
-              masterState <= STATE_READ_TARGET_PORT;
-            end if;
-          else
-            -- Wait for the target port to reply.
-            -- REMARK: Timeout here???
-          end if;
-
-        when STATE_WAIT_TARGET_WRITE =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-
-          -- Wait for the target port to complete the request.
-          if (masterAck_i = '1') then
-            -- The target port is ready.
-
-            -- Check if the frame has ended.
-            if (outboundFrameLength /= outboundFrameAddress) then
-              -- The frame has not ended.
-              
-              -- There are more data to transfer.
-              masterData_o <= outboundFrameDataRead;
-              outboundFrameAddress <= std_logic_vector(unsigned(outboundFrameAddress) + 1);
-            else
-              -- There are no more data to transfer.
-              
-              -- Tell the target port that the frame is complete.
-              masterWe_o <= '1';
-              masterAddr_o(0) <= '0';
-              masterData_o <= x"00000001";
-              outboundFrameAddress <= (others=>'0');
-              
-              -- Change state to wait for the target port to finalize the write
-              -- of the full frame.
-              masterState <= STATE_WAIT_COMPLETE;
-            end if;
-          else
-            -- Wait for the target port to reply.
-            -- REMARK: Timeout here???
-          end if;
-          
         when STATE_WAIT_COMPLETE =>
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-
-          -- Wait for the target port to complete the final request.
-          if (masterAck_i = '1') then
-            -- The target port has finalized the write of the frame.
-            masterCyc_o <= '0';
-            masterStb_o <= '0';
-            masterState <= STATE_WAIT_SLAVE;
-
-            -- Indicate the frame has been read.
-            inboundFrameComplete <= '1';
-          else
-            -- Wait for the target port to reply.
-            -- REMARK: Timeout here???
+          -- REMARK: Wait for the packet to be fully transmitted to the target
+          -- port. Then reset everything for the reception of a new packet.
+          sendPacket <= '1';
+          if (doneOutbound = '1') then
+            masterState := STATE_IDLE;
           end if;
-
-        when STATE_WAIT_SLAVE =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          masterState <= STATE_IDLE;
           
         when others =>
           ---------------------------------------------------------------------
@@ -1626,183 +1380,480 @@ begin
     end if;
   end process;
 
+  -----------------------------------------------------------------------------
+  -- Bridge between the inbound RapidIO maintenance packets to the internal
+  -- config-space bus.
+  -----------------------------------------------------------------------------
+  -- REMARK: Connect enable...
+  readRequestMaint <= (readRequestInbound and sendPacket) when (forwardPacket = '0') else '0';
+  writeRequestMaint <= (writeRequestInbound and sendPacket) when (forwardPacket = '0') else '0';
+  MaintenanceBridge: RioLogicalMaintenance
+    port map(
+      clk=>clk, areset_n=>areset_n, enable=>'1', 
+      readRequestReady_i=>readRequestMaint, 
+      writeRequestReady_i=>writeRequestMaint, 
+      offset_i=>offsetInbound, 
+      wdptr_i=>wdptrInbound, 
+      payloadLength_i=>payloadLengthInbound, 
+      payloadIndex_o=>payloadIndexMaint, 
+      payload_i=>payloadInbound, 
+      done_o=>doneMaint, 
+      readResponseReady_o=>readResponseMaint, 
+      writeResponseReady_o=>writeResponseMaint, 
+      wdptr_o=>wdptrMaint, 
+      payloadLength_o=>payloadLengthMaint, 
+      payloadIndex_i=>payloadIndexOutbound, 
+      payload_o=>payloadMaint, 
+      done_i=>doneOutbound, 
+      configStb_o=>configStb, 
+      configWe_o=>configWe, 
+      configAdr_o=>configAdr(23 downto 2), 
+      configDat_o=>configDataWrite, 
+      configDat_i=>configDataRead, 
+      configAck_i=>configAck);
+  configAdr(1 downto 0) <= "00";
   
   -----------------------------------------------------------------------------
-  -- Slave interface process.
+  -- Switch configuration memory.
   -----------------------------------------------------------------------------
-  -- Addr |  Read  | Write
-  --    0 |  full  | abort & complete
-  --    1 |  full  | frameData
-  Slave: process(clk, areset_n)
+  portLinkTimeout_o <= portLinkTimeout;
+  outputPortEnable_o <= outputPortEnable;
+  inputPortEnable_o <= inputPortEnable;
+
+  -- REMARK: Connect configAck...
+  configStb_o <= '1' when ((configStb = '1') and (configAdr(23 downto 16) /= x"00")) else '0';
+  configWe_o <= configWe;
+  configAddr_o <= configAdr;
+  configData_o <= configDataWrite;
+  configDataRead <= configData_i when (configAdr(23 downto 16) /= x"00") else
+                    configDataReadInternal;
+  
+  ConfigMemory: process(areset_n, clk)
   begin
     if (areset_n = '0') then
-      slaveState <= STATE_READY;
-      slaveData_o <= '0';
-      slaveAck <= '0';
+      configDataReadInternal <= (others => '0');
+      configAck <= '0';
 
-      vc <= '0';
-      crf <= '0';
-      prio <= (others=>'0');
-      tt <= (others=>'0');
-      ftype <= (others=>'0');
-      destinationId <= (others=>'0');
-      sourceId <= (others=>'0');
-      transaction <= (others=>'0');
-      size <= (others=>'0');
-      srcTid <= (others=>'0');
-      hopCount <= (others=>'0');
-      configOffset <= (others=>'0');
-      wdptr <= '0';
-      content <= (others=>'0');
+      routeTableEnable <= '1';
+      routeTableWrite <= '0';
+      routeTableAddress <= (others => '0');
+      routeTablePortWrite <= (others => '0');
+      routeTablePortDefault <= (others => '0');
+
+      discovered <= '0';
       
-      inboundFrameReady <= '0';
-      inboundFramePort <= (others => '0');
-      inboundFrameLength <= 0;
+      hostBaseDeviceIdLocked <= '0';
+      hostBaseDeviceId <= (others => '1');
+      componentTag <= (others => '0');
+
+      portLinkTimeout <= (others => '1');
+
+      -- REMARK: These should be set to zero when a port gets initialized...
+      outputPortEnable <= (others => '0');
+      inputPortEnable <= (others => '0');
+
+      localAckIdWrite_o <= (others => '0');
     elsif (clk'event and clk = '1') then
-      slaveAck <= '0';
-
-      case slaveState is
-        when STATE_READY =>
-          ---------------------------------------------------------------------
-          -- Ready to receive a new frame.
-          ---------------------------------------------------------------------
+      routeTableWrite <= '0';
+      localAckIdWrite_o <= (others => '0');
+      
+      if (configAck = '0') then
+        if (configStb = '1') then
+          configAck <= '1';
           
-          -- Check if any cycle is active.
-          if ((slaveCyc_i = '1') and (slaveStb_i = '1') and (slaveAck = '0')) then
-            -- Cycle is active.
+          -- Check if the access is into implementation defined space or if the
+          -- access should be handled here.
+          if (configAdr(23 downto 16) /= x"00") then
+            -- Accessing implementation defined space.
+            -- Make an external access and return the resonse.
+            configDataReadInternal <= (others=>'0');
+          else
+            -- Access should be handled here.
+            
+            case (configAdr) is
+              when x"000000" =>
+                -----------------------------------------------------------------
+                -- Device Identity CAR. Read-only.
+                -----------------------------------------------------------------
 
-            -- Check if writing.
-            if (slaveWe_i = '1') then
-              -- Writing request.
-              
-              -- Check if the cycle is accessing the status- or data address.
-              if (slaveAddr_i(0) = '0') then
-                -- Writing to port status address.
+                configDataReadInternal(31 downto 16) <= DEVICE_IDENTITY;
+                configDataReadInternal(15 downto 0) <= DEVICE_VENDOR_IDENTITY;
+                
+              when x"000004" =>
+                -----------------------------------------------------------------
+                -- Device Information CAR. Read-only.
+                -----------------------------------------------------------------
 
-                if (slaveData_i(0) = '1') and (slaveData_i(1) = '0') then
-                  -- A frame has been written.
+                configDataReadInternal(31 downto 0) <= DEVICE_REV;
+                
+              when x"000008" =>
+                -----------------------------------------------------------------
+                -- Assembly Identity CAR. Read-only.
+                -----------------------------------------------------------------
 
-                  -- Indicate the frame is ready for processing.
-                  -- The slave address contains the number of the accessing port.
-                  inboundFrameReady <= '1';
-                  inboundFramePort <= slaveAddr_i(8 downto 1);
+                configDataReadInternal(31 downto 16) <= ASSY_IDENTITY;
+                configDataReadInternal(15 downto 0) <= ASSY_VENDOR_IDENTITY;
+                
+              when x"00000c" =>
+                -----------------------------------------------------------------
+                -- Assembly Informaiton CAR. Read-only.
+                -----------------------------------------------------------------
 
-                  -- Change state until the frame has been processed.
-                  slaveState <= STATE_BUSY;
-                else
-                  -- The frame has been aborted.
-                  -- Reset the received frame length.
-                  inboundFrameLength <= 0;
+                configDataReadInternal(31 downto 16) <= ASSY_REV;
+                configDataReadInternal(15 downto 0) <= x"0100";
+                
+              when x"000010" =>
+                -----------------------------------------------------------------
+                -- Processing Element Features CAR. Read-only.
+                -----------------------------------------------------------------
+                
+                -- Bridge.
+                configDataReadInternal(31) <= '0';
+                
+                -- Memory.
+                configDataReadInternal(30) <= '0';
+                
+                -- Processor.
+                configDataReadInternal(29) <= '0';
+                
+                -- Switch.
+                configDataReadInternal(28) <= '1';
+                
+                -- Reserved.
+                configDataReadInternal(27 downto 10) <= (others => '0');
+                
+                -- Extended route table configuration support.
+                configDataReadInternal(9) <= '0';
+                
+                -- Standard route table configuration support.
+                configDataReadInternal(8) <= '1';
+                
+                -- Reserved.
+                configDataReadInternal(7 downto 5) <= (others => '0');
+                
+                -- Common transport large system support.
+                configDataReadInternal(4) <= '1';
+                
+                -- Extended features.
+                configDataReadInternal(3) <= '1';
+                
+                -- Extended addressing support.
+                -- Not a processing element.
+                configDataReadInternal(2 downto 0) <= "000";
+                
+              when x"000014" =>
+                -----------------------------------------------------------------
+                -- Switch Port Information CAR. Read-only.
+                -----------------------------------------------------------------
+
+                -- Reserved.
+                configDataReadInternal(31 downto 16) <= (others => '0');
+
+                -- PortTotal.
+                configDataReadInternal(15 downto 8) <=
+                  std_logic_vector(to_unsigned(SWITCH_PORTS, 8));
+
+                -- PortNumber.
+                configDataReadInternal(7 downto 0) <= inboundFramePort;
+                
+              when x"000034" =>
+                -----------------------------------------------------------------
+                -- Switch Route Table Destination ID Limit CAR.
+                -----------------------------------------------------------------
+
+                -- Max_destId.
+                -- Support 2048 addresses.
+                configDataReadInternal(15 downto 0) <= x"0800";
+                
+              when x"000068" =>
+                -----------------------------------------------------------------
+                -- Host Base Device ID Lock CSR.
+                -----------------------------------------------------------------
+
+                if (configWe = '1') then
+                  -- Check if this field has been written before.
+                  if (hostBaseDeviceIdLocked = '0') then
+                    -- The field has not been written.
+                    -- Lock the field and set the host base device id.
+                    hostBaseDeviceIdLocked <= '1';
+                    hostBaseDeviceId <= configDataWrite(15 downto 0);
+                  else
+                    -- The field has been written.
+                    -- Check if the written data is the same as the stored.
+                    if (hostBaseDeviceId = configDataWrite(15 downto 0)) then
+                      -- Same as stored, reset the value to its initial value.
+                      hostBaseDeviceIdLocked <= '0';
+                      hostBaseDeviceId <= (others => '1');
+                    else
+                      -- Not writing the same as the stored value.
+                      -- Ignore the write.
+                    end if;
+                  end if;
                 end if;
-              else
-                -- Write frame content into the frame buffer.
+                
+                configDataReadInternal(31 downto 16) <= (others => '0');
+                configDataReadInternal(15 downto 0) <= hostBaseDeviceId;
+                
+              when x"00006c" =>
+                -----------------------------------------------------------------
+                -- Component TAG CSR.
+                -----------------------------------------------------------------
 
-                -- Check which frame index that is written.
-                case inboundFrameLength is
-                  when 0 =>
-                    vc <= slaveData_i(25);
-                    crf <= slaveData_i(24);
-                    prio <= slaveData_i(23 downto 22);
-                    tt <= slaveData_i(21 downto 20);
-                    ftype <= slaveData_i(19 downto 16);
-                    destinationId <= slaveData_i(15 downto 0);
-                    inboundFrameLength <= inboundFrameLength + 1;
-                  when 1 =>
-                    sourceId <= slaveData_i(31 downto 16);
-                    transaction <= slaveData_i(15 downto 12);
-                    size <= slaveData_i(11 downto 8);
-                    srcTid <= slaveData_i(7 downto 0);
-                    inboundFrameLength <= inboundFrameLength + 1;
-                  when 2 =>
-                    hopCount <= slaveData_i(31 downto 24);
-                    configOffset <= slaveData_i(23 downto 3);
-                    wdptr <= slaveData_i(2);
-                    inboundFrameLength <= inboundFrameLength + 1;
-                  when 3 =>
-                    -- Note that crc will be assigned here if there are no
-                    -- content in the frame.
-                    content(63 downto 32) <= slaveData_i;
-                    inboundFrameLength <= inboundFrameLength + 1;
-                  when 4 =>
-                    content(31 downto 0) <= slaveData_i;
-                    inboundFrameLength <= inboundFrameLength + 1;
-                  when others =>                
-                    -- Dont support longer frames.
-                    -- REMARK: Add support for longer frames??? Especially
-                    -- received frames that only should be routed...
-                end case;
-              end if;
+                if (configWe = '1') then
+                  componentTag <= configDataWrite;
+                end if;
+                
+                configDataReadInternal <= componentTag;
+                
+              when x"000070" =>
+                -----------------------------------------------------------------
+                -- Standard Route Configuration Destination ID Select CSR.
+                -----------------------------------------------------------------             
 
-              -- Send acknowledge.
-              slaveAck <= '1';
-            else
-              -- Reading request.
+                if (configWe = '1') then
+                  -- Write the address to access the routing table.
+                  routeTableAddress <= configDataWrite(10 downto 0);
+                end if;
+                
+                configDataReadInternal(31 downto 11) <= (others => '0');
+                configDataReadInternal(10 downto 0) <= routeTableAddress;
+                
+              when x"000074" =>
+                -----------------------------------------------------------------
+                -- Standard Route Configuration Port Select CSR.
+                -----------------------------------------------------------------
 
-              -- Reading the status address.
-              -- Always indicate that we are ready to accept a new frame.
-              slaveData_o <= '0';
+                if (configWe = '1') then
+                  -- Write the port information for the address selected by the
+                  -- above register.
+                  routeTableWrite <= '1';
+                  routeTablePortWrite <= configDataWrite(7 downto 0);
+                end if;
 
-              -- Send acknowledge.
-              slaveAck <= '1';
-            end if;
-          else
-            -- No cycle is active.
+                configDataReadInternal(31 downto 8) <= (others => '0');
+                configDataReadInternal(7 downto 0) <= routeTablePortRead;
+                
+              when x"000078" =>
+                -----------------------------------------------------------------
+                -- Standard Route Default Port CSR.
+                -----------------------------------------------------------------
+
+                if (configWe = '1') then
+                  -- Write the default route device id.
+                  routeTablePortDefault <= configDataWrite(7 downto 0);
+                end if;
+                
+                configDataReadInternal(31 downto 8) <= (others => '0');
+                configDataReadInternal(7 downto 0) <= routeTablePortDefault;
+                
+              when x"000100" =>
+                -----------------------------------------------------------------
+                -- Extended features. LP-Serial Register Block Header.
+                -----------------------------------------------------------------
+
+                -- One feature only, 0x0003=Generic End Point Free Device.
+                configDataReadInternal(31 downto 16) <= x"0000";
+                configDataReadInternal(15 downto 0) <= x"0003";
+                
+              when x"000120" =>
+                -----------------------------------------------------------------
+                -- Port Link Timeout Control CSR.
+                -----------------------------------------------------------------
+
+                if (configWe = '1') then
+                  portLinkTimeout <= configDataWrite(31 downto 8);
+                end if;
+                
+                configDataReadInternal(31 downto 8) <= portLinkTimeout;
+                configDataReadInternal(7 downto 0) <= x"00";
+                
+              when x"00013c" =>
+                -----------------------------------------------------------------
+                -- Port General Control CSR.
+                -----------------------------------------------------------------
+
+                if (configWe = '1') then
+                  discovered <= configDataWrite(29);
+                end if;
+                
+                configDataReadInternal(31 downto 30) <= "00";
+                configDataReadInternal(29) <= discovered;
+                configDataReadInternal(28 downto 0) <= (others => '0');
+
+              when others =>
+                -----------------------------------------------------------------
+                -- Other port specific registers.
+                -----------------------------------------------------------------
+                
+                -- Make sure the output is always set to something.
+                configDataReadInternal <= (others=>'0');
+
+                -- Iterate through all active ports.
+                for portIndex in 0 to SWITCH_PORTS-1 loop
+                  
+                  if(unsigned(configAdr) = (x"000148" + (x"000020"*portIndex))) then
+                    -----------------------------------------------------------------
+                    -- Port N Local ackID CSR.
+                    -----------------------------------------------------------------
+                    if (configWe = '1') then
+                      localAckIdWrite_o(portIndex) <= '1';
+                      clrOutstandingAckId_o(portIndex) <= configDataWrite(31);
+                      inboundAckId_o(portIndex) <= configDataWrite(28 downto 24);
+                      outstandingAckId_o(portIndex) <= configDataWrite(12 downto 8);
+                      outboundAckId_o(portIndex) <= configDataWrite(4 downto 0);
+                    end if;
+                    configDataReadInternal(31 downto 29) <= (others => '0');
+                    configDataReadInternal(28 downto 24) <= inboundAckId_i(portIndex);
+                    configDataReadInternal(23 downto 13) <= (others => '0');
+                    configDataReadInternal(12 downto 8) <= outstandingAckId_i(portIndex);
+                    configDataReadInternal(7 downto 5) <= (others => '0');
+                    configDataReadInternal(4 downto 0) <= outboundAckId_i(portIndex);
+                    
+                  elsif(unsigned(configAdr) = (x"000154" + (x"000020"*portIndex))) then
+                    -----------------------------------------------------------------
+                    -- Port N Control 2 CSR.
+                    -----------------------------------------------------------------
+                    configDataReadInternal <= (others => '0');
+                    
+                  elsif(unsigned(configAdr) = (x"000158" + (x"000020"*portIndex))) then
+                    -----------------------------------------------------------------
+                    -- Port N Error and Status CSR.
+                    -----------------------------------------------------------------
+                    -- Idle Sequence 2 Support.
+                    configDataReadInternal(31) <= '0';
+                    
+                    -- Idle Sequence 2 Enable.
+                    configDataReadInternal(30) <= '0';
+                    
+                    -- Idle Sequence.
+                    configDataReadInternal(29) <= '0';
+                    
+                    -- Reserved.
+                    configDataReadInternal(28) <= '0';
+                    
+                    -- Flow Control Mode.
+                    configDataReadInternal(27) <= '0';
+                    
+                    -- Reserved.
+                    configDataReadInternal(26 downto 21) <= (others => '0');
+                    
+                    -- Output retry-encountered.
+                    configDataReadInternal(20) <= '0';
+                    
+                    -- Output retried.
+                    configDataReadInternal(19) <= '0';
+                    
+                    -- Output retried-stopped.
+                    configDataReadInternal(18) <= '0';
+                    
+                    -- Output error-encountered.
+                    configDataReadInternal(17) <= '0';
+                    
+                    -- Output error-stopped.
+                    configDataReadInternal(16) <= '0';
+                    
+                    -- Reserved.
+                    configDataReadInternal(15 downto 11) <= (others => '0');
+                    
+                    -- Input retry-stopped.
+                    configDataReadInternal(10) <= '0';
+                    
+                    -- Input error-encountered.
+                    configDataReadInternal(9) <= '0';
+                    
+                    -- Input error-stopped.
+                    configDataReadInternal(8) <= '0'; 
+
+                    -- Reserved.
+                    configDataReadInternal(7 downto 5) <= (others => '0');
+
+                    -- Port-write pending.
+                    configDataReadInternal(4) <= '0';
+                    
+                    -- Port unavailable.
+                    configDataReadInternal(3) <= '0';
+                    
+                    -- Port error.
+                    configDataReadInternal(2) <= '0';
+                    
+                    -- Port OK.
+                    configDataReadInternal(1) <= linkInitialized_i(portIndex);
+                    
+                    -- Port uninitialized.
+                    configDataReadInternal(0) <= not linkInitialized_i(portIndex);
+                    
+                  elsif(unsigned(configAdr) = (x"00015c" + (x"000020"*portIndex))) then
+                    -----------------------------------------------------------------
+                    -- Port N Control CSR.
+                    -----------------------------------------------------------------
+                    
+                    -- Port Width Support.
+                    configDataReadInternal(31 downto 30) <= (others=>'0');
+
+                    -- Initialized Port Width.
+                    configDataReadInternal(29 downto 27) <= (others=>'0');
+
+                    -- Port Width Override.
+                    configDataReadInternal(26 downto 24) <= (others=>'0');
+
+                    -- Port disable.
+                    configDataReadInternal(23) <= '0';
+                    
+                    -- Output Port Enable.
+                    if (configWe = '1') then
+                      outputPortEnable(portIndex) <= configDataWrite(22);
+                    end if;
+                    configDataReadInternal(22) <= outputPortEnable(portIndex);
+                    
+                    -- Input Port Enable.
+                    if (configWe = '1') then
+                      inputPortEnable(portIndex) <= configDataWrite(21);
+                    end if;
+                    configDataReadInternal(21) <= inputPortEnable(portIndex);
+
+                    -- Error Checking Disabled.
+                    configDataReadInternal(20) <= '0';
+                    
+                    -- Multicast-event Participant.
+                    configDataReadInternal(19) <= '0';
+                    
+                    -- Reserved.
+                    configDataReadInternal(18) <= '0';
+                    
+                    -- Enumeration Boundry.
+                    configDataReadInternal(17) <= '0';
+
+                    -- Reserved.
+                    configDataReadInternal(16) <= '0';
+
+                    -- Extended Port Width Override.
+                    configDataReadInternal(15 downto 14) <= (others=>'0');
+
+                    -- Extended Port Width Support.
+                    configDataReadInternal(13 downto 12) <= (others=>'0');
+                    
+                    -- Implementation defined.
+                    configDataReadInternal(11 downto 4) <= (others=>'0');
+
+                    -- Reserved.
+                    configDataReadInternal(3 downto 1) <= (others=>'0');
+
+                    -- Port Type.
+                    configDataReadInternal(0) <= '1';
+                  end if;
+                end loop;
+
+            end case;
           end if;
-
-        when STATE_BUSY =>
-          ---------------------------------------------------------------------
-          -- Waiting for a received frame to be processed.
-          ---------------------------------------------------------------------
-          
-          -- Check if any cycle is active.
-          if ((slaveCyc_i = '1') and (slaveStb_i = '1') and (slaveAck = '0')) then
-            -- Cycle is active.
-
-            -- Check if writing.
-            if (slaveWe_i = '1') then
-              -- Writing.
-              -- Dont do anything.
-
-              -- Send acknowledge.
-              slaveAck <= '1';
-            else
-              -- Read port data address.
-
-              -- Reading the status address.
-              -- Always indicate that we are busy.
-              slaveData_o <= '1';
-
-              -- Send acknowledge.
-              slaveAck <= '1';
-            end if;
-          else
-            -- No cycle is active.
-            -- Dont do anything.
-          end if;
-
-          -- Check if the master process has processed the received frame.
-          if (inboundFrameComplete = '1') then
-            -- The master has processed the frame.
-            inboundFrameReady <= '0';
-            inboundFrameLength <= 0;
-            slaveState <= STATE_READY;
-          else
-            -- The master is not ready yet.
-            -- Dont do anything.
-          end if;
-          
-        when others =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
-          null;
-          
-      end case;
+        else
+          -- Config memory not enabled.
+        end if;
+      else
+        configAck <= '0';
+      end if;
     end if;
   end process;
   
-  slaveAck_o <= slaveAck;
-
   -----------------------------------------------------------------------------
   -- Logic implementing the routing table access.
   -----------------------------------------------------------------------------
@@ -1835,440 +1886,6 @@ begin
       dataA_i=>routeTablePortWrite, dataA_o=>routeTablePortRead,
       clkB_i=>clk, enableB_i=>lookupEnable,
       addressB_i=>lookupAddress, dataB_o=>lookupData);
-  
-  -----------------------------------------------------------------------------
-  -- Configuration memory.
-  -----------------------------------------------------------------------------
-
-  portLinkTimeout_o <= portLinkTimeout;
-  outputPortEnable_o <= outputPortEnable;
-  inputPortEnable_o <= inputPortEnable;
-  
-  configStb_o <= '1' when ((configEnable = '1') and (configAddress(23 downto 16) /= x"00")) else '0';
-  configWe_o <= configWrite;
-  configAddr_o <= configAddress;
-  configData_o <= configDataWrite;
-  configDataRead <= configData_i when (configAddress(23 downto 16) /= x"00") else
-                    configDataReadInternal;
-  
-  ConfigMemory: process(areset_n, clk)
-  begin
-    if (areset_n = '0') then
-      configDataReadInternal <= (others => '0');
-
-      routeTableEnable <= '1';
-      routeTableWrite <= '0';
-      routeTableAddress <= (others => '0');
-      routeTablePortWrite <= (others => '0');
-      routeTablePortDefault <= (others => '0');
-
-      discovered <= '0';
-      
-      hostBaseDeviceIdLocked <= '0';
-      hostBaseDeviceId <= (others => '1');
-      componentTag <= (others => '0');
-
-      portLinkTimeout <= (others => '1');
-
-      -- REMARK: These should be set to zero when a port gets initialized...
-      outputPortEnable <= (others => '0');
-      inputPortEnable <= (others => '0');
-
-      localAckIdWrite_o <= (others => '0');
-    elsif (clk'event and clk = '1') then
-      routeTableWrite <= '0';
-      localAckIdWrite_o <= (others => '0');
-      
-      if (configEnable = '1') then
-        -- Check if the access is into implementation defined space or if the
-        -- access should be handled here.
-        if (configAddress(23 downto 16) /= x"00") then
-          -- Accessing implementation defined space.
-          -- Make an external access and return the resonse.
-          configDataReadInternal <= (others=>'0');
-        else
-          -- Access should be handled here.
-          
-          case (configAddress) is
-            when x"000000" =>
-              -----------------------------------------------------------------
-              -- Device Identity CAR. Read-only.
-              -----------------------------------------------------------------
-
-              configDataReadInternal(31 downto 16) <= DEVICE_IDENTITY;
-              configDataReadInternal(15 downto 0) <= DEVICE_VENDOR_IDENTITY;
-              
-            when x"000004" =>
-              -----------------------------------------------------------------
-              -- Device Information CAR. Read-only.
-              -----------------------------------------------------------------
-
-              configDataReadInternal(31 downto 0) <= DEVICE_REV;
-              
-            when x"000008" =>
-              -----------------------------------------------------------------
-              -- Assembly Identity CAR. Read-only.
-              -----------------------------------------------------------------
-
-              configDataReadInternal(31 downto 16) <= ASSY_IDENTITY;
-              configDataReadInternal(15 downto 0) <= ASSY_VENDOR_IDENTITY;
-              
-            when x"00000c" =>
-              -----------------------------------------------------------------
-              -- Assembly Informaiton CAR. Read-only.
-              -----------------------------------------------------------------
-
-              configDataReadInternal(31 downto 16) <= ASSY_REV;
-              configDataReadInternal(15 downto 0) <= x"0100";
-              
-            when x"000010" =>
-              -----------------------------------------------------------------
-              -- Processing Element Features CAR. Read-only.
-              -----------------------------------------------------------------
-              
-              -- Bridge.
-              configDataReadInternal(31) <= '0';
-              
-              -- Memory.
-              configDataReadInternal(30) <= '0';
-              
-              -- Processor.
-              configDataReadInternal(29) <= '0';
-              
-              -- Switch.
-              configDataReadInternal(28) <= '1';
-              
-              -- Reserved.
-              configDataReadInternal(27 downto 10) <= (others => '0');
-              
-              -- Extended route table configuration support.
-              configDataReadInternal(9) <= '0';
-              
-              -- Standard route table configuration support.
-              configDataReadInternal(8) <= '1';
-              
-              -- Reserved.
-              configDataReadInternal(7 downto 5) <= (others => '0');
-              
-              -- Common transport large system support.
-              configDataReadInternal(4) <= '1';
-              
-              -- Extended features.
-              configDataReadInternal(3) <= '1';
-              
-              -- Extended addressing support.
-              -- Not a processing element.
-              configDataReadInternal(2 downto 0) <= "000";
-              
-            when x"000014" =>
-              -----------------------------------------------------------------
-              -- Switch Port Information CAR. Read-only.
-              -----------------------------------------------------------------
-
-              -- Reserved.
-              configDataReadInternal(31 downto 16) <= (others => '0');
-
-              -- PortTotal.
-              configDataReadInternal(15 downto 8) <=
-                std_logic_vector(to_unsigned(SWITCH_PORTS, 8));
-
-              -- PortNumber.
-              configDataReadInternal(7 downto 0) <= inboundFramePort;
-              
-            when x"000034" =>
-              -----------------------------------------------------------------
-              -- Switch Route Table Destination ID Limit CAR.
-              -----------------------------------------------------------------
-
-              -- Max_destId.
-              -- Support 2048 addresses.
-              configDataReadInternal(15 downto 0) <= x"0800";
-              
-            when x"000068" =>
-              -----------------------------------------------------------------
-              -- Host Base Device ID Lock CSR.
-              -----------------------------------------------------------------
-
-              if (configWrite = '1') then
-                -- Check if this field has been written before.
-                if (hostBaseDeviceIdLocked = '0') then
-                  -- The field has not been written.
-                  -- Lock the field and set the host base device id.
-                  hostBaseDeviceIdLocked <= '1';
-                  hostBaseDeviceId <= configDataWrite(15 downto 0);
-                else
-                  -- The field has been written.
-                  -- Check if the written data is the same as the stored.
-                  if (hostBaseDeviceId = configDataWrite(15 downto 0)) then
-                    -- Same as stored, reset the value to its initial value.
-                    hostBaseDeviceIdLocked <= '0';
-                    hostBaseDeviceId <= (others => '1');
-                  else
-                    -- Not writing the same as the stored value.
-                    -- Ignore the write.
-                  end if;
-                end if;
-              end if;
-              
-              configDataReadInternal(31 downto 16) <= (others => '0');
-              configDataReadInternal(15 downto 0) <= hostBaseDeviceId;
-              
-            when x"00006c" =>
-              -----------------------------------------------------------------
-              -- Component TAG CSR.
-              -----------------------------------------------------------------
-
-              if (configWrite = '1') then
-                componentTag <= configDataWrite;
-              end if;
-              
-              configDataReadInternal <= componentTag;
-              
-            when x"000070" =>
-              -----------------------------------------------------------------
-              -- Standard Route Configuration Destination ID Select CSR.
-              -----------------------------------------------------------------             
-
-              if (configWrite = '1') then
-                -- Write the address to access the routing table.
-                routeTableAddress <= configDataWrite(10 downto 0);
-              end if;
-              
-              configDataReadInternal(31 downto 11) <= (others => '0');
-              configDataReadInternal(10 downto 0) <= routeTableAddress;
-              
-            when x"000074" =>
-              -----------------------------------------------------------------
-              -- Standard Route Configuration Port Select CSR.
-              -----------------------------------------------------------------
-
-              if (configWrite = '1') then
-                -- Write the port information for the address selected by the
-                -- above register.
-                routeTableWrite <= '1';
-                routeTablePortWrite <= configDataWrite(7 downto 0);
-              end if;
-
-              configDataReadInternal(31 downto 8) <= (others => '0');
-              configDataReadInternal(7 downto 0) <= routeTablePortRead;
-              
-            when x"000078" =>
-              -----------------------------------------------------------------
-              -- Standard Route Default Port CSR.
-              -----------------------------------------------------------------
-
-              if (configWrite = '1') then
-                -- Write the default route device id.
-                routeTablePortDefault <= configDataWrite(7 downto 0);
-              end if;
-              
-              configDataReadInternal(31 downto 8) <= (others => '0');
-              configDataReadInternal(7 downto 0) <= routeTablePortDefault;
-              
-            when x"000100" =>
-              -----------------------------------------------------------------
-              -- Extended features. LP-Serial Register Block Header.
-              -----------------------------------------------------------------
-
-              -- One feature only, 0x0003=Generic End Point Free Device.
-              configDataReadInternal(31 downto 16) <= x"0000";
-              configDataReadInternal(15 downto 0) <= x"0003";
-              
-            when x"000120" =>
-              -----------------------------------------------------------------
-              -- Port Link Timeout Control CSR.
-              -----------------------------------------------------------------
-
-              if (configWrite = '1') then
-                portLinkTimeout <= configDataWrite(31 downto 8);
-              end if;
-              
-              configDataReadInternal(31 downto 8) <= portLinkTimeout;
-              configDataReadInternal(7 downto 0) <= x"00";
-              
-            when x"00013c" =>
-              -----------------------------------------------------------------
-              -- Port General Control CSR.
-              -----------------------------------------------------------------
-
-              if (configWrite = '1') then
-                discovered <= configDataWrite(29);
-              end if;
-              
-              configDataReadInternal(31 downto 30) <= "00";
-              configDataReadInternal(29) <= discovered;
-              configDataReadInternal(28 downto 0) <= (others => '0');
-
-            when others =>
-              -----------------------------------------------------------------
-              -- Other port specific registers.
-              -----------------------------------------------------------------
-              
-              -- Make sure the output is always set to something.
-              configDataReadInternal <= (others=>'0');
-
-              -- Iterate through all active ports.
-              for portIndex in 0 to SWITCH_PORTS-1 loop
-                
-                if(unsigned(configAddress) = (x"000148" + (x"000020"*portIndex))) then
-                  -----------------------------------------------------------------
-                  -- Port N Local ackID CSR.
-                  -----------------------------------------------------------------
-                  if (configWrite = '1') then
-                    localAckIdWrite_o(portIndex) <= '1';
-                    clrOutstandingAckId_o(portIndex) <= configDataWrite(31);
-                    inboundAckId_o(portIndex) <= configDataWrite(28 downto 24);
-                    outstandingAckId_o(portIndex) <= configDataWrite(12 downto 8);
-                    outboundAckId_o(portIndex) <= configDataWrite(4 downto 0);
-                  end if;
-                  configDataReadInternal(31 downto 29) <= (others => '0');
-                  configDataReadInternal(28 downto 24) <= inboundAckId_i(portIndex);
-                  configDataReadInternal(23 downto 13) <= (others => '0');
-                  configDataReadInternal(12 downto 8) <= outstandingAckId_i(portIndex);
-                  configDataReadInternal(7 downto 5) <= (others => '0');
-                  configDataReadInternal(4 downto 0) <= outboundAckId_i(portIndex);
-                  
-                elsif(unsigned(configAddress) = (x"000154" + (x"000020"*portIndex))) then
-                  -----------------------------------------------------------------
-                  -- Port N Control 2 CSR.
-                  -----------------------------------------------------------------
-                  configDataReadInternal <= (others => '0');
-                  
-                elsif(unsigned(configAddress) = (x"000158" + (x"000020"*portIndex))) then
-                  -----------------------------------------------------------------
-                  -- Port N Error and Status CSR.
-                  -----------------------------------------------------------------
-                  -- Idle Sequence 2 Support.
-                  configDataReadInternal(31) <= '0';
-                  
-                  -- Idle Sequence 2 Enable.
-                  configDataReadInternal(30) <= '0';
-                  
-                  -- Idle Sequence.
-                  configDataReadInternal(29) <= '0';
-                  
-                  -- Reserved.
-                  configDataReadInternal(28) <= '0';
-                  
-                  -- Flow Control Mode.
-                  configDataReadInternal(27) <= '0';
-                  
-                  -- Reserved.
-                  configDataReadInternal(26 downto 21) <= (others => '0');
-                  
-                  -- Output retry-encountered.
-                  configDataReadInternal(20) <= '0';
-                  
-                  -- Output retried.
-                  configDataReadInternal(19) <= '0';
-                  
-                  -- Output retried-stopped.
-                  configDataReadInternal(18) <= '0';
-                  
-                  -- Output error-encountered.
-                  configDataReadInternal(17) <= '0';
-                  
-                  -- Output error-stopped.
-                  configDataReadInternal(16) <= '0';
-                  
-                  -- Reserved.
-                  configDataReadInternal(15 downto 11) <= (others => '0');
-                  
-                  -- Input retry-stopped.
-                  configDataReadInternal(10) <= '0';
-                  
-                  -- Input error-encountered.
-                  configDataReadInternal(9) <= '0';
-                  
-                  -- Input error-stopped.
-                  configDataReadInternal(8) <= '0'; 
-
-                  -- Reserved.
-                  configDataReadInternal(7 downto 5) <= (others => '0');
-
-                  -- Port-write pending.
-                  configDataReadInternal(4) <= '0';
-                  
-                  -- Port unavailable.
-                  configDataReadInternal(3) <= '0';
-                  
-                  -- Port error.
-                  configDataReadInternal(2) <= '0';
-                  
-                  -- Port OK.
-                  configDataReadInternal(1) <= linkInitialized_i(portIndex);
-                  
-                  -- Port uninitialized.
-                  configDataReadInternal(0) <= not linkInitialized_i(portIndex);
-                  
-                elsif(unsigned(configAddress) = (x"00015c" + (x"000020"*portIndex))) then
-                  -----------------------------------------------------------------
-                  -- Port N Control CSR.
-                  -----------------------------------------------------------------
-                  
-                  -- Port Width Support.
-                  configDataReadInternal(31 downto 30) <= (others=>'0');
-
-                  -- Initialized Port Width.
-                  configDataReadInternal(29 downto 27) <= (others=>'0');
-
-                  -- Port Width Override.
-                  configDataReadInternal(26 downto 24) <= (others=>'0');
-
-                  -- Port disable.
-                  configDataReadInternal(23) <= '0';
-                  
-                  -- Output Port Enable.
-                  if (configWrite = '1') then
-                    outputPortEnable(portIndex) <= configDataWrite(22);
-                  end if;
-                  configDataReadInternal(22) <= outputPortEnable(portIndex);
-                  
-                  -- Input Port Enable.
-                  if (configWrite = '1') then
-                    inputPortEnable(portIndex) <= configDataWrite(21);
-                  end if;
-                  configDataReadInternal(21) <= inputPortEnable(portIndex);
-
-                  -- Error Checking Disabled.
-                  configDataReadInternal(20) <= '0';
-                  
-                  -- Multicast-event Participant.
-                  configDataReadInternal(19) <= '0';
-                  
-                  -- Reserved.
-                  configDataReadInternal(18) <= '0';
-                  
-                  -- Enumeration Boundry.
-                  configDataReadInternal(17) <= '0';
-
-                  -- Reserved.
-                  configDataReadInternal(16) <= '0';
-
-                  -- Extended Port Width Override.
-                  configDataReadInternal(15 downto 14) <= (others=>'0');
-
-                  -- Extended Port Width Support.
-                  configDataReadInternal(13 downto 12) <= (others=>'0');
-                  
-                  -- Implementation defined.
-                  configDataReadInternal(11 downto 4) <= (others=>'0');
-
-                  -- Reserved.
-                  configDataReadInternal(3 downto 1) <= (others=>'0');
-
-                  -- Port Type.
-                  configDataReadInternal(0) <= '1';
-                end if;
-              end loop;
-
-          end case;
-        end if;
-      else
-        -- Config memory not enabled.
-      end if;
-    end if;
-  end process;
   
 end architecture;
 

@@ -9,10 +9,10 @@
 -- Contains a platform to build endpoints on.
 -- 
 -- To Do:
--- REMARK: Clean up and increase the speed of the interface to packet handlers.
--- REMARK: 8-bit deviceId has not been verified, fix.
--- REMARK: Egress; Places packets in different queues depending on the packet priority?
--- REMARK: Add verification of all sizes of packets.
+-- - Clean up and increase the speed of the interface to packet handlers.
+-- - 8-bit deviceId has not been verified, fix.
+-- - Egress; Place packets in different queues depending on the packet priority?
+-- - Add verification of all sizes of packets.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 

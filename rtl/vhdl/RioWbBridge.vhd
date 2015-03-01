@@ -10,26 +10,32 @@
 -- NWRITE, NWRITER and NREAD are currently supported.
 -- 
 -- To Do:
--- REMARK: Set the stb_o to '0' in between read accesses to conform better to a
--- block transfer in the Wishbone standard.
--- REMARK: Clean up cyc-signals, only stb-signals are needed (between
--- RioLogicalCommon and the packet handlers).
--- REMARK: Add support for the lock_o to be sure to transfer all the packet
--- content atomically?
--- REMARK: Add support for EXTENDED_ADDRESS.
--- REMARK: Use the baseDeviceId when sending packets? Currently, all responses
--- are sent with destination<->source exchanged so the baseDeviceId is not
--- needed.
--- REMARK: Support inbound data with full bandwidth, not just half, applies to
--- RioLogicalCommon and the packet handlers.
--- REMARK: Move the packet handlers to seperate files.
--- REMARK: Increase the priority of the response-packet when sent?
--- REMARK: Implement error indications if erronous packets are received.
--- REMARK: Implement error indications if err_i is received on the Wishbone bus.
--- REMARK: Add support for extended features to dynamically configure the status
--- from the port this block is connected to. Needed for the discovered- and
--- masterEnable-bits.
--- REMARK: Add support for outbound doorbells connected to interrupt input pins.
+-- - Move packet handlers to RioLogicalPackets.
+-- - Move component declarations to riocommon.
+-- - Update the Maintenance handler to the new interface. It currently does not
+--   compile.
+-- - Set the stb_o to '0' in between read accesses to conform better to a
+--   block transfer in the Wishbone standard.
+-- - Clean up cyc-signals, only stb-signals are needed (between
+--   RioLogicalCommon and the packet handlers).
+-- - Add support for the lock_o to be sure to transfer all the packet
+--   content atomically?
+-- - Add support for EXTENDED_ADDRESS.
+-- - Add support for addressing to implementation defined config space by
+--   adding interface to top entity.
+-- - Use the baseDeviceId when sending packets? Currently, all responses
+--   are sent with destination<->source exchanged so the baseDeviceId is not
+--   needed.
+-- - Support inbound data with full bandwidth, not just half, applies to
+--   RioLogicalCommon and the packet handlers.
+-- - Move the packet handlers to seperate files.
+-- - Increase the priority of the response-packet when sent?
+-- - Implement error indications if erronous packets are received.
+-- - Implement error indications if err_i is received on the Wishbone bus.
+-- - Add support for extended features to dynamically configure the status
+--   from the port this block is connected to. Needed for the discovered- and
+--   masterEnable-bits.
+-- - Add support for outbound doorbells connected to interrupt input pins.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org
@@ -205,63 +211,6 @@ architecture RioWbBridgeImpl of RioWbBridge is
       outboundAck_i : in std_logic);
   end component;
 
-  component RioLogicalMaintenance is
-    port(
-      clk : in std_logic;
-      areset_n : in std_logic;
-      enable : in std_logic;
-
-      configStb_o : out std_logic;
-      configWe_o : out std_logic;
-      configAdr_o : out std_logic_vector(21 downto 0);
-      configDat_o : out std_logic_vector(31 downto 0);
-      configDat_i : in std_logic_vector(31 downto 0);
-      configAck_i : in std_logic;
-      
-      inboundCyc_i : in std_logic;
-      inboundStb_i : in std_logic;
-      inboundAdr_i : in std_logic_vector(7 downto 0);
-      inboundDat_i : in std_logic_vector(31 downto 0);
-      inboundAck_o : out std_logic;
-
-      outboundCyc_o : out std_logic;
-      outboundStb_o : out std_logic;
-      outboundDat_o : out std_logic_vector(31 downto 0);
-      outboundAck_i : in std_logic);
-  end component;
-
-  component RioLogicalCommon is
-    generic(
-      PORTS : natural);
-    port(
-      clk : in std_logic;
-      areset_n : in std_logic;
-      enable : in std_logic;
-      
-      readFrameEmpty_i : in std_logic;
-      readFrame_o : out std_logic;
-      readContent_o : out std_logic;
-      readContentEnd_i : in std_logic;
-      readContentData_i : in std_logic_vector(31 downto 0);
-
-      writeFrameFull_i : in std_logic;
-      writeFrame_o : out std_logic;
-      writeFrameAbort_o : out std_logic;
-      writeContent_o : out std_logic;
-      writeContentData_o : out std_logic_vector(31 downto 0);
-
-      inboundCyc_o : out std_logic;
-      inboundStb_o : out std_logic;
-      inboundAdr_o : out std_logic_vector(7 downto 0);
-      inboundDat_o : out std_logic_vector(31 downto 0);
-      inboundAck_i : in std_logic;
-      
-      outboundCyc_i : in std_logic_vector(PORTS-1 downto 0);
-      outboundStb_i : in std_logic_vector(PORTS-1 downto 0);
-      outboundDat_i : in std_logic_vector(32*PORTS-1 downto 0);
-      outboundAck_o : out std_logic_vector(PORTS-1 downto 0));
-  end component;
-
   constant PORTS : natural := 2;
 
   type StateType is (IDLE,
@@ -317,6 +266,31 @@ architecture RioWbBridgeImpl of RioWbBridge is
   signal responsePayloadPresent : std_logic;
   signal responsePayload : std_logic_vector(63 downto 0);
   signal responseDone : std_logic;
+
+  signal readRequestInbound : std_logic;
+  signal writeRequestInbound : std_logic;
+  signal vcInbound : std_logic;
+  signal crfInbound : std_logic;
+  signal prioInbound : std_logic_vector(1 downto 0);
+  signal ttInbound : std_logic_vector(1 downto 0);
+  signal dstIdInbound : std_logic_vector(31 downto 0);
+  signal srcIdInbound : std_logic_vector(31 downto 0);
+  signal tidInbound : std_logic_vector(7 downto 0);
+  signal offsetInbound : std_logic_vector(20 downto 0);
+  signal wdptrInbound : std_logic;
+  signal payloadLengthInbound : std_logic_vector(3 downto 0);
+  signal payloadInbound : std_logic_vector(31 downto 0);
+
+  signal readResponseMaint : std_logic;
+  signal writeResponseMaint : std_logic;
+  signal wdptrMaint : std_logic;
+  signal payloadLengthMaint : std_logic_vector(3 downto 0);
+  signal payloadIndexMaint : std_logic_vector(3 downto 0);
+  signal payloadMaint : std_logic_vector(31 downto 0);
+  signal doneMaint : std_logic;
+  
+  signal payloadIndexOutbound : std_logic_vector(3 downto 0);
+  signal doneOutbound : std_logic;
 
   signal configStb : std_logic;
   signal configWe : std_logic;
@@ -581,27 +555,89 @@ begin
       outboundDat_o=>outboundDat(31 downto 0),
       outboundAck_i=>outboundAck(0));
 
+  -----------------------------------------------------------------------------
   -- Maintenance packet processing.
-  MaintenanceInst: RioLogicalMaintenance
+  -----------------------------------------------------------------------------
+  InboundMaintenance: MaintenanceInbound
     port map(
-      clk=>clk,
-      areset_n=>areset_n,
-      enable=>enable,
-      configStb_o=>configStb,
-      configWe_o=>configWe,
-      configAdr_o=>configAdr,
-      configDat_o=>configDatWrite,
-      configDat_i=>configDatRead,
-      configAck_i=>configAck,
-      inboundCyc_i=>inboundCyc,
-      inboundStb_i=>inboundStb,
-      inboundAdr_i=>inboundAdr,
-      inboundDat_i=>inboundDat,
-      inboundAck_o=>maintenanceAck,
-      outboundCyc_o=>outboundCyc(1),
-      outboundStb_o=>outboundStb(1),
-      outboundDat_o=>outboundDat(63 downto 32),
+      clk=>clk, areset_n=>areset_n, enable=>enable, 
+      readRequestReady_o=>readRequestInbound,
+      writeRequestReady_o=>writeRequestInbound,
+      readResponseReady_o=>open,
+      writeResponseReady_o=>open,
+      portWriteReady_o=>open,
+      vc_o=>vcInbound, 
+      crf_o=>crfInbound, 
+      prio_o=>prioInbound, 
+      tt_o=>ttInbound, 
+      dstid_o=>dstIdInbound, 
+      srcid_o=>srcIdInbound, 
+      tid_o=>tidInbound,
+      hop_o=>open,
+      offset_o=>offsetInbound,
+      wdptr_o=>wdptrInbound,
+      payloadLength_o=>payloadLengthInbound, 
+      payloadIndex_i=>payloadIndexMaint, 
+      payload_o=>payloadInbound, 
+      done_i=>doneMaint, 
+      inboundCyc_i=>inboundCyc, 
+      inboundStb_i=>inboundStb, 
+      inboundAdr_i=>inboundAdr, 
+      inboundDat_i=>inboundDat, 
+      inboundAck_o=>maintenanceAck);
+
+  OutboundMaintenance: MaintenanceOutbound
+    port map(
+      clk=>clk, areset_n=>areset_n, enable=>enable, 
+      readRequestReady_i=>'0',
+      writeRequestReady_i=>'0',
+      readResponseReady_i=>readResponseMaint, 
+      writeResponseReady_i=>writeResponseMaint, 
+      portWriteReady_i=>'0',
+      vc_i=>vcInbound, 
+      crf_i=>crfInbound, 
+      prio_i=>prioInbound, 
+      tt_i=>ttInbound, 
+      dstid_i=>srcIdInbound, 
+      srcid_i=>dstIdInbound,
+      status_i=>"0000",
+      tid_i=>tidInbound,
+      hop_i=>x"ff",
+      offset_i=>(others=>'0'),
+      wdptr_i=>wdptrMaint,
+      payloadLength_i=>payloadLengthMaint, 
+      payloadIndex_o=>payloadIndexOutbound, 
+      payload_i=>payloadMaint,
+      done_o=>doneOutbound, 
+      outboundCyc_o=>outboundCyc(1), 
+      outboundStb_o=>outboundStb(1), 
+      outboundDat_o=>outboundDat(63 downto 32), 
       outboundAck_i=>outboundAck(1));
+
+  MaintenanceBridge: RioLogicalMaintenance
+    port map(
+      clk=>clk, areset_n=>areset_n, enable=>enable, 
+      readRequestReady_i=>readRequestInbound, 
+      writeRequestReady_i=>writeRequestInbound, 
+      offset_i=>offsetInbound, 
+      wdptr_i=>wdptrInbound, 
+      payloadLength_i=>payloadLengthInbound, 
+      payloadIndex_o=>payloadIndexMaint, 
+      payload_i=>payloadInbound, 
+      done_o=>doneMaint,
+      readResponseReady_o=>readResponseMaint, 
+      writeResponseReady_o=>writeResponseMaint,
+      wdptr_o=>wdptrMaint, 
+      payloadLength_o=>payloadLengthMaint, 
+      payloadIndex_i=>payloadIndexOutbound, 
+      payload_o=>payloadMaint, 
+      done_i=>doneOutbound, 
+      configStb_o=>configStb, 
+      configWe_o=>configWe, 
+      configAdr_o=>configAdr, 
+      configDat_o=>configDatWrite, 
+      configDat_i=>configDatRead, 
+      configAck_i=>configAck);
 
   -----------------------------------------------------------------------------
   -- Common interface toward the packet queues.

@@ -57,6 +57,215 @@ use std.textio.all;
 -- RioCommon package description.
 -------------------------------------------------------------------------------
 package rio_common is
+
+  -----------------------------------------------------------------------------
+  -- Primitive memory component declarations.
+  -----------------------------------------------------------------------------
+  
+  component MemorySimpleDualPort
+    generic(
+      ADDRESS_WIDTH : natural := 1;
+      DATA_WIDTH : natural := 1);
+    port(
+      clkA_i : in std_logic;
+      enableA_i : in std_logic;
+      addressA_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+      dataA_i : in std_logic_vector(DATA_WIDTH-1 downto 0);
+
+      clkB_i : in std_logic;
+      enableB_i : in std_logic;
+      addressB_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+      dataB_o : out std_logic_vector(DATA_WIDTH-1 downto 0));
+  end component;
+
+  component MemoryDualPort is
+    generic(
+      ADDRESS_WIDTH : natural := 1;
+      DATA_WIDTH : natural := 1);
+    port(
+      clkA_i : in std_logic;
+      enableA_i : in std_logic;
+      writeEnableA_i : in std_logic;
+      addressA_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+      dataA_i : in std_logic_vector(DATA_WIDTH-1 downto 0);
+      dataA_o : out std_logic_vector(DATA_WIDTH-1 downto 0);
+
+      clkB_i : in std_logic;
+      enableB_i : in std_logic;
+      addressB_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
+      dataB_o : out std_logic_vector(DATA_WIDTH-1 downto 0));
+  end component;
+  
+  -----------------------------------------------------------------------------
+  -- Logical layer component declarations.
+  -----------------------------------------------------------------------------
+
+  component RioLogicalCommon is
+    generic(
+      PORTS : natural);
+    port(
+      clk : in std_logic;
+      areset_n : in std_logic;
+      enable : in std_logic;
+      
+      readFrameEmpty_i : in std_logic;
+      readFrame_o : out std_logic;
+      readContent_o : out std_logic;
+      readContentEnd_i : in std_logic;
+      readContentData_i : in std_logic_vector(31 downto 0);
+
+      writeFrameFull_i : in std_logic;
+      writeFrame_o : out std_logic;
+      writeFrameAbort_o : out std_logic;
+      writeContent_o : out std_logic;
+      writeContentData_o : out std_logic_vector(31 downto 0);
+
+      inboundCyc_o : out std_logic;
+      inboundStb_o : out std_logic;
+      inboundAdr_o : out std_logic_vector(7 downto 0);
+      inboundDat_o : out std_logic_vector(31 downto 0);
+      inboundAck_i : in std_logic;
+      
+      outboundCyc_i : in std_logic_vector(PORTS-1 downto 0);
+      outboundStb_i : in std_logic_vector(PORTS-1 downto 0);
+      outboundDat_i : in std_logic_vector(32*PORTS-1 downto 0);
+      outboundAck_o : out std_logic_vector(PORTS-1 downto 0));
+  end component;
+
+  component RioLogicalMaintenance is
+    port(
+      clk : in std_logic;
+      areset_n : in std_logic;
+      enable : in std_logic;
+
+      readRequestReady_i : in std_logic;
+      writeRequestReady_i : in std_logic;
+      offset_i : in std_logic_vector(20 downto 0);
+      wdptr_i : in std_logic;
+      payloadLength_i : in std_logic_vector(3 downto 0);
+      payloadIndex_o : out std_logic_vector(3 downto 0);
+      payload_i : in std_logic_vector(31 downto 0);
+      done_o : out std_logic;
+      
+      readResponseReady_o : out std_logic;
+      writeResponseReady_o : out std_logic;
+      wdptr_o : out std_logic;
+      payloadLength_o : out std_logic_vector(3 downto 0);
+      payloadIndex_i : in std_logic_vector(3 downto 0);
+      payload_o : out std_logic_vector(31 downto 0);
+      done_i : in std_logic;
+      
+      configStb_o : out std_logic;
+      configWe_o : out std_logic;
+      configAdr_o : out std_logic_vector(21 downto 0);
+      configDat_o : out std_logic_vector(31 downto 0);
+      configDat_i : in std_logic_vector(31 downto 0);
+      configAck_i : in std_logic);
+  end component;
+  
+  component MaintenanceInbound is
+    port(
+      clk : in std_logic;
+      areset_n : in std_logic;
+      enable : in std_logic;
+
+      readRequestReady_o : out std_logic;
+      writeRequestReady_o : out std_logic;
+      readResponseReady_o : out std_logic;
+      writeResponseReady_o : out std_logic;
+      portWriteReady_o : out std_logic;
+      vc_o : out std_logic;
+      crf_o : out std_logic;
+      prio_o : out std_logic_vector(1 downto 0);
+      tt_o : out std_logic_vector(1 downto 0);
+      dstid_o : out std_logic_vector(31 downto 0);
+      srcid_o : out std_logic_vector(31 downto 0);
+      tid_o : out std_logic_vector(7 downto 0);
+      hop_o : out std_logic_vector(7 downto 0);
+      offset_o : out std_logic_vector(20 downto 0);
+      wdptr_o : out std_logic;
+      payloadLength_o : out std_logic_vector(3 downto 0);
+      payloadIndex_i : in std_logic_vector(3 downto 0);
+      payload_o : out std_logic_vector(31 downto 0);
+      done_i : in std_logic;
+      
+      inboundCyc_i : in std_logic;
+      inboundStb_i : in std_logic;
+      inboundAdr_i : in std_logic_vector(7 downto 0);
+      inboundDat_i : in std_logic_vector(31 downto 0);
+      inboundAck_o : out std_logic);
+  end component;
+  
+  component MaintenanceOutbound is
+    port(
+      clk : in std_logic;
+      areset_n : in std_logic;
+      enable : in std_logic;
+
+      readRequestReady_i : in std_logic;
+      writeRequestReady_i : in std_logic;
+      readResponseReady_i : in std_logic;
+      writeResponseReady_i : in std_logic;
+      portWriteReady_i : in std_logic;
+      vc_i : in std_logic;
+      crf_i : in std_logic;
+      prio_i : in std_logic_vector(1 downto 0);
+      tt_i : in std_logic_vector(1 downto 0);
+      dstid_i : in std_logic_vector(31 downto 0);
+      srcid_i : in std_logic_vector(31 downto 0);
+      status_i : in std_logic_vector(3 downto 0);
+      tid_i : in std_logic_vector(7 downto 0);
+      hop_i : in std_logic_vector(7 downto 0);
+      offset_i : in std_logic_vector(20 downto 0);
+      wdptr_i : in std_logic;
+      payloadLength_i : in std_logic_vector(3 downto 0);
+      payloadIndex_o : out std_logic_vector(3 downto 0);
+      payload_i : in std_logic_vector(31 downto 0);
+      done_o : out std_logic;
+      
+      outboundCyc_o : out std_logic;
+      outboundStb_o : out std_logic;
+      outboundDat_o : out std_logic_vector(31 downto 0);
+      outboundAck_i : in std_logic);
+  end component;
+
+  component RioPacketBuffer is
+    generic(
+      SIZE_ADDRESS_WIDTH : natural := 6;
+      CONTENT_ADDRESS_WIDTH : natural := 8);
+    port(
+      clk : in std_logic;
+      areset_n : in std_logic;
+
+      inboundWriteFrameFull_o : out std_logic;
+      inboundWriteFrame_i : in std_logic;
+      inboundWriteFrameAbort_i : in std_logic;
+      inboundWriteContent_i : in std_logic;
+      inboundWriteContentData_i : in std_logic_vector(31 downto 0);
+      inboundReadFrameEmpty_o : out std_logic;
+      inboundReadFrame_i : in std_logic;
+      inboundReadFrameRestart_i : in std_logic;
+      inboundReadFrameAborted_o : out std_logic;
+      inboundReadContentEmpty_o : out std_logic;
+      inboundReadContent_i : in std_logic;
+      inboundReadContentEnd_o : out std_logic;
+      inboundReadContentData_o : out std_logic_vector(31 downto 0);
+      
+      outboundWriteFrameFull_o : out std_logic;
+      outboundWriteFrame_i : in std_logic;
+      outboundWriteFrameAbort_i : in std_logic;
+      outboundWriteContent_i : in std_logic;
+      outboundWriteContentData_i : in std_logic_vector(31 downto 0);
+      outboundReadFrameEmpty_o : out std_logic;
+      outboundReadFrame_i : in std_logic;
+      outboundReadFrameRestart_i : in std_logic;
+      outboundReadFrameAborted_o : out std_logic;
+      outboundReadContentEmpty_o : out std_logic;
+      outboundReadContent_i : in std_logic;
+      outboundReadContentEnd_o : out std_logic;
+      outboundReadContentData_o : out std_logic_vector(31 downto 0));
+  end component;
+
   -----------------------------------------------------------------------------
   -- Commonly used types.
   -----------------------------------------------------------------------------
