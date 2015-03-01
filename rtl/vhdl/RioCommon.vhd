@@ -220,6 +220,18 @@ package rio_common is
   ---------------------------------------------------------------------------
   function RioNwrite(
     constant wrsize : in std_logic_vector(3 downto 0);
+    constant address : in std_logic_vector(28 downto 0);
+    constant wdptr : in std_logic;
+    constant xamsbs : in std_logic_vector(1 downto 0);
+    constant dataLength : in natural range 1 to 32;
+    constant data : in DoublewordArray(0 to 31))
+    return RioPayload;
+  
+  ---------------------------------------------------------------------------
+  -- Create a NWRITER RapidIO frame.
+  ---------------------------------------------------------------------------
+  function RioNwriteR(
+    constant wrsize : in std_logic_vector(3 downto 0);
     constant tid : in std_logic_vector(7 downto 0);
     constant address : in std_logic_vector(28 downto 0);
     constant wdptr : in std_logic;
@@ -584,7 +596,6 @@ package body rio_common is
   -----------------------------------------------------------------------------
   function RioNwrite(
     constant wrsize : in std_logic_vector(3 downto 0);
-    constant tid : in std_logic_vector(7 downto 0);
     constant address : in std_logic_vector(28 downto 0);
     constant wdptr : in std_logic;
     constant xamsbs : in std_logic_vector(1 downto 0);
@@ -594,6 +605,42 @@ package body rio_common is
     variable payload : RioPayload;
   begin
     payload.data(0)(15 downto 12) := "0100";
+    payload.data(0)(11 downto 8) := wrsize;
+    payload.data(0)(7 downto 0) := (others=>'0');
+
+    payload.data(1) := address(28 downto 13);
+    
+    payload.data(2)(15 downto 3) := address(12 downto 0);
+    payload.data(2)(2) := wdptr;
+    payload.data(2)(1 downto 0) := xamsbs;
+
+    for i in 0 to dataLength-1 loop
+      payload.data(3+4*i) := data(i)(63 downto 48);
+      payload.data(4+4*i) := data(i)(47 downto 32);
+      payload.data(5+4*i) := data(i)(31 downto 16);
+      payload.data(6+4*i) := data(i)(15 downto 0);
+    end loop;
+
+    payload.length := 3 + 4*dataLength;
+    
+    return payload;
+  end function;
+  
+  -----------------------------------------------------------------------------
+  -- 
+  -----------------------------------------------------------------------------
+  function RioNwriteR(
+    constant wrsize : in std_logic_vector(3 downto 0);
+    constant tid : in std_logic_vector(7 downto 0);
+    constant address : in std_logic_vector(28 downto 0);
+    constant wdptr : in std_logic;
+    constant xamsbs : in std_logic_vector(1 downto 0);
+    constant dataLength : in natural range 1 to 32;
+    constant data : in DoublewordArray(0 to 31))
+    return RioPayload is
+    variable payload : RioPayload;
+  begin
+    payload.data(0)(15 downto 12) := "0101";
     payload.data(0)(11 downto 8) := wrsize;
     payload.data(0)(7 downto 0) := tid;
 

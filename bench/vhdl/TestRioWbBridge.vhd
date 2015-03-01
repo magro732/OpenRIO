@@ -9,7 +9,7 @@
 -- Contains automatic test code to verify a RioWbBridge implementation.
 -- 
 -- To Do:
--- -
+-- REMARK: Move the testport package and entities to a seperate file.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 
@@ -42,7 +42,6 @@
 -------------------------------------------------------------------------------
 
 
--- REMARK: Move the testport package and entities to a seperate file.
 -------------------------------------------------------------------------------
 -- 
 -------------------------------------------------------------------------------
@@ -559,36 +558,44 @@ begin
       if (clk'event) then
         if (cyc_i = '1') then
           if (front /= back) then
-            if (cyclePosition < queue(back).length) then
-              TestCompare(stb_i, '1', "stb_i");
-              if (queue(back).writeAccess) then
-                TestCompare(we_i, '1', "we_i");
-              else
-                TestCompare(we_i, '0', "we_i");
-              end if;
-              -- REMARK: Add this...
-              --TestCompare(adr_i, std_logic_vector(unsigned(queue(back).address)+cyclePosition), "adr_i");
-              TestCompare(sel_i, queue(back).byteSelect, "sel_i");
-              if (queue(back).writeAccess) then
-                TestCompare(dat_i, queue(back).data(cyclePosition), "dat_i");
+            if (stb_i = '1') then
+              if (latencyCounter <= queue(back).latency) then
+                TestCompare(stb_i, '1', "stb_i");
+                if (queue(back).writeAccess) then
+                  TestCompare(we_i, '1', "we_i");
+                else
+                  TestCompare(we_i, '0', "we_i");
+                end if;
+                TestCompare(adr_i, std_logic_vector(unsigned(queue(back).address)+cyclePosition), "adr_i");
+                TestCompare(sel_i, queue(back).byteSelect, "sel_i");
+                if (queue(back).writeAccess) then
+                  TestCompare(dat_i, queue(back).data(cyclePosition), "dat_i");
+                end if;
               end if;
 
-              if (latencyCounter = queue(back).latency) then
-                dat_o <= queue(back).data(cyclePosition);
-                ack_o <= '1';
-                latencyCounter := 0;
-                cyclePosition := cyclePosition + 1;
-              else
+              if (latencyCounter < queue(back).latency) then
                 dat_o <= (others=>'U');
                 ack_o <= '0';
                 latencyCounter := latencyCounter + 1;
+              elsif (latencyCounter = queue(back).latency) then
+                if (queue(back).writeAccess) then
+                  dat_o <= (others=>'U');
+                else
+                  dat_o <= queue(back).data(cyclePosition);
+                end if;
+                ack_o <= '1';
+                latencyCounter := latencyCounter + 1;
+              else
+                dat_o <= (others=>'U');
+                ack_o <= '0';
+                latencyCounter := 0;
+                cyclePosition := cyclePosition + 1;
+                
+                if (cyclePosition = queue(back).length) then
+                  back := QueueIndexInc(back);
+                  cyclePosition := 0;
+                end if;
               end if;
-            else
-              back := QueueIndexInc(back);
-              cyclePosition := 0;
-              latencyCounter := 0;
-              dat_o <= (others=>'U');
-              ack_o <= '0';
             end if;
           else
             TestError("Unexpected access.");
@@ -912,13 +919,15 @@ begin
     end function;
     
     ---------------------------------------------------------------------------
-    -- 
+    -- Local variables.
     ---------------------------------------------------------------------------
     variable seed1 : positive := 1;
     variable seed2: positive := 1;
 
     variable rdsize : std_logic_vector(3 downto 0);
+    variable wrsize : std_logic_vector(3 downto 0);
     variable wdptr : std_logic;
+    variable maintData : DoubleWordArray(0 to 7);
     variable ioData : DoubleWordArray(0 to 31);
     variable frame : RioFrame;
     
@@ -953,6 +962,34 @@ begin
     ---------------------------------------------------------------------------
     PrintR("TG_RioWbBridge-TC1-Step1");
     ---------------------------------------------------------------------------
+
+    InboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS,
+                                sourceId=>x"dead", destId=>x"beef",
+                                payload=>RioMaintenance(transaction=>"0000",
+                                                        size=>"1000",
+                                                        tid=>x"aa",
+                                                        hopCount=>x"ff",
+                                                        configOffset=>"000000000000000000000",
+                                                        wdptr=>'0',
+                                                        dataLength=>0,
+                                                        data=>maintData)));
+
+    maintData(0) := x"deadbeef00000000";
+    OutboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                 tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS,
+                                 sourceId=>x"beef", destId=>x"dead",
+                                 payload=>RioMaintenance(transaction=>"0010",
+                                                         size=>"0000",
+                                                         tid=>x"aa",
+                                                         hopCount=>x"ff",
+                                                         configOffset=>"000000000000000000000",
+                                                         wdptr=>'0',
+                                                         dataLength=>1,
+                                                         data=>maintData)));
+    
+    TestWait(inboundEmpty, '1', "inbound frame");
+    TestWait(outboundEmpty, '1', "outbound frame");
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -961,13 +998,13 @@ begin
     PrintS("Requirement: XXXXX");
     PrintS("-----------------------------------------------------------------");
     PrintS("Step 1:");
-    PrintS("Action: Send maintenance read request for one word on even offset.");
-    PrintS("Result: Check the accesses on the external configuration port.");
+    PrintS("Action: Send request class NREAD packets for all sizes.");
+    PrintS("Result: The Wishbone access should match the inbound packet.");
     PrintS("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
     PrintR("TG_RioWbBridge-TC2-Step1");
     ---------------------------------------------------------------------------
-    -- REMARK: Change the address also...
+    -- REMARK: Change the address and tid also...
     for i in 0 to 15 loop
       for j in 0 to 1 loop
         rdsize := std_logic_vector(to_unsigned(i, 4));
@@ -999,6 +1036,104 @@ begin
         SetSlaveAccess(false, "0000000000000000000000000000000",
                        getReadMask(rdsize, wdptr),
                        getReadSize(rdsize, wdptr),
+                       ioData);
+
+        TestWait(inboundEmpty, '1', "inbound frame");
+        TestWait(outboundEmpty, '1', "outbound frame");
+        TestWait(wbMessageEmpty, '1', "wishbone access");
+      end loop;
+    end loop;
+    
+    ---------------------------------------------------------------------------
+    PrintS("-----------------------------------------------------------------");
+    PrintS("TG_RioWbBridge-TC3");
+    PrintS("Description: Test write class packets.");
+    PrintS("Requirement: XXXXX");
+    PrintS("-----------------------------------------------------------------");
+    PrintS("Step 1:");
+    PrintS("Action: Send write class NWRITER packets for all sizes.");
+    PrintS("Result: The Wishbone access should match the inbound packet and a ");
+    PrintS("        response should be sent.");
+    PrintS("-----------------------------------------------------------------");
+    ---------------------------------------------------------------------------
+    PrintR("TG_RioWbBridge-TC3-Step1");
+    ---------------------------------------------------------------------------
+    -- REMARK: Change the address and tid also...
+    for i in 0 to 15 loop
+      for j in 0 to 1 loop
+        wrsize := std_logic_vector(to_unsigned(i, 4));
+        if (j = 0) then
+          wdptr := '0';
+        else
+          wdptr:= '1';
+        end if;
+        
+        CreateRandomPayload(ioData, seed1, seed2);
+
+        InboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                    tt=>"01", ftype=>FTYPE_WRITE_CLASS, 
+                                    sourceId=>x"dead", destId=>x"beef",
+                                    payload=>RioNwriteR(wrsize=>wrsize,
+                                                        tid=>x"aa",
+                                                        address=>"00000000000000000000000000000",
+                                                        wdptr=>wdptr,
+                                                        xamsbs=>"00",
+                                                        dataLength=>getReadSize(wrsize, wdptr),
+                                                        data=>ioData)));
+
+        OutboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                     tt=>"01", ftype=>FTYPE_RESPONSE_CLASS, 
+                                     sourceId=>x"beef", destId=>x"dead",
+                                     payload=>RioResponse(status=>"0000",
+                                                          tid=>x"aa",
+                                                          dataLength=>0,
+                                                          data=>ioData)));
+
+        SetSlaveAccess(true, "0000000000000000000000000000000",
+                       getReadMask(wrsize, wdptr),
+                       getReadSize(wrsize, wdptr),
+                       ioData);
+
+        TestWait(inboundEmpty, '1', "inbound frame");
+        TestWait(outboundEmpty, '1', "outbound frame");
+        TestWait(wbMessageEmpty, '1', "wishbone access");
+      end loop;
+    end loop;
+
+    ---------------------------------------------------------------------------
+    PrintS("-----------------------------------------------------------------");
+    PrintS("Step 2:");
+    PrintS("Action: Send write class NWRITE packets for all sizes.");
+    PrintS("Result: The Wishbone access should match the inbound packet.");
+    PrintS("-----------------------------------------------------------------");
+    ---------------------------------------------------------------------------
+    PrintR("TG_RioWbBridge-TC3-Step2");
+    ---------------------------------------------------------------------------
+    -- REMARK: Change the address and tid also...
+    for i in 0 to 15 loop
+      for j in 0 to 1 loop
+        wrsize := std_logic_vector(to_unsigned(i, 4));
+        if (j = 0) then
+          wdptr := '0';
+        else
+          wdptr:= '1';
+        end if;
+        
+        CreateRandomPayload(ioData, seed1, seed2);
+
+        InboundFrame(RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                    tt=>"01", ftype=>FTYPE_WRITE_CLASS, 
+                                    sourceId=>x"dead", destId=>x"beef",
+                                    payload=>RioNwrite(wrsize=>wrsize,
+                                                       address=>"00000000000000000000000000000",
+                                                       wdptr=>wdptr,
+                                                       xamsbs=>"00",
+                                                       dataLength=>getReadSize(wrsize, wdptr),
+                                                       data=>ioData)));
+
+        SetSlaveAccess(true, "0000000000000000000000000000000",
+                       getReadMask(wrsize, wdptr),
+                       getReadSize(wrsize, wdptr),
                        ioData);
 
         TestWait(inboundEmpty, '1', "inbound frame");

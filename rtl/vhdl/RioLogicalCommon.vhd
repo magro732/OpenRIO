@@ -9,7 +9,10 @@
 -- Contains a platform to build endpoints on.
 -- 
 -- To Do:
--- -
+-- REMARK: Clean up and increase the speed of the interface to packet handlers.
+-- REMARK: 8-bit deviceId has not been verified, fix.
+-- REMARK: Egress; Places packets in different queues depending on the packet priority?
+-- REMARK: Add verification of all sizes of packets.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 
@@ -56,9 +59,6 @@
 -- * Receives header and deviceIDs in seperate accesses to facilitate 8- and
 --   16-bit deviceAddress support. All fields are right-justified.
 -------------------------------------------------------------------------------
--- REMARK: Egress; Places packets in different queues depending on the packet priority?
--- REMARK: Do not use Wishbone, use request/grant scheme instead?
--- REMARK: 8-bit deviceId has not been verified, fix.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -69,6 +69,8 @@ use work.rio_common.all;
 -- 
 -------------------------------------------------------------------------------
 entity RioLogicalCommon is
+  generic(
+    PORTS : natural);
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -86,16 +88,16 @@ entity RioLogicalCommon is
     writeContent_o : out std_logic;
     writeContentData_o : out std_logic_vector(31 downto 0);
 
-    masterCyc_o : out std_logic;
-    masterStb_o : out std_logic;
-    masterAdr_o : out std_logic_vector(7 downto 0);
-    masterDat_o : out std_logic_vector(31 downto 0);
-    masterAck_i : in std_logic;
+    inboundCyc_o : out std_logic;
+    inboundStb_o : out std_logic;
+    inboundAdr_o : out std_logic_vector(7 downto 0);
+    inboundDat_o : out std_logic_vector(31 downto 0);
+    inboundAck_i : in std_logic;
     
-    slaveCyc_i : in std_logic;
-    slaveStb_i : in std_logic;
-    slaveDat_i : in std_logic_vector(31 downto 0);
-    slaveAck_o : out std_logic);
+    outboundCyc_i : in std_logic_vector(PORTS-1 downto 0);
+    outboundStb_i : in std_logic_vector(PORTS-1 downto 0);
+    outboundDat_i : in std_logic_vector(32*PORTS-1 downto 0);
+    outboundAck_o : out std_logic_vector(PORTS-1 downto 0));
 end entity;
 
 
@@ -104,6 +106,22 @@ end entity;
 -------------------------------------------------------------------------------
 architecture RioLogicalCommon of RioLogicalCommon is
 
+  component RioLogicalCommonInterconnect is
+    generic(
+      WIDTH : natural);
+    port(
+      clk : in std_logic;
+      areset_n : in std_logic;
+
+      stb_i : in std_logic_vector(WIDTH-1 downto 0);
+      dataM_i : in std_logic_vector(32*WIDTH-1 downto 0);
+      ack_o : out std_logic_vector(WIDTH-1 downto 0);
+
+      stb_o : out std_logic;
+      dataS_o : out std_logic_vector(31 downto 0);
+      ack_i : in std_logic);
+  end component;
+  
   component RioLogicalCommonIngress is
     port(
       clk : in std_logic;
@@ -115,11 +133,11 @@ architecture RioLogicalCommon of RioLogicalCommon is
       readContentEnd_i : in std_logic;
       readContentData_i : in std_logic_vector(31 downto 0);
 
-      masterCyc_o : out std_logic;
-      masterStb_o : out std_logic;
-      masterAdr_o : out std_logic_vector(7 downto 0);
-      masterDat_o : out std_logic_vector(31 downto 0);
-      masterAck_i : in std_logic);
+      inboundCyc_o : out std_logic;
+      inboundStb_o : out std_logic;
+      inboundAdr_o : out std_logic_vector(7 downto 0);
+      inboundDat_o : out std_logic_vector(31 downto 0);
+      inboundAck_i : in std_logic);
   end component;
 
   component RioLogicalCommonEgress is
@@ -133,12 +151,16 @@ architecture RioLogicalCommon of RioLogicalCommon is
       writeContent_o : out std_logic;
       writeContentData_o : out std_logic_vector(31 downto 0);
 
-      slaveCyc_i : in std_logic;
-      slaveStb_i : in std_logic;
-      slaveDat_i : in std_logic_vector(31 downto 0);
-      slaveAck_o : out std_logic);
+      outboundCyc_i : in std_logic;
+      outboundStb_i : in std_logic;
+      outboundDat_i : in std_logic_vector(31 downto 0);
+      outboundAck_o : out std_logic);
   end component;
 
+  signal outboundStb : std_logic;
+  signal outboundDat : std_logic_vector(31 downto 0);
+  signal outboundAck : std_logic;
+  
 begin
 
   Ingress: RioLogicalCommonIngress
@@ -149,11 +171,22 @@ begin
       readContent_o=>readContent_o, 
       readContentEnd_i=>readContentEnd_i, 
       readContentData_i=>readContentData_i, 
-      masterCyc_o=>masterCyc_o, 
-      masterStb_o=>masterStb_o, 
-      masterAdr_o=>masterAdr_o, 
-      masterDat_o=>masterDat_o, 
-      masterAck_i=>masterAck_i);
+      inboundCyc_o=>inboundCyc_o, 
+      inboundStb_o=>inboundStb_o, 
+      inboundAdr_o=>inboundAdr_o, 
+      inboundDat_o=>inboundDat_o, 
+      inboundAck_i=>inboundAck_i);
+
+  EgressInterconnect: RioLogicalCommonInterconnect
+    generic map(WIDTH=>PORTS)
+    port map(
+      clk=>clk, areset_n=>areset_n, 
+      stb_i=>outboundStb_i, 
+      dataM_i=>outboundDat_i, 
+      ack_o=>outboundAck_o, 
+      stb_o=>outboundStb, 
+      dataS_o=>outboundDat, 
+      ack_i=>outboundAck);
 
   Egress: RioLogicalCommonEgress
     port map(
@@ -163,10 +196,10 @@ begin
       writeFrameAbort_o=>writeFrameAbort_o, 
       writeContent_o=>writeContent_o, 
       writeContentData_o=>writeContentData_o, 
-      slaveCyc_i=>slaveCyc_i, 
-      slaveStb_i=>slaveStb_i, 
-      slaveDat_i=>slaveDat_i, 
-      slaveAck_o=>slaveAck_o);
+      outboundCyc_i=>'1', 
+      outboundStb_i=>outboundStb, 
+      outboundDat_i=>outboundDat, 
+      outboundAck_o=>outboundAck);
 
 end architecture;
 
@@ -175,9 +208,6 @@ end architecture;
 -------------------------------------------------------------------------------
 -- RioLogicalCommonIngress.
 -------------------------------------------------------------------------------
--- REMARK: Check the destination address to see if it matches the one configured???
--- REMARK: Remove the acknowledge on all accesses on the master bus.
--- REMARK: Add component declarations to riocommon.vhd.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -197,11 +227,11 @@ entity RioLogicalCommonIngress is
     readContentEnd_i : in std_logic;
     readContentData_i : in std_logic_vector(31 downto 0);
 
-    masterCyc_o : out std_logic;
-    masterStb_o : out std_logic;
-    masterAdr_o : out std_logic_vector(7 downto 0);
-    masterDat_o : out std_logic_vector(31 downto 0);
-    masterAck_i : in std_logic);
+    inboundCyc_o : out std_logic;
+    inboundStb_o : out std_logic;
+    inboundAdr_o : out std_logic_vector(7 downto 0);
+    inboundDat_o : out std_logic_vector(31 downto 0);
+    inboundAck_i : in std_logic);
 end entity;
 
 
@@ -216,7 +246,7 @@ architecture RioLogicalCommonIngress of RioLogicalCommonIngress is
                      END_PACKET);
   signal state : StateType;
 
-  signal packetPosition : natural range 0 to 32;
+  signal packetPosition : natural range 0 to 68;
   signal packetContent : std_logic_vector(63 downto 0);
 
   signal tt : std_logic_vector(1 downto 0);
@@ -240,10 +270,10 @@ begin
       readContent_o <= '0';
       readFrame_o <= '0';
 
-      masterCyc_o <= '0';
-      masterStb_o <= '0';
-      masterAdr_o <= (others=>'0');
-      masterDat_o <= (others=>'0');
+      inboundCyc_o <= '0';
+      inboundStb_o <= '0';
+      inboundAdr_o <= (others=>'0');
+      inboundDat_o <= (others=>'0');
     elsif (clk'event and clk = '1') then
       readContent_o <= '0';
       readFrame_o <= '0';
@@ -298,10 +328,10 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          masterCyc_o <= '1';
-          masterStb_o <= '1';
-          masterAdr_o <= ftype & transaction;
-          masterDat_o <= x"0000" & packetContent(63 downto 48);
+          inboundCyc_o <= '1';
+          inboundStb_o <= '1';
+          inboundAdr_o <= ftype & transaction;
+          inboundDat_o <= x"0000" & packetContent(63 downto 48);
           packetContent <= packetContent(47 downto 0) & x"0000";
 
           state <= SEND_DESTINATION;
@@ -310,12 +340,12 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          if (masterAck_i = '1') then
+          if (inboundAck_i = '1') then
             if (tt = "00") then
-              masterDat_o <= x"000000" & packetContent(63 downto 56);
+              inboundDat_o <= x"000000" & packetContent(63 downto 56);
               packetContent <= packetContent(55 downto 0) & x"00";
             elsif (tt = "01") then
-              masterDat_o <= x"0000" & packetContent(63 downto 48);
+              inboundDat_o <= x"0000" & packetContent(63 downto 48);
               packetContent <= packetContent(47 downto 0) & x"0000";
             end if;
 
@@ -326,12 +356,12 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          if (masterAck_i = '1') then
+          if (inboundAck_i = '1') then
             if (tt = "00") then
-              masterDat_o <= x"000000" & packetContent(63 downto 56);
+              inboundDat_o <= x"000000" & packetContent(63 downto 56);
               packetContent <= packetContent(55 downto 0) & x"00";
             elsif (tt = "01") then
-              masterDat_o <= x"0000" & packetContent(63 downto 48);
+              inboundDat_o <= x"0000" & packetContent(63 downto 48);
               packetContent <= packetContent(47 downto 32) & readContentData_i & x"0000";
               readContent_o <= '1';
             end if;
@@ -343,19 +373,19 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          if (masterAck_i = '1') then
+          if (inboundAck_i = '1') then
             packetPosition <= packetPosition + 1;
 
             if (tt = "00") then
-              masterDat_o <= packetContent(63 downto 32);
+              inboundDat_o <= packetContent(63 downto 32);
               packetContent <= packetContent(31 downto 0) & readContentData_i;
             elsif (tt = "01") then
-              masterDat_o <= packetContent(63 downto 32);
+              inboundDat_o <= packetContent(63 downto 32);
               packetContent <= packetContent(31 downto 16) & readContentData_i & x"0000";
             end if;
             
             if (readContentEnd_i = '0') then
-              if (packetPosition = 20) then
+              if (packetPosition = 18) then
                 state <= FORWARD_CRC;
               end if;
               
@@ -370,12 +400,12 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          if (masterAck_i = '1') then
-            masterDat_o <= packetContent(63 downto 32);
+          if (inboundAck_i = '1') then
+            inboundDat_o <= packetContent(63 downto 32);
 
             packetPosition <= packetPosition + 1;
             packetContent <=
-              packetContent(31 downto 0) & readContentData_i(15 downto 0) & x"0000";
+              packetContent(31 downto 16) & readContentData_i(15 downto 0) & x"00000000";
             
             if (readContentEnd_i = '0') then
               readContent_o <= '1';
@@ -390,12 +420,12 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          if (masterAck_i = '1') then
-            masterDat_o <= packetContent(63 downto 32);
+          if (inboundAck_i = '1') then
+            inboundDat_o <= packetContent(63 downto 32);
 
             packetPosition <= packetPosition + 1;
             packetContent <=
-              packetContent(15 downto 0) & readContentData_i & x"0000";
+              readContentData_i & x"00000000";
             
             if (readContentEnd_i = '0') then
               readContent_o <= '1';
@@ -409,9 +439,8 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          -- REMARK: The last always contain the CRC?
-          if (masterAck_i = '1') then
-            masterDat_o <= packetContent(63 downto 32);
+          if (inboundAck_i = '1') then
+            inboundDat_o <= packetContent(63 downto 32);
             state <= END_PACKET;
           end if;
           
@@ -419,9 +448,9 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          if (masterAck_i = '1') then
-            masterCyc_o <= '0';
-            masterStb_o <= '0';
+          if (inboundAck_i = '1') then
+            inboundCyc_o <= '0';
+            inboundStb_o <= '0';
             state <= IDLE;
           end if;
           
@@ -464,10 +493,10 @@ entity RioLogicalCommonEgress is
     writeContent_o : out std_logic;
     writeContentData_o : out std_logic_vector(31 downto 0);
 
-    slaveCyc_i : in std_logic;
-    slaveStb_i : in std_logic;
-    slaveDat_i : in std_logic_vector(31 downto 0);
-    slaveAck_o : out std_logic);
+    outboundCyc_i : in std_logic;
+    outboundStb_i : in std_logic;
+    outboundDat_i : in std_logic_vector(31 downto 0);
+    outboundAck_o : out std_logic);
 end entity;
 
 
@@ -540,7 +569,7 @@ begin
       
       crcReset <= '0';
       
-      slaveAck_o <= '0';
+      outboundAck_o <= '0';
 
       writeFrame_o <= '0';
       writeFrameAbort_o <= '0';
@@ -565,11 +594,11 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
-            temp <= slaveDat_i(15 downto 0);
-            tt <= slaveDat_i(5 downto 4);
+          if ((outboundCyc_i = '1') and (outboundStb_i = '1')) then
+            temp <= outboundDat_i(15 downto 0);
+            tt <= outboundDat_i(5 downto 4);
 
-            slaveAck_o <= '1';
+            outboundAck_o <= '1';
             state <= HEADER_ACK;
           else
             state <= HEADER_GET;
@@ -579,7 +608,7 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          slaveAck_o <= '0';
+          outboundAck_o <= '0';
           state <= DESTINATION_GET;
 
         when DESTINATION_GET =>
@@ -587,14 +616,14 @@ begin
           -- 
           ---------------------------------------------------------------------
           
-          if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
+          if ((outboundCyc_i = '1') and (outboundStb_i = '1')) then
             if (tt = "01") then
-              writeContentData2 <= temp & slaveDat_i(15 downto 0);
+              writeContentData2 <= temp & outboundDat_i(15 downto 0);
             else
               report "TT-field not supported." severity error;
             end if;
             
-            slaveAck_o <= '1';
+            outboundAck_o <= '1';
             state <= DESTINATION_ACK;
           else
             state <= RESTART_FRAME;
@@ -604,7 +633,7 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          slaveAck_o <= '0';
+          outboundAck_o <= '0';
           state <= SOURCE_GET;
 
         when SOURCE_GET =>
@@ -612,12 +641,12 @@ begin
           -- 
           ---------------------------------------------------------------------
           
-          if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
+          if ((outboundCyc_i = '1') and (outboundStb_i = '1')) then
             if (tt = "01") then
-              temp <= slaveDat_i(15 downto 0);
+              temp <= outboundDat_i(15 downto 0);
             end if;
             
-            slaveAck_o <= '1';
+            outboundAck_o <= '1';
             state <= SOURCE_ACK;
           else
             state <= RESTART_FRAME;
@@ -627,19 +656,19 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          slaveAck_o <= '0';
+          outboundAck_o <= '0';
           state <= CONTENT_GET;
           
         when CONTENT_GET =>
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          if ((slaveCyc_i = '1') and (slaveStb_i = '1')) then
+          if ((outboundCyc_i = '1') and (outboundStb_i = '1')) then
             if (packetPosition < 19) then
               if (tt = "01") then
-                writeContentData2 <= temp & slaveDat_i(31 downto 16);
-                temp <= slaveDat_i(15 downto 0);
-                slaveAck_o <= '1';
+                writeContentData2 <= temp & outboundDat_i(31 downto 16);
+                temp <= outboundDat_i(15 downto 0);
+                outboundAck_o <= '1';
               end if;
             elsif (packetPosition = 19) then
               if (tt = "01") then
@@ -647,8 +676,8 @@ begin
               end if;
             else
               if (tt = "01") then
-                writeContentData2 <= slaveDat_i;
-                slaveAck_o <= '1';
+                writeContentData2 <= outboundDat_i;
+                outboundAck_o <= '1';
               end if;
             end if;
             writeContent <= '1';
@@ -668,7 +697,7 @@ begin
               writeContentData2 <= crc16Next & temp;
             end if;
           end if;
-          slaveAck_o <= '0';
+          outboundAck_o <= '0';
           state <= CONTENT_GET;
 
         when CRC_APPEND =>
@@ -765,3 +794,81 @@ begin
       d_i=>writeContentData1(15 downto 0), crc_i=>crc16Temp, crc_o=>crc16Next);
 
 end architecture;
+
+
+
+-------------------------------------------------------------------------------
+-- 
+-------------------------------------------------------------------------------
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all; 
+use work.rio_common.all;
+
+
+-------------------------------------------------------------------------------
+-- 
+-------------------------------------------------------------------------------
+entity RioLogicalCommonInterconnect is
+  generic(
+    WIDTH : natural);
+  port(
+    clk : in std_logic;
+    areset_n : in std_logic;
+
+    stb_i : in std_logic_vector(WIDTH-1 downto 0);
+    dataM_i : in std_logic_vector(32*WIDTH-1 downto 0);
+    ack_o : out std_logic_vector(WIDTH-1 downto 0);
+
+    stb_o : out std_logic;
+    dataS_o : out std_logic_vector(31 downto 0);
+    ack_i : in std_logic);
+end entity;
+
+
+-------------------------------------------------------------------------------
+-- 
+-------------------------------------------------------------------------------
+architecture RioLogicalCommonInterconnectImpl of RioLogicalCommonInterconnect is
+  signal activeCycle : std_logic;
+  signal selectedMaster : natural range 0 to WIDTH-1;
+begin
+  
+  -----------------------------------------------------------------------------
+  -- Arbitration.
+  -----------------------------------------------------------------------------
+  Arbiter: process(areset_n, clk)
+  begin
+    if (areset_n = '0') then
+      activeCycle <= '0';
+      selectedMaster <= 0;
+    elsif (clk'event and clk = '1') then
+      if (activeCycle = '0') then
+        for i in 0 to WIDTH-1 loop
+          if (stb_i(i) = '1') then
+            activeCycle <= '1';
+            selectedMaster <= i;
+          end if;
+        end loop;
+      else  
+        if (stb_i(selectedMaster) = '0') then
+          activeCycle <= '0';
+        end if;
+      end if;
+    end if;
+  end process;
+
+  -----------------------------------------------------------------------------
+  -- Interconnection.
+  -----------------------------------------------------------------------------
+  stb_o <= stb_i(selectedMaster) and activeCycle;
+  dataS_o <= dataM_i(32*(selectedMaster+1)-1 downto 32*selectedMaster);
+
+  Interconnect: for i in 0 to WIDTH-1 generate
+    ack_o(i) <= ack_i when (selectedMaster = i) else '0';
+  end generate;
+
+end architecture;
+
+

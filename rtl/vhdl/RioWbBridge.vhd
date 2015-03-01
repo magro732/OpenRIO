@@ -10,7 +10,26 @@
 -- NWRITE, NWRITER and NREAD are currently supported.
 -- 
 -- To Do:
--- -
+-- REMARK: Set the stb_o to '0' in between read accesses to conform better to a
+-- block transfer in the Wishbone standard.
+-- REMARK: Clean up cyc-signals, only stb-signals are needed (between
+-- RioLogicalCommon and the packet handlers).
+-- REMARK: Add support for the lock_o to be sure to transfer all the packet
+-- content atomically?
+-- REMARK: Add support for EXTENDED_ADDRESS.
+-- REMARK: Use the baseDeviceId when sending packets? Currently, all responses
+-- are sent with destination<->source exchanged so the baseDeviceId is not
+-- needed.
+-- REMARK: Support inbound data with full bandwidth, not just half, applies to
+-- RioLogicalCommon and the packet handlers.
+-- REMARK: Move the packet handlers to seperate files.
+-- REMARK: Increase the priority of the response-packet when sent?
+-- REMARK: Implement error indications if erronous packets are received.
+-- REMARK: Implement error indications if err_i is received on the Wishbone bus.
+-- REMARK: Add support for extended features to dynamically configure the status
+-- from the port this block is connected to. Needed for the discovered- and
+-- masterEnable-bits.
+-- REMARK: Add support for outbound doorbells connected to interrupt input pins.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org
@@ -42,10 +61,12 @@
 -- 
 -------------------------------------------------------------------------------
 
+
 -------------------------------------------------------------------------------
 -- RioWbBridge.
+-- This block acts as an RapidIO endpoint and converts packets into Wishbone
+-- accesses.
 -------------------------------------------------------------------------------
--- REMARK: Add support for EXTENDED_ADDRESS...
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -117,11 +138,11 @@ architecture RioWbBridgeImpl of RioWbBridge is
       select_o : out std_logic_vector(7 downto 0);
       done_i : in std_logic;
       
-      slaveCyc_i : in std_logic;
-      slaveStb_i : in std_logic;
-      slaveAdr_i : in std_logic_vector(7 downto 0);
-      slaveDat_i : in std_logic_vector(31 downto 0);
-      slaveAck_o : out std_logic);
+      inboundCyc_i : in std_logic;
+      inboundStb_i : in std_logic;
+      inboundAdr_i : in std_logic_vector(7 downto 0);
+      inboundDat_i : in std_logic_vector(31 downto 0);
+      inboundAck_o : out std_logic);
   end component;
   
   component WriteClassInbound is
@@ -133,6 +154,7 @@ architecture RioWbBridgeImpl of RioWbBridge is
       enable : in std_logic;
 
       ready_o : out std_logic;
+      responseNeeded_o : out std_logic;
       vc_o : out std_logic;
       crf_o : out std_logic;
       prio_o : out std_logic_vector(1 downto 0);
@@ -148,11 +170,11 @@ architecture RioWbBridgeImpl of RioWbBridge is
       payload_o : out std_logic_vector(63 downto 0);
       done_i : in std_logic;
       
-      slaveCyc_i : in std_logic;
-      slaveStb_i : in std_logic;
-      slaveAdr_i : in std_logic_vector(7 downto 0);
-      slaveDat_i : in std_logic_vector(31 downto 0);
-      slaveAck_o : out std_logic);
+      inboundCyc_i : in std_logic;
+      inboundStb_i : in std_logic;
+      inboundAdr_i : in std_logic_vector(7 downto 0);
+      inboundDat_i : in std_logic_vector(31 downto 0);
+      inboundAck_o : out std_logic);
   end component;
 
   component ResponseClassOutbound is
@@ -177,13 +199,40 @@ architecture RioWbBridgeImpl of RioWbBridge is
       payload_i : in std_logic_vector(63 downto 0);
       done_o : out std_logic;
       
-      masterCyc_o : out std_logic;
-      masterStb_o : out std_logic;
-      masterDat_o : out std_logic_vector(31 downto 0);
-      masterAck_i : in std_logic);
+      outboundCyc_o : out std_logic;
+      outboundStb_o : out std_logic;
+      outboundDat_o : out std_logic_vector(31 downto 0);
+      outboundAck_i : in std_logic);
+  end component;
+
+  component RioLogicalMaintenance is
+    port(
+      clk : in std_logic;
+      areset_n : in std_logic;
+      enable : in std_logic;
+
+      configStb_o : out std_logic;
+      configWe_o : out std_logic;
+      configAdr_o : out std_logic_vector(21 downto 0);
+      configDat_o : out std_logic_vector(31 downto 0);
+      configDat_i : in std_logic_vector(31 downto 0);
+      configAck_i : in std_logic;
+      
+      inboundCyc_i : in std_logic;
+      inboundStb_i : in std_logic;
+      inboundAdr_i : in std_logic_vector(7 downto 0);
+      inboundDat_i : in std_logic_vector(31 downto 0);
+      inboundAck_o : out std_logic;
+
+      outboundCyc_o : out std_logic;
+      outboundStb_o : out std_logic;
+      outboundDat_o : out std_logic_vector(31 downto 0);
+      outboundAck_i : in std_logic);
   end component;
 
   component RioLogicalCommon is
+    generic(
+      PORTS : natural);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -201,21 +250,23 @@ architecture RioWbBridgeImpl of RioWbBridge is
       writeContent_o : out std_logic;
       writeContentData_o : out std_logic_vector(31 downto 0);
 
-      masterCyc_o : out std_logic;
-      masterStb_o : out std_logic;
-      masterAdr_o : out std_logic_vector(7 downto 0);
-      masterDat_o : out std_logic_vector(31 downto 0);
-      masterAck_i : in std_logic;
+      inboundCyc_o : out std_logic;
+      inboundStb_o : out std_logic;
+      inboundAdr_o : out std_logic_vector(7 downto 0);
+      inboundDat_o : out std_logic_vector(31 downto 0);
+      inboundAck_i : in std_logic;
       
-      slaveCyc_i : in std_logic;
-      slaveStb_i : in std_logic;
-      slaveDat_i : in std_logic_vector(31 downto 0);
-      slaveAck_o : out std_logic);
+      outboundCyc_i : in std_logic_vector(PORTS-1 downto 0);
+      outboundStb_i : in std_logic_vector(PORTS-1 downto 0);
+      outboundDat_i : in std_logic_vector(32*PORTS-1 downto 0);
+      outboundAck_o : out std_logic_vector(PORTS-1 downto 0));
   end component;
+
+  constant PORTS : natural := 2;
 
   type StateType is (IDLE,
                      REQUEST_CLASS, REQUEST_CLASS_RESPONSE,
-                     WRITE_CLASS, WRITE_CLASS_RESPONSE);
+                     WRITE_CLASS, WRITE_CLASS_ACCESS, WRITE_CLASS_ACK, WRITE_CLASS_RESPONSE);
   signal state : StateType;
   
   signal adr : std_logic_vector(16*EXTENDED_ADDRESS+30 downto 0);
@@ -239,6 +290,7 @@ architecture RioWbBridgeImpl of RioWbBridge is
   signal requestAck : std_logic;
 
   signal writeReady : std_logic;
+  signal writeResponse : std_logic;
   signal writeVc : std_logic;
   signal writeCrf : std_logic;
   signal writePrio : std_logic_vector(1 downto 0);
@@ -266,28 +318,25 @@ architecture RioWbBridgeImpl of RioWbBridge is
   signal responsePayload : std_logic_vector(63 downto 0);
   signal responseDone : std_logic;
 
+  signal configStb : std_logic;
+  signal configWe : std_logic;
+  signal configAdr : std_logic_vector(21 downto 0);
+  signal configAdrByte : std_logic_vector(23 downto 0);
+  signal configDatWrite : std_logic_vector(31 downto 0);
+  signal configDatRead : std_logic_vector(31 downto 0);
+  signal configAck : std_logic;
+  signal maintenanceAck : std_logic;
+  
   signal inboundCyc : std_logic;
   signal inboundStb : std_logic;
   signal inboundAdr : std_logic_vector(7 downto 0);
   signal inboundDat : std_logic_vector(31 downto 0);
   signal inboundAck : std_logic;
 
-  signal outboundCyc : std_logic;
-  signal outboundStb : std_logic;
-  signal outboundDat : std_logic_vector(31 downto 0);
-  signal outboundAck : std_logic;
-  
---  signal configStb : std_logic;
---  signal configWe : std_logic;
---  signal configAdr : std_logic_vector(23 downto 0);
---  signal configDatWrite : std_logic_vector(31 downto 0);
---  signal configDatRead : std_logic_vector(31 downto 0);
---  signal configAck : std_logic;
-  
---  signal componentTag : std_logic_vector(31 downto 0);
---  signal baseDeviceId : std_logic_vector(15 downto 0) := DEFAULT_BASE_DEVICE_ID;
---  signal hostBaseDeviceIdLocked : std_logic;
---  signal hostBaseDeviceId : std_logic_vector(15 downto 0) := (others => '1');
+  signal outboundCyc : std_logic_vector(PORTS-1 downto 0);
+  signal outboundStb : std_logic_vector(PORTS-1 downto 0);
+  signal outboundDat : std_logic_vector(32*PORTS-1 downto 0);
+  signal outboundAck : std_logic_vector(PORTS-1 downto 0);
 
 begin
 
@@ -353,12 +402,7 @@ begin
               responsePayloadPresent <= '1';
               state <= REQUEST_CLASS;
             elsif (writeReady = '1') then
-              cyc_o <= '1';
-              stb_o <= '1';
-              we_o <= '1';
               adr <= writeAddress;
-              sel_o <= writeSelect;
-              datOut <= writePayload;
 
               payloadUpdate <= '1';
               payloadIndex <= (others=>'0');
@@ -403,13 +447,31 @@ begin
             ---------------------------------------------------------------------
             -- 
             ---------------------------------------------------------------------
-            if (ack_i = '1') then
-              payloadUpdate <= '1';
+            state <= WRITE_CLASS_ACCESS;
 
+          when WRITE_CLASS_ACCESS =>
+            ---------------------------------------------------------------------
+            -- 
+            ---------------------------------------------------------------------
+            cyc_o <= '1';
+            stb_o <= '1';
+            we_o <= '1';
+            sel_o <= writeSelect;
+            datOut <= writePayload;
+            payloadUpdate <= '1';
+
+            state <= WRITE_CLASS_ACK;
+
+          when WRITE_CLASS_ACK =>
+            ---------------------------------------------------------------------
+            -- 
+            ---------------------------------------------------------------------
+            if (ack_i = '1') then
               adr <= std_logic_vector(unsigned(adr) + 1);
               
-              if (payloadIndex /= writeLength) then
-                datOut <= writePayload;
+              if (unsigned(payloadIndex) /= (unsigned(writeLength)+2)) then
+                stb_o <= '0';
+                state <= WRITE_CLASS_ACCESS;
               else
                 writeDone <= '1';
                 cyc_o <= '0';
@@ -422,7 +484,7 @@ begin
             ---------------------------------------------------------------------
             -- 
             ---------------------------------------------------------------------
-            if (writeDone = '1') then
+            if (responseDone = '1') or (writeResponse = '0') then
               responseReady <= '0';
               state <= IDLE;
             else
@@ -437,7 +499,7 @@ begin
   end process;
   
   -----------------------------------------------------------------------------
-  -- 
+  -- Packet handlers.
   -----------------------------------------------------------------------------
 
   RequestClassInboundInst: RequestClassInbound
@@ -459,11 +521,11 @@ begin
       length_o=>requestLength,
       select_o=>requestSelect,
       done_i=>requestDone,
-      slaveCyc_i=>inboundCyc,
-      slaveStb_i=>inboundStb,
-      slaveAdr_i=>inboundAdr,
-      slaveDat_i=>inboundDat,
-      slaveAck_o=>requestAck);
+      inboundCyc_i=>inboundCyc,
+      inboundStb_i=>inboundStb,
+      inboundAdr_i=>inboundAdr,
+      inboundDat_i=>inboundDat,
+      inboundAck_o=>requestAck);
 
   WriteClassInboundInst: WriteClassInbound
     generic map(
@@ -473,6 +535,7 @@ begin
       areset_n=>areset_n, 
       enable=>enable, 
       ready_o=>writeReady, 
+      responseNeeded_o=>writeResponse,
       vc_o=>writeVc, 
       crf_o=>writeCrf, 
       prio_o=>writePrio, 
@@ -487,11 +550,11 @@ begin
       payloadIndex_i=>payloadIndex, 
       payload_o=>writePayload, 
       done_i=>writeDone, 
-      slaveCyc_i=>inboundCyc, 
-      slaveStb_i=>inboundStb, 
-      slaveAdr_i=>inboundAdr, 
-      slaveDat_i=>inboundDat, 
-      slaveAck_o=>writeAck);
+      inboundCyc_i=>inboundCyc, 
+      inboundStb_i=>inboundStb, 
+      inboundAdr_i=>inboundAdr, 
+      inboundDat_i=>inboundDat, 
+      inboundAck_o=>writeAck);
 
   ResponseClassOutboundInst: ResponseClassOutbound
     port map(
@@ -513,13 +576,40 @@ begin
       payloadIndex_i=>payloadIndex,
       payload_i=>responsePayload,
       done_o=>responseDone,
-      masterCyc_o=>outboundCyc,
-      masterStb_o=>outboundStb,
-      masterDat_o=>outboundDat,
-      masterAck_i=>outboundAck);
+      outboundCyc_o=>outboundCyc(0),
+      outboundStb_o=>outboundStb(0),
+      outboundDat_o=>outboundDat(31 downto 0),
+      outboundAck_i=>outboundAck(0));
 
-  inboundAck <= requestAck or writeAck;
+  -- Maintenance packet processing.
+  MaintenanceInst: RioLogicalMaintenance
+    port map(
+      clk=>clk,
+      areset_n=>areset_n,
+      enable=>enable,
+      configStb_o=>configStb,
+      configWe_o=>configWe,
+      configAdr_o=>configAdr,
+      configDat_o=>configDatWrite,
+      configDat_i=>configDatRead,
+      configAck_i=>configAck,
+      inboundCyc_i=>inboundCyc,
+      inboundStb_i=>inboundStb,
+      inboundAdr_i=>inboundAdr,
+      inboundDat_i=>inboundDat,
+      inboundAck_o=>maintenanceAck,
+      outboundCyc_o=>outboundCyc(1),
+      outboundStb_o=>outboundStb(1),
+      outboundDat_o=>outboundDat(63 downto 32),
+      outboundAck_i=>outboundAck(1));
+
+  -----------------------------------------------------------------------------
+  -- Common interface toward the packet queues.
+  -----------------------------------------------------------------------------
+  
+  inboundAck <= requestAck or writeAck or maintenanceAck;
   RioLogicalCommonInst: RioLogicalCommon
+    generic map(PORTS=>PORTS)
     port map(
       clk=>clk,
       areset_n=>areset_n,
@@ -534,116 +624,160 @@ begin
       writeFrameAbort_o=>writeFrameAbort_o,
       writeContent_o=>writeContent_o,
       writeContentData_o=>writeContentData_o,
-      masterCyc_o=>inboundCyc,
-      masterStb_o=>inboundStb,
-      masterAdr_o=>inboundAdr,
-      masterDat_o=>inboundDat,
-      masterAck_i=>inboundAck,
-      slaveCyc_i=>outboundCyc,
-      slaveStb_i=>outboundStb,
-      slaveDat_i=>outboundDat,
-      slaveAck_o=>outboundAck);
+      inboundCyc_o=>inboundCyc,
+      inboundStb_o=>inboundStb,
+      inboundAdr_o=>inboundAdr,
+      inboundDat_o=>inboundDat,
+      inboundAck_i=>inboundAck,
+      outboundCyc_i=>outboundCyc,
+      outboundStb_i=>outboundStb,
+      outboundDat_i=>outboundDat,
+      outboundAck_o=>outboundAck);
 
   -----------------------------------------------------------------------------
   -- Configuration memory.
   -----------------------------------------------------------------------------
---  memoryConfig : process(clk, areset_n)
---  begin
---    if (areset_n = '0') then
---      configDataRead <= (others => '0');
---      baseDeviceId <= DEFAULT_BASE_DEVICE_ID;
---      componentTag <= (others => '0');
---      hostBaseDeviceIdLocked <= '0';
---      hostBaseDeviceId <= (others => '1');
---    elsif (clk'event and clk = '1') then
+  configAdrByte <= configAdr & "00";
+  memoryConfig : process(clk, areset_n)
+    variable componentTag : std_logic_vector(31 downto 0);
+    variable hostBaseDeviceIdLocked : std_logic;
+    variable hostBaseDeviceId : std_logic_vector(15 downto 0);
+  begin
+    if (areset_n = '0') then
+      componentTag := (others => '0');
+      hostBaseDeviceIdLocked := '0';
+      hostBaseDeviceId := (others => '1');
 
---      if (configEnable = '1') then
---        case (configAddress) is
---          when x"000000" =>
---            -- Device Identity CAR. Read-only.
---            configDataRead(31 downto 16) <= DEVICE_IDENTITY;
---            configDataRead(15 downto 0) <= DEVICE_VENDOR_IDENTITY;
---          when x"000004" =>
---            -- Device Information CAR. Read-only.
---            configDataRead(31 downto 0) <= DEVICE_REV;
---          when x"000008" =>
---            -- Assembly Identity CAR. Read-only.
---            configDataRead(31 downto 16) <= ASSY_IDENTITY;
---            configDataRead(15 downto 0) <= ASSY_VENDOR_IDENTITY;
---          when x"00000c" =>
---            -- Assembly Informaiton CAR. Read-only.
---            -- Extended features pointer to "0000".
---            configDataRead(31 downto 16) <= ASSY_REV;
---            configDataRead(15 downto 0) <= x"0000";
---          when x"000010" =>
---            -- Processing Element Features CAR. Read-only.
---            -- Bridge(31), Memory(30), Processor(29), Switch(28).
---            configDataRead(31) <= '1';
---            configDataRead(30 downto 4) <= (others => '0');
---            configDataRead(3) <= '1';            -- support 16 bits common transport large system
---            configDataRead(2 downto 0) <= "001"; -- support 34 bits address
---          when x"000018" =>
---            -- Source Operations CAR. Read-only.
---            configDataRead(31 downto 0) <= (others => '0');
---          when x"00001C" =>
---            -- Destination Operations CAR. Read-only.
---            configDataRead(31 downto 16) <= (others => '0');
---            configDataRead(15) <= '1';
---            configDataRead(14) <= '1';
---            configDataRead(13 downto 0) <= (others => '0');
---          when x"00004C" =>
---            -- Processing Element Logical Layer Control CSR.
---            configDataRead(31 downto 3) <= (others => '0');
---            configDataRead(2 downto 0) <= "001"; -- support 34 bits address
---          when x"000060" =>
---            -- Base Device ID CSR.
---            -- Only valid for end point devices.
---            if (configWrite = '1') then
---              baseDeviceId <= configDataWrite(15 downto 0);
---            else
---              configDataRead(15 downto 0) <= baseDeviceId;
---            end if;
---          when x"000068" =>
---            -- Host Base Device ID Lock CSR.
---            if (configWrite = '1') then
---              -- Check if this field has been written before.
---              if (hostBaseDeviceIdLocked = '0') then
---                -- The field has not been written.
---                -- Lock the field and set the host base device id.
---                hostBaseDeviceIdLocked <= '1';
---                hostBaseDeviceId <= configDataWrite(15 downto 0);
---              else
---                -- The field has been written.
---                -- Check if the written data is the same as the stored.
---                if (hostBaseDeviceId = configDataWrite(15 downto 0)) then
---                  -- Same as stored, reset the value to its initial value.
---                  hostBaseDeviceIdLocked <= '0';
---                  hostBaseDeviceId <= (others => '1');
---                else
---                  -- Not writing the same as the stored value.
---                  -- Ignore the write.
---                end if;
---              end if;
---            else
---              configDataRead(31 downto 16) <= (others => '0');
---              configDataRead(15 downto 0) <= hostBaseDeviceId;
---            end if;
---          when x"00006C" =>
---            -- Component TAG CSR.
---            if (configWrite = '1') then
---              componentTag <= configDataWrite;
---            else
---              configDataRead <= componentTag;
---            end if;
+      configDatRead <= (others => '0');
+      configAck <= '0';
+    elsif (clk'event and clk = '1') then
+      if (configAck = '0') then
+        if (configStb = '1') then
+          configAck <= '1';
+          configDatRead <= (others=>'0');
+          
+          -- Check the address the access is for.
+          case (configAdrByte) is
+            when x"000000" =>
+              -----------------------------------------------------------------
+              -- Device Identity CAR. Read-only.
+              -----------------------------------------------------------------
+              configDatRead(31 downto 16) <= DEVICE_IDENTITY;
+              configDatRead(15 downto 0) <= DEVICE_VENDOR_IDENTITY;
+              
+            when x"000004" =>
+              -----------------------------------------------------------------
+              -- Device Information CAR. Read-only.
+              -----------------------------------------------------------------
+              configDatRead(31 downto 0) <= DEVICE_REV;
+              
+            when x"000008" =>
+              -----------------------------------------------------------------
+              -- Assembly Identity CAR. Read-only.
+              -----------------------------------------------------------------
+              configDatRead(31 downto 16) <= ASSY_IDENTITY;
+              configDatRead(15 downto 0) <= ASSY_VENDOR_IDENTITY;
+              
+            when x"00000c" =>
+              -----------------------------------------------------------------
+              -- Assembly Information CAR. Read-only.
+              -----------------------------------------------------------------
+              configDatRead(31 downto 16) <= ASSY_REV;
+              
+            when x"000010" =>
+              -----------------------------------------------------------------
+              -- Processing Element Features CAR. Read-only.
+              -----------------------------------------------------------------
+              -- Bridge.
+              configDatRead(31) <= '1';
+              -- Extended addressing support, 34-bit addresses.
+              configDatRead(2 downto 0) <= "001";
+              
+            when x"000018" =>
+              -----------------------------------------------------------------
+              -- Source Operations CAR. Read-only.
+              -----------------------------------------------------------------
+              -- Cannot act as a source of any packets.
+              
+            when x"00001c" =>
+              -----------------------------------------------------------------
+              -- Destination Operations CAR. Read-only.
+              -----------------------------------------------------------------
+              -- Read, supported.
+              configDatRead(15) <= '1';
+              -- Write, supported.
+              configDatRead(14) <= '1';
+              -- Write-with-response, supported.
+              configDatRead(12) <= '1';
+              
+            when x"00004c" =>
+              -----------------------------------------------------------------
+              -- Processing Element Logical Layer Control CSR.
+              -----------------------------------------------------------------
+              -- Extended addressing control, PE supports 34 bits addresses.
+              configDatRead(2 downto 0) <= "001";
 
---          when others =>
---            configDataRead <= (others => '0');
---        end case;
---      else
---        -- Config memory not enabled.
---      end if;
---    end if;
---  end process;
+            when x"000060" =>
+              -----------------------------------------------------------------
+              -- Base Device ID CSR.
+              -----------------------------------------------------------------
+              -- This is not used since this endpoint only replies to packets
+              -- and it can then use the destination deviceId as a source.
+              
+            when x"000068" =>
+              -----------------------------------------------------------------
+              -- Host Base Device ID Lock CSR.
+              -----------------------------------------------------------------
+
+              -- Check if writing.
+              if (configWe = '1') then
+                -- Write access.
+                
+                -- Check if this field has been written before.
+                if (hostBaseDeviceIdLocked = '0') then
+                  -- The field has not been written.
+                  -- Lock the field and set the host base device id.
+                  hostBaseDeviceIdLocked := '1';
+                  hostBaseDeviceId := configDatWrite(15 downto 0);
+                else
+                  -- The field has been written.
+                  -- Check if the written data is the same as the stored.
+                  if (hostBaseDeviceId = configDatWrite(15 downto 0)) then
+                    -- Same as stored, reset the value to its initial value.
+                    hostBaseDeviceIdLocked := '0';
+                    hostBaseDeviceId := (others => '1');
+                  else
+                    -- Not writing the same as the stored value.
+                    -- Ignore the write.
+                  end if;
+                end if;
+              end if;
+              
+              configDatRead(15 downto 0) <= hostBaseDeviceId;
+              
+            when x"00006C" =>
+              -----------------------------------------------------------------
+              -- Component TAG CSR.
+              -----------------------------------------------------------------
+              if (configWe = '1') then
+                componentTag := configDatWrite;
+              end if;
+
+              configDatRead <= componentTag;
+
+            when others =>
+              -----------------------------------------------------------------
+              -- Other access.
+              -----------------------------------------------------------------
+              -- Respond with all zeros.
+              configDatRead <= (others => '0');
+          end case;
+        end if;
+      else
+        configAck <= '0';
+      end if;
+    end if;
+  end process;
 
 end architecture;
 
@@ -682,11 +816,11 @@ entity RequestClassInbound is
     select_o : out std_logic_vector(7 downto 0);
     done_i : in std_logic;
     
-    slaveCyc_i : in std_logic;
-    slaveStb_i : in std_logic;
-    slaveAdr_i : in std_logic_vector(7 downto 0);
-    slaveDat_i : in std_logic_vector(31 downto 0);
-    slaveAck_o : out std_logic);
+    inboundCyc_i : in std_logic;
+    inboundStb_i : in std_logic;
+    inboundAdr_i : in std_logic_vector(7 downto 0);
+    inboundDat_i : in std_logic_vector(31 downto 0);
+    inboundAck_o : out std_logic);
 end entity;
 
 
@@ -700,14 +834,14 @@ architecture RequestClassInbound of RequestClassInbound is
   signal rdsize : std_logic_vector(3 downto 0);
   signal wdptr : std_logic;
 
-  signal slaveAck : std_logic;
+  signal inboundAck : std_logic;
   signal complete : std_logic;
 
-  signal packetIndex : natural range 0 to 68;
+  signal packetIndex : natural range 0 to 69;
 
 begin
 
-  slaveAck_o <= slaveAck;
+  inboundAck_o <= inboundAck;
 
   ready_o <= complete when (state = READY) else '0';
 
@@ -719,7 +853,7 @@ begin
       rdsize <= (others=>'0');
       wdptr <= '0';
       
-      slaveAck <= '0';
+      inboundAck <= '0';
       complete <= '0';
       
       packetIndex <= 0;
@@ -739,52 +873,51 @@ begin
           -- This state waits for a new REQUEST class packet, receives it
           -- and parses it.
           ---------------------------------------------------------------------
-          if (slaveCyc_i = '1') then
-            if (slaveAck = '0') then
-              if (slaveStb_i = '1') then
-                if (slaveAdr_i = x"24") then
+          if (inboundCyc_i = '1') then
+            if (inboundAck = '0') then
+              if (inboundStb_i = '1') then
+                if (inboundAdr_i = x"24") then
                   -------------------------------------------------------------
                   -- NREAD packet parser.
                   -------------------------------------------------------------
                   case (packetIndex) is
                     when 0 =>
                       -- x"0000" & ackid & vc & crf & prio & tt & ftype
-                      vc_o <= slaveDat_i(9);
-                      crf_o <= slaveDat_i(8);
-                      prio_o <= slaveDat_i(7 downto 6);
-                      tt_o <= slaveDat_i(5 downto 4);
+                      vc_o <= inboundDat_i(9);
+                      crf_o <= inboundDat_i(8);
+                      prio_o <= inboundDat_i(7 downto 6);
+                      tt_o <= inboundDat_i(5 downto 4);
                       packetIndex <= packetIndex + 1;
                     when 1 =>
                       -- dstid
-                      dstId_o <= slaveDat_i;
+                      dstId_o <= inboundDat_i;
                       packetIndex <= packetIndex + 1;
                     when 2 =>
                       -- srcid
-                      srcId_o <= slaveDat_i;
+                      srcId_o <= inboundDat_i;
                       packetIndex <= packetIndex + 1;
                     when 3 =>
                       -- transaction(3:0) & rdsize(3:0) & srcTID(7:0) & address(28:13)
-                      -- REMARK: Add support for extended addresses here...
-                      rdsize <= slaveDat_i(27 downto 24);
-                      tid_o <= slaveDat_i(23 downto 16);
-                      address_o(28 downto 13) <= slaveDat_i(15 downto 0);
+                      rdsize <= inboundDat_i(27 downto 24);
+                      tid_o <= inboundDat_i(23 downto 16);
+                      address_o(28 downto 13) <= inboundDat_i(15 downto 0);
                       packetIndex <= packetIndex + 1;
                     when 4 =>
                       -- address(12:0) & wdptr & xamsbs(1:0) & crc(15:0)
-                      address_o(12 downto 0) <= slaveDat_i(31 downto 19);
-                      wdptr <= slaveDat_i(18);
-                      address_o(30 downto 29) <= slaveDat_i(17 downto 16);
+                      address_o(12 downto 0) <= inboundDat_i(31 downto 19);
+                      wdptr <= inboundDat_i(18);
+                      address_o(30 downto 29) <= inboundDat_i(17 downto 16);
                       packetIndex <= packetIndex + 1;
                       complete <= '1';
                     when others =>
                       -- There should be no more content in an NREAD.
                       -- Discard.
                   end case;
-                  slaveAck <= '1';
+                  inboundAck <= '1';
                 end if;
               end if;
             else
-              slaveAck <= '0';
+              inboundAck <= '0';
             end if;
           else
             if (complete = '1') then
@@ -936,7 +1069,6 @@ end architecture;
 -------------------------------------------------------------------------------
 -- 
 -------------------------------------------------------------------------------
--- REMARK: Support inbound data with full bandwidth, not just half...
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -955,6 +1087,7 @@ entity WriteClassInbound is
     enable : in std_logic;
 
     ready_o : out std_logic;
+    responseNeeded_o : out std_logic;
     vc_o : out std_logic;
     crf_o : out std_logic;
     prio_o : out std_logic_vector(1 downto 0);
@@ -970,11 +1103,11 @@ entity WriteClassInbound is
     payload_o : out std_logic_vector(63 downto 0);
     done_i : in std_logic;
     
-    slaveCyc_i : in std_logic;
-    slaveStb_i : in std_logic;
-    slaveAdr_i : in std_logic_vector(7 downto 0);
-    slaveDat_i : in std_logic_vector(31 downto 0);
-    slaveAck_o : out std_logic);
+    inboundCyc_i : in std_logic;
+    inboundStb_i : in std_logic;
+    inboundAdr_i : in std_logic_vector(7 downto 0);
+    inboundDat_i : in std_logic_vector(31 downto 0);
+    inboundAck_o : out std_logic);
 end entity;
 
 
@@ -1004,10 +1137,10 @@ architecture WriteClassInbound of WriteClassInbound is
   signal wdptr : std_logic;
   signal wrsize : std_logic_vector(3 downto 0);
 
-  signal slaveAck : std_logic;
+  signal inboundAck : std_logic;
   signal complete : std_logic;
 
-  signal packetIndex : natural range 0 to 68;
+  signal packetIndex : natural range 0 to 69;
 
   signal doubleWord : std_logic_vector(63 downto 16);
   
@@ -1018,7 +1151,7 @@ architecture WriteClassInbound of WriteClassInbound is
   
 begin
 
-  slaveAck_o <= slaveAck;
+  inboundAck_o <= inboundAck;
 
   ready_o <= complete when (state = READY) else '0';
 
@@ -1030,8 +1163,9 @@ begin
       wdptr <= '0';
       wrsize <= (others=>'0');
       
-      slaveAck <= '0';
+      inboundAck <= '0';
       complete <= '0';
+      responseNeeded_o <= '0';
       
       packetIndex <= 0;
       doubleWord <= (others=>'0');
@@ -1051,66 +1185,66 @@ begin
     elsif (clk'event and clk = '1') then
       case state is
         when RECEIVE_PACKET =>
-          ---------------------------------------------------------------------
-          -- This state waits for a new WRITE class packet, receives it
-          -- and parses it.
-          ---------------------------------------------------------------------
-          if (slaveCyc_i = '1') then
-            if (slaveAck = '0') then
-              if (slaveStb_i = '1') then
-                if (slaveAdr_i = x"55") then
+          if (inboundCyc_i = '1') then
+            if (inboundAck = '0') then
+              if (inboundStb_i = '1') then
+                if ((inboundAdr_i = x"55") or (inboundAdr_i = x"54")) then
                   -------------------------------------------------------------
-                  -- NWRITER packet parser.
+                  -- NWRITE/NWRITER packet parser.
                   -------------------------------------------------------------
-                  -- REMARK: Add support for NWRITE without response...
                   case (packetIndex) is
                     when 0 =>
                       -- x"0000" & ackid & vc & crf & prio & tt & ftype
-                      vc_o <= slaveDat_i(9);
-                      crf_o <= slaveDat_i(8);
-                      prio_o <= slaveDat_i(7 downto 6);
-                      tt_o <= slaveDat_i(5 downto 4);
+                      vc_o <= inboundDat_i(9);
+                      crf_o <= inboundDat_i(8);
+                      prio_o <= inboundDat_i(7 downto 6);
+                      tt_o <= inboundDat_i(5 downto 4);
                       packetIndex <= packetIndex + 1;
                     when 1 =>
                       -- destId
-                      dstId_o <= slaveDat_i;
+                      dstId_o <= inboundDat_i;
                       packetIndex <= packetIndex + 1;
                     when 2 =>
                       -- srcId
-                      srcId_o <= slaveDat_i;
+                      srcId_o <= inboundDat_i;
                       packetIndex <= packetIndex + 1;
                     when 3 =>
                       -- transaction & wrsize & srcTID & address(28:13)
                       -- REMARK: Add support for extended addresses here...
-                      wrsize <= slaveDat_i(27 downto 24);
-                      tid_o <= slaveDat_i(23 downto 16);
-                      address_o(28 downto 13) <= slaveDat_i(15 downto 0);
+                      if (inboundDat_i(31 downto 28) = "0101") then
+                        responseNeeded_o <= '1';
+                      else
+                        responseNeeded_o <= '0';
+                      end if;
+                      wrsize <= inboundDat_i(27 downto 24);
+                      tid_o <= inboundDat_i(23 downto 16);
+                      address_o(28 downto 13) <= inboundDat_i(15 downto 0);
                       packetIndex <= packetIndex + 1;
                     when 4 =>
                       -- address(12:0) & wdptr & xamsbs(1:0) & double-word(63:48)
-                      address_o(12 downto 0) <= slaveDat_i(31 downto 19);
-                      wdptr <= slaveDat_i(18);
-                      doubleWord(63 downto 48) <= slaveDat_i(15 downto 0);
+                      address_o(12 downto 0) <= inboundDat_i(31 downto 19);
+                      wdptr <= inboundDat_i(18);
+                      address_o(30 downto 29) <= inboundDat_i(17 downto 16);
+                      doubleWord(63 downto 48) <= inboundDat_i(15 downto 0);
                       packetIndex <= packetIndex + 1;
                     when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 | 25 | 27 | 29 | 31  | 33 | 35 |
                       37 | 39 | 41 | 43 | 45 | 47 | 49 | 51 | 53 | 55 | 57 | 59 | 61 | 63 | 65 | 67 =>
                       -- double-word(47:16)
-                      doubleWord(31 downto 16) <= slaveDat_i(15 downto 0);
+                      doubleWord(47 downto 16) <= inboundDat_i;
                       packetIndex <= packetIndex + 1;
                     when 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | 24 | 26 | 28 | 30 | 32  | 34 |
-                      36 | 38 | 40 | 42 | 44 | 46 | 48 | 50 | 52 | 54 | 56 | 58 | 60 | 62 | 64 | 66 =>
+                      36 | 38 | 40 | 42 | 44 | 46 | 48 | 50 | 52 | 54 | 56 | 58 | 60 | 62 | 64 | 66 | 68 =>
                       -- double-word(15:0) & double-word(63:48)
-                      doubleWord(63 downto 48) <= slaveDat_i(15 downto 0);
+                      doubleWord(63 downto 48) <= inboundDat_i(15 downto 0);
                       packetIndex <= packetIndex + 1;
 
                       memoryWrite <= '1';
-                      memoryDataIn <= doubleWord(63 downto 16) & slaveDat_i(31 downto 16);
-                      complete <= '1';
+                      memoryDataIn <= doubleWord(63 downto 16) & inboundDat_i(31 downto 16);
                     when others =>
-                      -- There should be no more content in an NWRITE request.
+                      -- There should be no more content in an NWRITE/NWRITER request.
                       -- Discard.
                   end case;
-                  slaveAck <= '1';
+                  inboundAck <= '1';
                 end if;
               end if;
             else
@@ -1119,14 +1253,16 @@ begin
               end if;
               
               memoryWrite <= '0';
-              slaveAck <= '0';
+              inboundAck <= '0';
             end if;
           else
-            if (complete = '1') then
+            if (packetIndex >= 6) then
+              complete <= '1';
               state <= READY;
+            else
+              packetIndex <= 0;
+              memoryAddress <= (others=>'0');
             end if;
-            packetIndex <= 0;
-            memoryAddress <= (others=>'0');
           end if;
 
         when READY =>
@@ -1135,6 +1271,8 @@ begin
           -- processed.
           ---------------------------------------------------------------------
           if (done_i = '1') then
+            packetIndex <= 0;
+            memoryAddress <= (others=>'0');
             complete <= '0';
             state <= RECEIVE_PACKET;
           end if;
@@ -1198,7 +1336,7 @@ begin
               length_o <= "00000";
               select_o <= "11111111";
             when others =>
-              length_o <= memoryAddress;
+              length_o <= std_logic_vector(unsigned(memoryAddress)-1);
               select_o <= "11111111";
           end case;
         else
@@ -1237,7 +1375,7 @@ begin
               length_o <= "00000";
               select_o <= "01111111";
             when others =>
-              length_o <= memoryAddress;
+              length_o <= std_logic_vector(unsigned(memoryAddress)-1);
               select_o <= "11111111";
           end case;
         end if;
@@ -1297,10 +1435,10 @@ entity ResponseClassOutbound is
     payload_i : in std_logic_vector(63 downto 0);
     done_o : out std_logic;
     
-    masterCyc_o : out std_logic;
-    masterStb_o : out std_logic;
-    masterDat_o : out std_logic_vector(31 downto 0);
-    masterAck_i : in std_logic);
+    outboundCyc_o : out std_logic;
+    outboundStb_o : out std_logic;
+    outboundDat_o : out std_logic_vector(31 downto 0);
+    outboundAck_i : in std_logic);
 end entity;
 
 
@@ -1358,9 +1496,9 @@ begin
 
       done_o <= '0';
       
-      masterCyc_o <= '0';
-      masterStb_o <= '0';
-      masterDat_o <= (others=>'0');
+      outboundCyc_o <= '0';
+      outboundStb_o <= '0';
+      outboundDat_o <= (others=>'0');
     elsif (clk'event and clk = '1') then
       if (enable = '1') then
         case state is
@@ -1369,9 +1507,9 @@ begin
             -- 
             -------------------------------------------------------------------
             if (ready_i = '1') then
-              masterCyc_o <= '1';
-              masterStb_o <= '1';
-              masterDat_o <= header;
+              outboundCyc_o <= '1';
+              outboundStb_o <= '1';
+              outboundDat_o <= header;
               
               packetIndex <= 1;
               responsePayloadIndex <= (others=>'0');
@@ -1386,41 +1524,41 @@ begin
             ---------------------------------------------------------------------
             -- 
             ---------------------------------------------------------------------
-            if (masterAck_i = '1') then
+            if (outboundAck_i = '1') then
               case (packetIndex) is
                 when 1 =>
                   -- destination
-                  masterDat_o <= dstId_i;
+                  outboundDat_o <= dstId_i;
                   packetIndex <= packetIndex + 1;
                 when 2 =>
                   -- source 
-                  masterDat_o <= srcId_i;
+                  outboundDat_o <= srcId_i;
                   packetIndex <= packetIndex + 1;
                 when 3 =>
                   -- transaction & status & targetTID & double-word0(63:48)
                   if (error_i = '0') then
                     if (payloadPresent_i = '0') then
-                      masterDat_o <= "0000" & "0000" & tid_i & x"0000";
+                      outboundDat_o <= "0000" & "0000" & tid_i & x"0000";
                       state <= WAIT_COMPLETE;
                     else
-                      masterDat_o <= "1000" & "0000" & tid_i & memoryDataRead(63 downto 48);
+                      outboundDat_o <= "1000" & "0000" & tid_i & memoryDataRead(63 downto 48);
                     end if;
                   else
-                    masterDat_o <= "0000" & "0111" & tid_i & x"0000";
+                    outboundDat_o <= "0000" & "0111" & tid_i & x"0000";
                     state <= WAIT_COMPLETE;
                   end if;
                   packetIndex <= packetIndex + 1;
                 when 4 | 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | 24 | 26 | 28 | 30 | 32 | 34 |
                   36 | 38 | 40 | 42 | 44 | 46 | 48 | 50 | 52 | 54 | 56 | 58 | 60 | 62 | 64 | 66 =>
                   -- double-wordN(47:16)
-                  masterDat_o <= memoryDataRead(47 downto 16);
+                  outboundDat_o <= memoryDataRead(47 downto 16);
                   responsePayload <= memoryDataRead(15 downto 0);
                   memoryAddress <= std_logic_vector(unsigned(memoryAddress) + 1);
                   packetIndex <= packetIndex + 1;
                 when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 | 25 | 27 | 29 | 31 | 33 | 35 |
                   37 | 39 | 41 | 43 | 45 | 47 | 49 | 51 | 53 | 55 | 57 | 59 | 61 | 63 | 65 | 67 =>
                   -- double-wordN(15:0) & double-wordN(63:48)
-                  masterDat_o <= responsePayload & memoryDataRead(63 downto 48);
+                  outboundDat_o <= responsePayload & memoryDataRead(63 downto 48);
                   packetIndex <= packetIndex + 1;
 
                   responsePayloadIndex <=
@@ -1441,9 +1579,9 @@ begin
             -------------------------------------------------------------------
             -- 
             -------------------------------------------------------------------
-            if (masterAck_i = '1') then
-              masterCyc_o <= '0';
-              masterStb_o <= '0';
+            if (outboundAck_i = '1') then
+              outboundCyc_o <= '0';
+              outboundStb_o <= '0';
               state <= RESPONSE_DONE;
             end if;
             
