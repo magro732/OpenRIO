@@ -264,7 +264,6 @@ architecture RioSerialImpl of RioSerial is
       read_i : in std_logic;
       data_o : out std_logic_vector(DATA_WIDTH-1 downto 0);
 
-      full_o : out std_logic;
       write_i : in std_logic;
       data_i : in std_logic_vector(DATA_WIDTH-1 downto 0));
   end component;
@@ -436,7 +435,6 @@ begin
         empty_o=>txControlReadEmpty(i),
         read_i=>txControlRead(i),
         data_o=>txControlReadSymbol(12*(i+1) downto 12*i),
-        full_o=>open,
         write_i=>txControlWrite(i),
         data_i=>txControlWriteSymbol(12*(i+1) downto 12*i));
 
@@ -447,7 +445,6 @@ begin
         empty_o=>rxControlReadEmpty(i),
         read_i=>rxControlRead(i),
         data_o=>rxControlReadSymbol(12*(i+1) downto 12*i),
-        full_o=>open,
         write_i=>rxControlWrite(i), 
         data_i=>rxControlWriteSymbol(12*(i+1) downto 12*i));
   end generate;
@@ -1342,7 +1339,7 @@ begin
   -- as all data symbols.
   process(readWindowEmpty_i, bufferStatus_i,
           recoverActive_i, ackId_i, operational_i, outputErrorStopped_i, portEnable_i, readContentData_i, readContentWords_i, readContentEnd_i,
-          frameState_i, frameWordCounter_i, frameContent_i,
+          frameState_i, frameWordCounter_i, frameContent_i, maintenanceClass_i,
           ackIdWindow_i,
           sendRestartFromRetry, sendLinkRequest,
           fatalError_i)
@@ -2906,7 +2903,6 @@ entity RioFifo is
     read_i : in std_logic;
     data_o : out std_logic_vector(DATA_WIDTH-1 downto 0);
 
-    full_o : out std_logic;
     write_i : in std_logic;
     data_i : in std_logic_vector(DATA_WIDTH-1 downto 0));
 end entity;
@@ -2939,13 +2935,9 @@ architecture RioFifoImpl of RioFifo is
   signal readAddressInc : std_logic_vector(DEPTH_WIDTH-1 downto 0);
   signal writeAddress : std_logic_vector(DEPTH_WIDTH-1 downto 0);
   signal writeAddressInc : std_logic_vector(DEPTH_WIDTH-1 downto 0);
-
-  signal change : std_logic;
 begin
 
-  -- REMARK: Remove full here...
   empty_o <= empty;
-  full_o <= full;
 
   readAddressInc <= std_logic_vector(unsigned(readAddress) + 1);
   writeAddressInc <= std_logic_vector(unsigned(writeAddress) + 1);
