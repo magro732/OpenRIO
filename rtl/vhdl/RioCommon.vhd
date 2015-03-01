@@ -120,7 +120,7 @@ package rio_common is
   constant FTYPE_MAINTENANCE_CLASS : std_logic_vector(3 downto 0) := "1000";
   constant FTYPE_RESPONSE_CLASS : std_logic_vector(3 downto 0) := "1101";
   constant FTYPE_DOORBELL_CLASS : std_logic_vector(3 downto 0) := "1010";
-  constant FTYPE_MESSAGE_CLASS : std_logic_vector(3 downto 0) := "0010";
+  constant FTYPE_MESSAGE_CLASS : std_logic_vector(3 downto 0) := "1011";
 
   -- TTYPE Constants
   constant TTYPE_MAINTENANCE_READ_REQUEST : std_logic_vector(3 downto 0) := "0000";
