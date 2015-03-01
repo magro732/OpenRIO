@@ -156,9 +156,6 @@ architecture TestRioSerialImpl of TestRioSerial is
   signal clk : std_logic;
   signal areset_n : std_logic;
 
-  signal uartInbound : std_logic;
-  signal uartOutbound : std_logic;
-
   signal portLinkTimeout : std_logic_vector(10 downto 0);
   signal linkInitialized : std_logic;
   signal inputPortEnable : std_logic;
@@ -1997,6 +1994,12 @@ begin
     ---------------------------------------------------------------------------
     PrintR("TG_RioSerial-TC4-Step11");
     ---------------------------------------------------------------------------
+
+    -- REMARK: Set the fifo size to two instead of this...
+    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbol(SYMBOL_IDLE);
+    ReceiveSymbol(SYMBOL_IDLE);
+    
     
     -- Send a packet-accepted with unexpected ackId.
     SendSymbol(SYMBOL_CONTROL,
@@ -2426,13 +2429,12 @@ begin
       
       if (readContent_i = '1') then
         assert frameValid_i(frontIndex) = '1' report "Unexpected content read." severity error;
+        readContentData_o <= "00" & frameWrite_i(frontIndex).payload(frameIndex);
+        frameIndex := frameIndex + 1;
         if (frameIndex /= frameWrite_i(frontIndex).length) then
           readContentEnd_o <= '0';
-          readContentData_o <= "00" & frameWrite_i(frontIndex).payload(frameIndex);
-          frameIndex := frameIndex + 1;
         else
           readContentEnd_o <= '1';
-          readContentData_o <= (others=>'U');
         end if;
       end if;
       
