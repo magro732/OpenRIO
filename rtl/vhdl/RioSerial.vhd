@@ -627,8 +627,6 @@ architecture RioTransmitterImpl of RioTransmitter is
       counter_o : out std_logic_vector(3 downto 0);
       symbolsTransmitted_i : in std_logic_vector(7 downto 0);
       symbolsTransmitted_o : out std_logic_vector(7 downto 0);
-      maintenanceClass_i : in std_logic;
-      maintenanceClass_o : out std_logic;
       
       -- Frame buffer interface.
       readFrameEmpty_i : in std_logic;
@@ -687,7 +685,6 @@ architecture RioTransmitterImpl of RioTransmitter is
   signal frameContentCurrent, frameContentNext : std_logic_vector(64*NUMBER_WORDS-1 downto 0);
   signal counterCurrent, counterNext : std_logic_vector(4*NUMBER_WORDS-1 downto 0);
   signal symbolsTransmittedCurrent, symbolsTransmittedNext : std_logic_vector(8*NUMBER_WORDS-1 downto 0);
-  signal maintenanceClassCurrent, maintenanceClassNext : std_logic_vector(NUMBER_WORDS-1 downto 0);
 
   signal readFrame : std_logic_vector(NUMBER_WORDS-1 downto 0);
   signal readFrameRestart : std_logic_vector(NUMBER_WORDS-1 downto 0);
@@ -786,7 +783,6 @@ begin
       frameContentCurrent <= (others=>'0');
       counterCurrent <= (others=>'0');
       symbolsTransmittedCurrent <= (others=>'0');
-      maintenanceClassCurrent <= (others=>'0');
     elsif (clk'event and clk = '1') then
       if (txFull_i = '0') then
         operationalCurrent <= operationalNext;
@@ -804,7 +800,6 @@ begin
         frameContentCurrent <= frameContentNext;
         counterCurrent <= counterNext;
         symbolsTransmittedCurrent <= symbolsTransmittedNext;
-        maintenanceClassCurrent <= maintenanceClassNext;
       end if;
     end if;
   end process;
@@ -862,8 +857,6 @@ begin
         counter_o=>counterNext(4*(i+1)-1 downto 4*i), 
         symbolsTransmitted_i=>symbolsTransmittedCurrent(8*(i+1)-1 downto 8*i),
         symbolsTransmitted_o=>symbolsTransmittedNext(8*(i+1)-1 downto 8*i),
-        maintenanceClass_i=>maintenanceClassCurrent(i),
-        maintenanceClass_o=>maintenanceClassNext(i),
         readFrameEmpty_i=>readFrameEmpty_i, 
         readFrame_o=>readFrame(i), 
         readFrameRestart_o=>readFrameRestart(i), 
@@ -962,8 +955,6 @@ entity RioTransmitterCore is
     counter_o : out std_logic_vector(3 downto 0);
     symbolsTransmitted_i : in std_logic_vector(7 downto 0);
     symbolsTransmitted_o : out std_logic_vector(7 downto 0);
-    maintenanceClass_i : in std_logic;
-    maintenanceClass_o : out std_logic;
     
     -- Frame buffer interface.
     readFrameEmpty_i : in std_logic;
@@ -1014,6 +1005,7 @@ architecture RioTransmitterCoreImpl of RioTransmitterCore is
   signal readWindowResetOut : std_logic;
   signal readWindowNextOut : std_logic;
   signal readContentOut : std_logic;
+  signal discardFrameOut : std_logic;
   signal symbolControlRestartOut, symbolControlRestart : std_logic;
   signal symbolControlLinkRequestOut, symbolControlLinkRequest : std_logic;
   signal symbolControlStartOut, symbolControlStart : std_logic;
@@ -1079,7 +1071,7 @@ begin
       readFrame_o <= '0';
       
       if (txFull_i = '0') then
-        readFrame_o <= readFrameOut;
+        readFrame_o <= readFrameOut or discardFrameOut;
         
         sendRestartFromRetry <= sendRestartFromRetryOut;
         sendLinkRequest <= sendLinkRequestOut;
@@ -1338,10 +1330,12 @@ begin
   -- This process decide which stype1-part of a control symbols to send as well
   -- as all data symbols.
   process(readWindowEmpty_i, bufferStatus_i,
-          recoverActive_i, ackId_i, operational_i, outputErrorStopped_i, portEnable_i, readContentData_i, readContentWords_i, readContentEnd_i,
-          frameState_i, frameWordCounter_i, frameContent_i, maintenanceClass_i,
+          readContentData_i, readContentWords_i, readContentEnd_i,
+          recoverActive_i, ackId_i, operational_i, outputErrorStopped_i, portEnable_i,
+          frameState_i, frameWordCounter_i, frameContent_i, 
           ackIdWindow_i,
           sendRestartFromRetry, sendLinkRequest,
+          rxControlEmpty_i,          
           fatalError_i)
   begin
     readFrameRestartOut <= '0';
@@ -1353,7 +1347,6 @@ begin
     frameWordCounter_o <= frameWordCounter_i;
     frameContent_o <= frameContent_i;
     ackIdWindow_o <= ackIdWindow_i;
-    maintenanceClass_o <= maintenanceClass_i;
     
     timeSentSet_o <= '0';
 
@@ -1363,6 +1356,8 @@ begin
     symbolControlEndOut <= '0';
     symbolDataOut <= '0';
     symbolDataContentOut <= (others => '0');
+
+    discardFrameOut <= '0';
 
     if (fatalError_i = '1') then
       readWindowResetOut <= '1';
@@ -1388,6 +1383,8 @@ begin
         -------------------------------------------------------------------
         
         if (sendRestartFromRetry = '1') then
+          -- Required to send a restart-from-retry.
+          
           -- Send a restart-from-retry control symbol to acknowledge the restart
           -- of the frame.
           symbolControlRestartOut <= '1';
@@ -1397,27 +1394,31 @@ begin
           timeSentSet_o <= '1';
 
           -- Restart the frame transmission.
+          -- Since the transmission-window is reset, it is ok to go to the
+          -- FRAME_IDLE-state even if the present state was FRAME_DISCARD since
+          -- we will end up in the discard state anyway after the frames has
+          -- been resent.
           ackIdWindow_o <= ackId_i;
           frameState_o <= FRAME_IDLE;
           readWindowResetOut <= '1';
-        end if;
-
-        if (sendLinkRequest = '1') then
-          -- Dont restart the packet transmission since we do not yet know which
-          -- packets that was successfully received by our link partner.
+        elsif (sendLinkRequest = '1') then
+          -- Required to send a link-request.
+          -- There is no need to restart the packet transmission since we do
+          -- not yet know which packets that was successfully received by our
+          -- link partner. Wait for the reply before anything is discarded.
 
           -- Send a link-request symbol.
           symbolControlLinkRequestOut <= '1';
 
           -- Write the current timer value.
           timeSentSet_o <= '1';
-        end if;
-        
-        if ((sendRestartFromRetry = '0') and (sendLinkRequest = '0')  and
-            (outputErrorStopped_i = '0')) then
-          -- Check if a frame transfer is in progress.
-          -- REMARK: Hold any data symbol if there is a pending symbol from the
-          -- receiver side...
+        elsif ((sendRestartFromRetry = '0') and (sendLinkRequest = '0')  and
+               (outputErrorStopped_i = '0') and (rxControlEmpty_i = '1')) then
+          -- There is no pending control symbol to send to the link-partner
+          -- and no symbol to send from our receiver.
+          -- Proceed to send any pending packets.
+
+          -- Check the current state of the frame transfer.
           case frameState_i is
             
             when FRAME_IDLE =>
@@ -1430,32 +1431,10 @@ begin
                 -- Update the output from the frame buffer to contain the
                 -- data when it is read later.
                 readContentOut <= '1';
-                frameContent_o <=
-                  frameContent_i(31 downto 0) & readContentData_i;
-
-                -- Proceed to start the transmission of the packet.
-                frameState_o <= FRAME_BUFFER;
+                frameState_i <= FRAME_START;
               end if;
 
-            when FRAME_BUFFER =>
-              -----------------------------------------------------------------
-              -- Packet buffer output has been updated. Store the packet
-              -- content temporarily.
-              -----------------------------------------------------------------
-
-              readContentOut <= '1';
-              frameContent_o <=
-                frameContent_i(31 downto 0) & readContentData_i;
-
-              if (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS) then
-                maintenanceClass_o <= '1';
-              else
-                maintenanceClass_o <= '0';
-              end if;
-
-              frameState_o <= FRAME_START;
-              
-            when FRAME_START | FRAME_END =>
+            when FRAME_START | FRAME_START_CONTINUE =>
               -------------------------------------------------------
               -- Check if we are allowed to transmit this packet.
               -------------------------------------------------------
@@ -1463,30 +1442,28 @@ begin
               -- sent when only maintenance is allowed. The link-partner can be
               -- busy, i.e. not having enough buffers to receive the new packet
               -- in or the number of outstanding packets may be too large.
-              -- REMARK: Only update readContent_o in the last instance
-              -- if cascaded...
+              -- This state should result in a start-of-frame if possible or
+              -- end-of-frame if a frame has not been ended properly yet.
 
               -- Check if the packet is allowed.
-              if ((portEnable_i = '1') or (maintenanceClass_i = '1')) then
+              if ((portEnable_i = '1') or
+                  (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS)) then
                 -- Packet is allowed.
 
                 -- Check if the link is able to accept the new frame.
-                if ((readWindowEmpty_i = '0') and
-                    (bufferStatus_i /= "00000") and
+                if ((bufferStatus_i /= "00000") and
                     ((unsigned(ackIdWindow_i)+1) /= unsigned(ackId_i))) then
-                  -- New data is available for transmission and there
-                  -- is room to receive it at the other side.
+                  -- There are buffers ready to receive the new packet at the other
+                  -- side and there are ackIds left to tag it.
                   -- The packet may be transmitted.
 
+                  -- Read the next packet content and buffer the current output.
+                  readContentOut <= '1';
+                  frameContent_o <= readContentData_i;
+                  
                   -- Send a control symbol to start the packet and a status to
                   -- complete the symbol.
                   symbolControlStartOut <= '1';
-                  
-                  -- Indicate that a control symbol has been sent to start the
-                  -- transmission of the frame.
-                  frameContent_o <=
-                    frameContent_i(31 downto 0) & readContentData_i;
-                  readContentOut <= '1';
                   
                   -- Proceed to send the first packet data symbol containing
                   -- the ackId.
@@ -1494,7 +1471,7 @@ begin
                 else
                   -- The link cannot accept the packet.
                   -- Wait in this state and dont do anything.
-                  if (frameState_i = FRAME_END) then
+                  if (frameState_i = FRAME_START_CONTINUE) then
                     symbolControlEndOut <= '1';
                   end if;
                   readFrameRestartOut <= '1';
@@ -1503,10 +1480,9 @@ begin
               else
                 -- The packet is not allowed.
                 -- Discard it.
-                if (frameState_i = FRAME_END) then
+                if (frameState_i = FRAME_START_CONTINUE) then
                   symbolControlEndOut <= '1';
                 end if;
-                --readFrameRestartOut <= '1';
                 frameState_o <= FRAME_DISCARD;
               end if;
 
@@ -1519,19 +1495,13 @@ begin
               -- Write a new data symbol and fill in our ackId on the
               -- packet.
               symbolDataOut <= '1';
-              symbolDataContentOut <= std_logic_vector(ackIdWindow_i) & "0" &
-                                      frameContent_i(57 downto 32);
-              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
-              
-              -- Check if the frame is ending.
-              if (readContentEnd_i = '1') then
-                -- The frame is ending.
-                readWindowNextOut <= '1';
-                frameState_o <= FRAME_LAST_0;
-              else
-                readContentOut <= '1';
-                frameState_o <= FRAME_MIDDLE;
-              end if;
+              symbolDataContentOut <=
+                std_logic_vector(ackIdWindow_i) & "0" & frameContent_i(57 downto 32);
+
+              -- Read the next frame content and go to next state to send it.
+              readContentOut <= '1';
+              frameContent_o <= readContentData_i;
+              frameState_o <= FRAME_MIDDLE;
               
             when FRAME_MIDDLE =>
               ---------------------------------------------------------------
@@ -1542,73 +1512,73 @@ begin
               
               -- Write a new data symbol.
               symbolDataOut <= '1';
-              symbolDataContentOut <= frameContent_i(63 downto 32);
-              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
+              symbolDataContentOut <= frameContent_i;
+              frameContent_o <= readContentData_i;
 
-              -- Check if the frame is ending.
+              -- Check if the packet is ending.
               if (readContentEnd_i = '1') then
-                -- The frame is ending.
+                -- The packet is ending.
                 readWindowNextOut <= '1';
-                frameState_o <= FRAME_LAST_0;
+                frameState_o <= FRAME_LAST;
               else
+                -- The packet is not ending.
                 readContentOut <= '1';
               end if;
               
-            when FRAME_LAST_0 =>
+            when FRAME_LAST =>
               -----------------------------------------------------------------
-              -- 
+              -- Sending the last data symbol of a packet.
+              -- If there are pending packets, they can be started immediatly,
+              -- otherwise, the current packet should be ended.
               -----------------------------------------------------------------
 
+              -- Send the last data symbol of the packet.
               symbolDataOut <= '1';
-              symbolDataContentOut <= frameContent_i(63 downto 32);
-              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
-              if (readWindowEmpty_i = '0') then
-                readContentOut <= '1';
-              end if;
-              frameState_o <= FRAME_LAST_1;
+              symbolDataContentOut <= frameContent_i;
 
-            when FRAME_LAST_1 =>
-              -----------------------------------------------------------------
-              -- 
-              -----------------------------------------------------------------
-
-              symbolDataOut <= '1';
-              symbolDataContentOut <= frameContent_i(63 downto 32);
-              frameContent_o <= frameContent_i(31 downto 0) & readContentData_i;
+              -- Check if there are pending packets.
               if (readWindowEmpty_i = '0') then
-                if (readContentData_i(19 downto 16) = FTYPE_MAINTENANCE_CLASS) then
-                  maintenanceClass_o <= '1';
-                else
-                  maintenanceClass_o <= '0';
-                end if;
+                -- Pending packet exist.
                 readContentOut <= '1';
+                frameState_o <= FRAME_START_CONTINUE;
+              else
+                -- No pending packets.
+                frameState_o <= FRAME_END;
               end if;
 
               -- Update the window ackId.
               ackIdWindow_o <= std_logic_vector(unsigned(ackIdWindow_i) + 1);
 
-              -- Start timeout supervision for transmitted frame.
+              -- Start timeout supervision for the transmitted frame.
               timeSentSet_o <= '1';
 
-              -- Proceed to end the frame or start a new one.
-              frameState_o <= FRAME_END;
+            when FRAME_END =>
+              -----------------------------------------------------------------
+              -- There are no packets to directly follow the one that is ending.
+              -- Mark the current packet as ended.
+              -----------------------------------------------------------------
+
+              -- Send a control symbol to end the frame. 
+              symbolControlEndOut <= '1';
+              frameState_o <= FRAME_IDLE;
 
             when FRAME_DISCARD =>
               ---------------------------------------------------------------
-              -- 
-              ---------------------------------------------------------------
               -- The packet should be discarded.
-              -- Send idle-sequence.
+              -- Hold any pending packets until there are no outstanding ones.
+              ---------------------------------------------------------------
 
-              -- Check that there are no outstanding packets that
-              -- has not been acknowledged.
+              -- Check that there are no outstanding packets.
               if(unsigned(ackIdWindow_i) = unsigned(ackId_i)) then
                 -- No unacknowledged packets.
-                -- It is now safe to remove the unallowed frame.
-                -- REMARK: Discard packet; readFrameOut <= '1';
+                -- It is now safe to remove the unallowed packet.
+                discardFrameOut <= '1';
 
                 -- Go back and send a new frame.
                 frameState_o <= FRAME_IDLE;
+              else
+                -- Still outstanding packets.
+                -- Dont do anything.
               end if;
               
             when others =>
@@ -1633,8 +1603,7 @@ begin
   -- Input:  symbolControlStart, symbolControlEnd, symbolControlRestart,
   --         symbolControlLinkRequest, symbolData, symbolDataContent
   -- Output: symbolsTransmitted_o, operational_o, 
-  --         symbolControl, stype0, parameter0, parameter1, stype1, cmd,
-  --         symbolData1, symbolData1Content
+  --         symbolControl, stype0, parameter0, parameter1, stype1, cmd
   -----------------------------------------------------------------------------
 
   rxControlUpdate_o <= rxControlUpdateOut and (not txFull_i);
@@ -1828,8 +1797,7 @@ begin
   -- Fourth pipeline stage.
   -- Make all symbols ready for transmission, i.e. calculate the CRC5 on
   -- control symbols and choose which symbol to send.
-  -- Inputs: controlValid, stype0, parameter0, parameter1, stype1, cmd,
-  --         symbolData1, symbolData1Content 
+  -- Inputs: controlValid, stype0, parameter0, parameter1, stype1, cmd
   -----------------------------------------------------------------------------
 
   controlContent(31 downto 29) <= stype0;
@@ -2379,8 +2347,6 @@ begin
   -- Update the buffered data and write it to the packet buffer if needed.
   -- Update the main receiver state machine.
   -- Generate reply symbols to the link-partner.
-  -- Note that this stage cannot contain any registers as it could be cascaded
-  -- to other cores.
   -----------------------------------------------------------------------------
   
   -----------------------------------------------------------------------------
