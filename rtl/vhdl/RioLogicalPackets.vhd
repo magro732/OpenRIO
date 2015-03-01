@@ -76,13 +76,15 @@ entity MaintenanceInbound is
     tt_o : out std_logic_vector(1 downto 0);
     dstid_o : out std_logic_vector(31 downto 0);
     srcid_o : out std_logic_vector(31 downto 0);
+    size_o : out std_logic_vector(3 downto 0);
+    status_o : out std_logic_vector(3 downto 0);
     tid_o : out std_logic_vector(7 downto 0);
     hop_o : out std_logic_vector(7 downto 0);
     offset_o : out std_logic_vector(20 downto 0);
     wdptr_o : out std_logic;
-    payloadLength_o : out std_logic_vector(3 downto 0);
-    payloadIndex_i : in std_logic_vector(3 downto 0);
-    payload_o : out std_logic_vector(31 downto 0);
+    payloadLength_o : out std_logic_vector(2 downto 0);
+    payloadIndex_i : in std_logic_vector(2 downto 0);
+    payload_o : out std_logic_vector(63 downto 0);
     done_i : in std_logic;
     
     inboundCyc_i : in std_logic;
@@ -103,25 +105,26 @@ architecture MaintenanceInbound of MaintenanceInbound is
 
   signal wdptr : std_logic;
   signal size : std_logic_vector(3 downto 0);
-  signal words : natural range 0 to 32;
 
   signal inboundAck : std_logic;
-  signal maintReadComplete : std_logic;
-  signal maintWriteComplete : std_logic;
+  signal readRequestComplete : std_logic;
+  signal writeRequestComplete : std_logic;
+  signal readResponseComplete : std_logic;
+  signal writeResponseComplete : std_logic;
 
-  signal packetIndex : natural range 0 to 33;
-  signal packetData : std_logic_vector(31 downto 0);
+  signal packetIndex : natural range 0 to 21;
+  signal packetData : std_logic_vector(47 downto 0);
 
   signal memoryWrite : std_logic;
-  signal memoryAddress : std_logic_vector(3 downto 0);
-  signal memoryDataIn : std_logic_vector(31 downto 0);
+  signal memoryAddress : std_logic_vector(2 downto 0);
+  signal memoryDataIn : std_logic_vector(63 downto 0);
 
 begin
 
-  readRequestReady_o <= maintReadComplete when (state = READY) else '0';
-  writeRequestReady_o <= maintWriteComplete when (state = READY) else '0';
-  readResponseReady_o <= '0';
-  writeResponseReady_o <= '0';
+  readRequestReady_o <= readRequestComplete when (state = READY) else '0';
+  writeRequestReady_o <= writeRequestComplete when (state = READY) else '0';
+  readResponseReady_o <= readResponseComplete when (state = READY) else '0';
+  writeResponseReady_o <= writeResponseComplete when (state = READY) else '0';
   portWriteReady_o <= '0';
 
   inboundAck_o <= inboundAck;
@@ -130,8 +133,10 @@ begin
     if (areset_n = '0') then
       inboundAck <= '0';
 
-      maintReadComplete <= '0';
-      maintWriteComplete <= '0';
+      readRequestComplete <= '0';
+      writeRequestComplete <= '0';
+      readResponseComplete <= '0';
+      writeResponseComplete <= '0';
       
       vc_o <= '0';
       crf_o <= '0';
@@ -139,6 +144,7 @@ begin
       tt_o <= "00";
       dstid_o <= (others=>'0');
       srcid_o <= (others=>'0');
+      status_o <= (others=>'0');
       tid_o <= (others=>'0');
       hop_o <= (others=>'0');
       offset_o <= (others=>'0');
@@ -192,10 +198,11 @@ begin
                       offset_o(12 downto 0) <= inboundDat_i(31 downto 19);
                       wdptr <= inboundDat_i(18);
                       packetIndex <= packetIndex + 1;
-                      maintReadComplete <= '1';
+                      readRequestComplete <= '1';
                     when others =>
                       -- There should be no more content in a maintenance read request.
                       -- Discard.
+                      --report "Received unexpected packet content in read request." severity warning;
                   end case;
                   inboundAck <= '1';
                 elsif (inboundAdr_i = x"81") then
@@ -229,39 +236,108 @@ begin
                       -- config_offset(12:0) & wdptr & rsrv & double-word(63:48)
                       offset_o(12 downto 0) <= inboundDat_i(31 downto 19);
                       wdptr <= inboundDat_i(18);
-                      packetData(31 downto 16) <= inboundDat_i(15 downto 0);
+                      packetData(47 downto 32) <= inboundDat_i(15 downto 0);
                       packetIndex <= packetIndex + 1;
-                    when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 | 25 | 27 | 29 | 31 =>
+                    when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 =>
                       -- double-word(47:16)
-                      packetData(31 downto 16) <= inboundDat_i(15 downto 0);
+                      packetData(31 downto 0) <= inboundDat_i;
                       packetIndex <= packetIndex + 1;
-
-                      if (not ((size = "1000") and (wdptr = '1'))) then
-                        memoryWrite <= '1';
-                        memoryDataIn <= packetData(31 downto 16) & inboundDat_i(31 downto 16);
-                      end if;
-                    when 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | 24 | 26 | 28 | 30 | 32 =>
+                    when 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 =>
                       -- double-word(15:0) & double-word(63:48)
-                      packetData(31 downto 16) <= inboundDat_i(15 downto 0);
+                      packetData(47 downto 32) <= inboundDat_i(15 downto 0);
                       packetIndex <= packetIndex + 1;
-
                       memoryWrite <= '1';
-                      memoryDataIn <= packetData(31 downto 16) & inboundDat_i(31 downto 16);
-                      -- REMARK: Dont set complete before the packet is ready...
-                      maintWriteComplete <= '1';
+                      memoryDataIn <= packetData & inboundDat_i(31 downto 16);
+                      writeRequestComplete <= '1';
                     when others =>
                       -- There should be no more content in a maintenance write request.
                       -- Discard.
+                      --report "Received unexpected packet content in write request." severity warning;
                   end case;
                   inboundAck <= '1';
                 elsif (inboundAdr_i = x"82") then
                   -------------------------------------------------------------
                   -- Maintenance Read Response packet parser.
                   -------------------------------------------------------------
+                  case (packetIndex) is
+                    when 0 =>
+                      -- x"0000" & ackid & vc & crf & prio & tt & ftype
+                      vc_o <= inboundDat_i(9);
+                      crf_o <= inboundDat_i(8);
+                      prio_o <= inboundDat_i(7 downto 6);
+                      tt_o <= inboundDat_i(5 downto 4);
+                      packetIndex <= packetIndex + 1;
+                    when 1 =>
+                      -- destid
+                      dstid_o <= inboundDat_i;
+                      packetIndex <= packetIndex + 1;
+                    when 2 =>
+                      -- srcid
+                      srcid_o <= inboundDat_i;
+                      packetIndex <= packetIndex + 1;
+                    when 3 =>
+                      -- transaction & status & srcTID & hop & reserved(7:0)
+                      status_o <= inboundDat_i(27 downto 24);
+                      tid_o <= inboundDat_i(23 downto 16);
+                      hop_o <= inboundDat_i(15 downto 8);
+                      packetIndex <= packetIndex + 1;
+                    when 4 =>
+                      -- reserved(15:0) & wdptr & rsrv & double-word(63:48)
+                      packetData(47 downto 32) <= inboundDat_i(15 downto 0);
+                      packetIndex <= packetIndex + 1;
+                    when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 =>
+                      -- double-word(47:16)
+                      packetData(31 downto 0) <= inboundDat_i;
+                      packetIndex <= packetIndex + 1;
+                    when 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 =>
+                      -- double-word(15:0) & double-word(63:48)
+                      packetData(47 downto 32) <= inboundDat_i(15 downto 0);
+                      packetIndex <= packetIndex + 1;
+                      memoryWrite <= '1';
+                      memoryDataIn <= packetData & inboundDat_i(31 downto 16);
+                      readResponseComplete <= '1';
+                    when others =>
+                      -- There should be no more content in a maintenance write request.
+                      -- Discard.
+                      --report "Received unexpected packet content in read response." severity warning;
+                  end case;
+                  inboundAck <= '1';
                 elsif (inboundAdr_i = x"83") then
                   -------------------------------------------------------------
                   -- Maintenance Write Response packet parser.
                   -------------------------------------------------------------
+                  case (packetIndex) is
+                    when 0 =>
+                      -- x"0000" & ackid & vc & crf & prio & tt & ftype
+                      vc_o <= inboundDat_i(9);
+                      crf_o <= inboundDat_i(8);
+                      prio_o <= inboundDat_i(7 downto 6);
+                      tt_o <= inboundDat_i(5 downto 4);
+                      packetIndex <= packetIndex + 1;
+                    when 1 =>
+                      -- dstid
+                      dstid_o <= inboundDat_i;
+                      packetIndex <= packetIndex + 1;
+                    when 2 =>
+                      -- srcid
+                      srcid_o <= inboundDat_i;
+                      packetIndex <= packetIndex + 1;
+                    when 3 =>
+                      -- transaction & status & srcTID & hop & reserved(7:0)
+                      status_o <= inboundDat_i(27 downto 24);
+                      tid_o <= inboundDat_i(23 downto 16);
+                      hop_o <= inboundDat_i(15 downto 8);
+                      packetIndex <= packetIndex + 1;
+                    when 4 =>
+                      -- reserved(15:0) & crc(15:0)
+                      packetIndex <= packetIndex + 1;
+                      writeResponseComplete <= '1';
+                    when others =>
+                      -- There should be no more content in a maintenance read request.
+                      -- Discard.
+                      --report "Received unexpected packet content in write response." severity warning;
+                  end case;
+                  inboundAck <= '1';
                 elsif (inboundAdr_i = x"84") then
                   -------------------------------------------------------------
                   -- Maintenance Port-Write Request packet parser.
@@ -270,8 +346,7 @@ begin
                   -------------------------------------------------------------
                   -- Unsupported maintenance packet.
                   -------------------------------------------------------------
-                  -- REMARK: Cannot handle these, dont answer. Or answer and
-                  -- discard? 
+                  -- Cannot handle these, dont answer.
                 end if;
               end if;
             else
@@ -283,11 +358,13 @@ begin
               inboundAck <= '0';
             end if;
           else
-            if (maintReadComplete = '1') or (maintWriteComplete = '1') then
+            if ((readRequestComplete = '1') or (writeRequestComplete = '1') or
+                (readResponseComplete = '1') or (writeResponseComplete = '1')) then
               state <= READY;
+            else
+              packetIndex <= 0;
+              memoryAddress <= (others=>'0');
             end if;
-            packetIndex <= 0;
-            memoryAddress <= (others=>'0');
           end if;
 
         when READY =>
@@ -296,8 +373,13 @@ begin
           -- processed.
           ---------------------------------------------------------------------
           if (done_i = '1') then
-            maintReadComplete <= '0';
-            maintWriteComplete <= '0';
+            packetIndex <= 0;
+            memoryAddress <= (others=>'0');
+            
+            readRequestComplete <= '0';
+            writeRequestComplete <= '0';
+            readResponseComplete <= '0';
+            writeResponseComplete <= '0';
             state <= RECEIVE_PACKET;
           end if;
           
@@ -317,49 +399,22 @@ begin
   process(clk, areset_n)
   begin
     if (areset_n = '0') then
-      payloadLength_o <= (others=>'0');
+      size_o <= (others=>'0');
       wdptr_o <= '0';
+      payloadLength_o <= (others=>'0');
     elsif (clk'event and clk = '1') then
-      if (maintReadComplete = '1') or (maintWriteComplete = '1') then
-        if (wdptr = '0') then
-          case size is
-            when "1000" =>
-              -- Read 1 word.
-              payloadLength_o <= "0000";
-              wdptr_o <= '0';
-            when "1011" =>
-              -- Read 2 words.
-              payloadLength_o <= "0001";
-              wdptr_o <= '0';
-            when "1100" =>
-              -- Read 8 words.
-              payloadLength_o <= "0111";
-              wdptr_o <= '0';
-            when others =>
-              -- REMARK: Not allowed for a maintenance packet.
-              payloadLength_o <= "0000";
-              wdptr_o <= '0';
-          end case;
-        else
-          case size is
-            when "1000" =>
-              -- Read 1 word.
-              payloadLength_o <= "0000";
-              wdptr_o <= '1';
-            when "1011" =>
-              -- Read 4 words.
-              payloadLength_o <= "0011";
-              wdptr_o <= '0';
-            when "1100" =>
-              -- Read 16 words.
-              payloadLength_o <= "1111";
-              wdptr_o <= '0';
-            when others =>
-              -- REMARK: Not allowed for a maintenance packet.
-              payloadLength_o <= "0000";
-              wdptr_o <= '0';
-          end case;
-        end if;
+      if (readRequestComplete = '1') or (writeRequestComplete = '1') then
+        size_o <= size;
+        wdptr_o <= wdptr;
+        payloadLength_o <= memoryAddress;
+      elsif (readResponseComplete = '1') then
+        size_o <= size;
+        wdptr_o <= wdptr;
+        payloadLength_o <= memoryAddress;
+      else
+        size_o <= size;
+        wdptr_o <= wdptr;
+        payloadLength_o <= (others=>'0');
       end if;
     end if;
   end process;
@@ -368,7 +423,7 @@ begin
   -- Payload content memory.
   -----------------------------------------------------------------------------
   PayloadMemory: MemorySimpleDualPort
-    generic map(ADDRESS_WIDTH=>4, DATA_WIDTH=>32)
+    generic map(ADDRESS_WIDTH=>3, DATA_WIDTH=>64)
     port map(clkA_i=>clk,
              enableA_i=>memoryWrite,
              addressA_i=>memoryAddress,
@@ -409,14 +464,15 @@ entity MaintenanceOutbound is
     tt_i : in std_logic_vector(1 downto 0);
     dstid_i : in std_logic_vector(31 downto 0);
     srcid_i : in std_logic_vector(31 downto 0);
+    size_i : in std_logic_vector(3 downto 0);
     status_i : in std_logic_vector(3 downto 0);
     tid_i : in std_logic_vector(7 downto 0);
     hop_i : in std_logic_vector(7 downto 0);
-    wdptr_i : in std_logic;
     offset_i : in std_logic_vector(20 downto 0);
-    payloadLength_i : in std_logic_vector(3 downto 0);
-    payloadIndex_o : out std_logic_vector(3 downto 0);
-    payload_i : in std_logic_vector(31 downto 0);
+    wdptr_i : in std_logic;
+    payloadLength_i : in std_logic_vector(2 downto 0);
+    payloadIndex_o : out std_logic_vector(2 downto 0);
+    payload_i : in std_logic_vector(63 downto 0);
     done_o : out std_logic;
     
     outboundCyc_o : out std_logic;
@@ -431,14 +487,15 @@ end entity;
 -------------------------------------------------------------------------------
 architecture MaintenanceOutbound of MaintenanceOutbound is
   type StateType is (WAIT_PACKET,
+                     READ_REQUEST, WRITE_REQUEST,
                      READ_RESPONSE, WRITE_RESPONSE,
                      WAIT_COMPLETE, RESPONSE_DONE);
   signal state : StateType;
-
-  signal packetIndex : natural range 0 to 33;
+  signal packetIndex : natural range 0 to 21;
+  
   signal header : std_logic_vector(31 downto 0);
   signal payload : std_logic_vector(15 downto 0);
-  signal payloadIndex : std_logic_vector(3 downto 0);
+  signal payloadIndex : std_logic_vector(2 downto 0);
     
 begin
 
@@ -467,12 +524,24 @@ begin
             -------------------------------------------------------------------
             -- 
             -------------------------------------------------------------------
-            if (readResponseReady_i = '1') then
+            payloadIndex <= (others=>'0');
+            if (readRequestReady_i = '1') then
               outboundCyc_o <= '1';
               outboundStb_o <= '1';
               outboundDat_o <= header;
               packetIndex <= 1;
-              payloadIndex <= (others=>'0');
+              state <= READ_REQUEST;
+            elsif (writeRequestReady_i = '1') then
+              outboundCyc_o <= '1';
+              outboundStb_o <= '1';
+              outboundDat_o <= header;
+              packetIndex <= 1;
+              state <= WRITE_REQUEST;
+            elsif (readResponseReady_i = '1') then
+              outboundCyc_o <= '1';
+              outboundStb_o <= '1';
+              outboundDat_o <= header;
+              packetIndex <= 1;
               state <= READ_RESPONSE;
             elsif (writeResponseReady_i = '1') then
               outboundCyc_o <= '1';
@@ -482,6 +551,75 @@ begin
               state <= WRITE_RESPONSE;
             end if;
 
+          when READ_REQUEST =>
+            ---------------------------------------------------------------------
+            -- 
+            ---------------------------------------------------------------------
+            if (outboundAck_i = '1') then
+              case (packetIndex) is
+                when 1 =>
+                  -- dstid
+                  outboundDat_o <= dstid_i;
+                  packetIndex <= packetIndex + 1;
+                when 2 =>
+                  -- srcid 
+                  outboundDat_o <= srcid_i;
+                  packetIndex <= packetIndex + 1;
+                when 3 =>
+                  -- transaction & rdsize & srcTID & hop & config_offset(20:13)
+                  outboundDat_o <= "0000" & size_i & tid_i & hop_i & offset_i(20 downto 13);
+                  packetIndex <= packetIndex + 1;
+                when others =>
+                  -- config_offset(12:0) & wdptr & rsrv & crc(15:0)
+                  outboundDat_o <= offset_i(12 downto 0) & wdptr_i & "00" & x"0000";
+                  packetIndex <= packetIndex + 1;
+                  state <= WAIT_COMPLETE;
+              end case;
+            end if;
+
+          when WRITE_REQUEST =>
+            ---------------------------------------------------------------------
+            -- 
+            ---------------------------------------------------------------------
+            if (outboundAck_i = '1') then
+              case (packetIndex) is
+                when 1 =>
+                  -- dstid
+                  outboundDat_o <= dstid_i;
+                  packetIndex <= packetIndex + 1;
+                when 2 =>
+                  -- srcid 
+                  outboundDat_o <= srcid_i;
+                  packetIndex <= packetIndex + 1;
+                when 3 =>
+                  -- transaction & size & srcTID & hop & config_offset(20:13)
+                  outboundDat_o <= "0001" & size_i & tid_i & hop_i & offset_i(20 downto 13);
+                  packetIndex <= packetIndex + 1;
+                when 4 =>
+                  -- config_offset(12:0) & wdptr & rsrv & double-wordN(63:48)
+                  outboundDat_o <= offset_i(12 downto 0) & wdptr_i & "00" & payload_i(63 downto 48);
+                  packetIndex <= packetIndex + 1;
+                when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 =>
+                  -- double-wordN(47:16)
+                  outboundDat_o <= payload_i(47 downto 16);
+                  payload <= payload_i(15 downto 0);
+                  payloadIndex <= std_logic_vector(unsigned(payloadIndex) + 1);
+                  packetIndex <= packetIndex + 1;
+                when 6 | 8 | 10 | 12 | 14 | 16 | 18 =>
+                  -- double-wordN(15:0) & double-wordN(63:48)
+                  outboundDat_o <= payload & payload_i(63 downto 48);
+                  packetIndex <= packetIndex + 1;
+                  
+                  if (payloadIndex = payloadLength_i) then
+                    state <= WAIT_COMPLETE;
+                  end if;
+                when others =>
+                  -- double-wordN(15:0) & double-wordN(63:48)
+                  outboundDat_o <= payload & x"0000";
+                  state <= WAIT_COMPLETE;
+              end case;
+            end if;
+            
           when READ_RESPONSE =>
             ---------------------------------------------------------------------
             -- 
@@ -489,11 +627,11 @@ begin
             if (outboundAck_i = '1') then
               case (packetIndex) is
                 when 1 =>
-                  -- destination
+                  -- dstid
                   outboundDat_o <= dstid_i;
                   packetIndex <= packetIndex + 1;
                 when 2 =>
-                  -- source 
+                  -- srcid 
                   outboundDat_o <= srcid_i;
                   packetIndex <= packetIndex + 1;
                 when 3 =>
@@ -502,57 +640,26 @@ begin
                   packetIndex <= packetIndex + 1;
                 when 4 =>
                   -- reserved(15:0) & double-wordN(63:48)
-                  if (payloadLength_i = "0000") and (wdptr_i = '0') then
-                    outboundDat_o <= x"0000" & payload_i(31 downto 16);
-                    payload <= payload_i(15 downto 0);
-                    payloadIndex <= std_logic_vector(unsigned(payloadIndex) + 1);
-                  elsif (payloadLength_i = "0000") and (wdptr_i = '1') then
-                    outboundDat_o <= x"0000" & x"0000";
-                  else
-                    outboundDat_o <= x"0000" & payload_i(31 downto 16);
-                    payload <= payload_i(15 downto 0);
-                    payloadIndex <= std_logic_vector(unsigned(payloadIndex) + 1);
-                  end if;
+                  outboundDat_o <= x"0000" & payload_i(63 downto 48);
                   packetIndex <= packetIndex + 1;
-                when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 | 25 | 27 | 29 | 31 =>
+                when 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 =>
                   -- double-wordN(47:16)
-                  if (payloadLength_i = "0000") and (wdptr_i = '0') then
-                    outboundDat_o <= payload & x"0000";
-                  elsif (payloadLength_i = "0000") and (wdptr_i = '1') then
-                    outboundDat_o <= x"0000" & payload_i(31 downto 16);
-                    payload <= payload_i(15 downto 0);
-                    payloadIndex <= std_logic_vector(unsigned(payloadIndex) + 1);
-                  else
-                    outboundDat_o <= payload & payload_i(31 downto 16);
-                    payload <= payload_i(15 downto 0);
-                    payloadIndex <= std_logic_vector(unsigned(payloadIndex) + 1);
-                  end if;
-                  packetIndex <= packetIndex + 1;
-                when 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | 24 | 26 | 28 | 30 | 32 =>
-                  -- double-wordN(15:0) & double-wordN(63:48)
-                  if (payloadLength_i = "0000") and (wdptr_i = '0') then
-                    outboundDat_o <= x"0000" & x"0000";
-                  elsif (payloadLength_i = "0000") and (wdptr_i = '1') then
-                    outboundDat_o <= payload & x"0000";
-                  else
-                    if (payloadIndex /= payloadLength_i) then
-                      outboundDat_o <= payload & payload_i(31 downto 16);
-                      payload <= payload_i(15 downto 0);
-                    else
-                      outboundDat_o <= payload & x"0000";
-                      payload <= payload_i(15 downto 0);
-                    end if;
-                  end if;
-                  
+                  outboundDat_o <= payload_i(47 downto 16);
+                  payload <= payload_i(15 downto 0);
                   payloadIndex <= std_logic_vector(unsigned(payloadIndex) + 1);
-                  if (payloadIndex(3 downto 1) = payloadLength_i(3 downto 1)) then
+                  packetIndex <= packetIndex + 1;
+                when 6 | 8 | 10 | 12 | 14 | 16 | 18 =>
+                  -- double-wordN(15:0) & double-wordN(63:48)
+                  outboundDat_o <= payload & payload_i(63 downto 48);
+                  packetIndex <= packetIndex + 1;
+
+                  if (payloadIndex = payloadLength_i) then
                     state <= WAIT_COMPLETE;
-                  else
-                    packetIndex <= packetIndex + 1;
                   end if;
                 when others =>
-                  -- Unallowed response length.
-                  -- Dont do anything.
+                  -- double-wordN(15:0) & double-wordN(63:48)
+                  outboundDat_o <= payload & x"0000";
+                  state <= WAIT_COMPLETE;
               end case;
             end if;
             
@@ -563,11 +670,11 @@ begin
             if (outboundAck_i = '1') then
               case (packetIndex) is
                 when 1 =>
-                  -- destination
+                  -- dstid
                   outboundDat_o <= dstid_i;
                   packetIndex <= packetIndex + 1;
                 when 2 =>
-                  -- source 
+                  -- srcid 
                   outboundDat_o <= srcid_i;
                   packetIndex <= packetIndex + 1;
                 when 3 =>
@@ -596,7 +703,8 @@ begin
             ---------------------------------------------------------------------
             -- 
             ---------------------------------------------------------------------
-            if (readResponseReady_i = '0') and (writeResponseReady_i = '0') then
+            if ((readRequestReady_i = '0') and (writeRequestReady_i = '0') and
+                (readResponseReady_i = '0') and (writeResponseReady_i = '0')) then
               state <= WAIT_PACKET;
               done_o <= '0';
             else

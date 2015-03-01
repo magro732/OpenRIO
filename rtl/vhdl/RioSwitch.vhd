@@ -10,10 +10,6 @@
 -- entity RioSwitch.
 -- 
 -- To Do:
--- - Add configAck to external interface.
--- - Complete forwarding of maintenance packets.
--- - Remove all common component-declarations and move them to RioCommon.
--- - Add support for longer maintenance packets.
 -- - Add support for portWrite maintenance packets.
 -- - Add a real crossbar as interconnect.
 -- - Change the internal addressing to one-hot.
@@ -55,6 +51,10 @@
 -- Public License along with this source; if not, download it 
 -- from http://www.opencores.org/lgpl.shtml 
 -- 
+-------------------------------------------------------------------------------
+-- Revision history.
+-- - Adding support for all sizes of maintenance packets.
+-- - Adding configAck to external config-space interface.
 -------------------------------------------------------------------------------
 
 
@@ -117,7 +117,8 @@ entity RioSwitch is
     configWe_o : out std_logic;
     configAddr_o : out std_logic_vector(23 downto 0);
     configData_o : out std_logic_vector(31 downto 0);
-    configData_i : in std_logic_vector(31 downto 0));
+    configData_i : in std_logic_vector(31 downto 0);
+    configAck_i : in std_logic);
 end entity;
 
 
@@ -225,7 +226,8 @@ architecture RioSwitchImpl of RioSwitch is
       configWe_o : out std_logic;
       configAddr_o : out std_logic_vector(23 downto 0);
       configData_o : out std_logic_vector(31 downto 0);
-      configData_i : in std_logic_vector(31 downto 0));
+      configData_i : in std_logic_vector(31 downto 0);
+      configAck_i : in std_logic);
   end component;
   
   component SwitchPort is
@@ -394,7 +396,7 @@ begin
       outboundAckId_o=>outboundAckId_o, inboundAckId_i=>inboundAckId_i, 
       outstandingAckId_i=>outstandingAckId_i, outboundAckId_i=>outboundAckId_i, 
       configStb_o=>configStb_o, configWe_o=>configWe_o, configAddr_o=>configAddr_o,
-      configData_o=>configData_o, configData_i=>configData_i);
+      configData_o=>configData_o, configData_i=>configData_i, configAck_i=>configAck_i);
 
 end architecture;
 
@@ -905,7 +907,8 @@ entity SwitchPortMaintenance is
     configWe_o : out std_logic;
     configAddr_o : out std_logic_vector(23 downto 0);
     configData_o : out std_logic_vector(31 downto 0);
-    configData_i : in std_logic_vector(31 downto 0));
+    configData_i : in std_logic_vector(31 downto 0);
+    configAck_i : in std_logic);
 end entity;
 
 
@@ -963,13 +966,13 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
   -- Signals between the port and the packet-queue.
   -----------------------------------------------------------------------------
   
-  signal outboundFramePort : std_logic_vector(7 downto 0);
+  signal outboundFramePort, outboundFramePort0 : std_logic_vector(7 downto 0);
   signal outboundReadFrameEmpty : std_logic;
   signal outboundReadFrame : std_logic;
   signal outboundReadContent : std_logic;
   signal outboundReadContentEnd : std_logic;
   signal outboundReadContentData : std_logic_vector(31 downto 0);
-  signal inboundFramePort : std_logic_vector(7 downto 0);
+  signal inboundFramePort, inboundFramePort0 : std_logic_vector(7 downto 0);
   signal inboundWriteFrameFull : std_logic;
   signal inboundWriteFrame : std_logic;
   signal inboundWriteFrameAbort : std_logic;
@@ -1014,6 +1017,7 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
   signal prio : std_logic_vector(1 downto 0);
   signal tt : std_logic_vector(1 downto 0);
   signal tid : std_logic_vector(7 downto 0);
+  signal status : std_logic_vector(3 downto 0);
 
   signal readRequestInbound : std_logic;
   signal writeRequestInbound : std_logic;
@@ -1022,12 +1026,14 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
   signal portWriteInbound : std_logic;
   signal dstIdInbound : std_logic_vector(31 downto 0);
   signal srcIdInbound : std_logic_vector(31 downto 0);
+  signal sizeInbound : std_logic_vector(3 downto 0);
+  signal statusInbound : std_logic_vector(3 downto 0);
   signal hopInbound : std_logic_vector(7 downto 0);
   signal offsetInbound : std_logic_vector(20 downto 0);
   signal wdptrInbound: std_logic;
-  signal payloadLengthInbound : std_logic_vector(3 downto 0);
-  signal payloadIndexInbound : std_logic_vector(3 downto 0);
-  signal payloadInbound : std_logic_vector(31 downto 0);
+  signal payloadLengthInbound : std_logic_vector(2 downto 0);
+  signal payloadIndexInbound : std_logic_vector(2 downto 0);
+  signal payloadInbound : std_logic_vector(63 downto 0);
   signal doneInbound : std_logic;
 
   signal readRequestOutbound : std_logic;
@@ -1037,21 +1043,21 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
   signal portWriteOutbound : std_logic;
   signal dstIdOutbound : std_logic_vector(31 downto 0);
   signal srcIdOutbound : std_logic_vector(31 downto 0);
+  signal statusOutbound : std_logic_vector(3 downto 0);
   signal hopOutbound : std_logic_vector(7 downto 0);
-  signal wdptrOutbound: std_logic;
-  signal payloadLengthOutbound : std_logic_vector(3 downto 0);
-  signal payloadIndexOutbound : std_logic_vector(3 downto 0);
-  signal payloadOutbound : std_logic_vector(31 downto 0);
+  signal payloadLengthOutbound : std_logic_vector(2 downto 0);
+  signal payloadIndexOutbound : std_logic_vector(2 downto 0);
+  signal payloadOutbound : std_logic_vector(63 downto 0);
   signal doneOutbound : std_logic;
 
   signal readRequestMaint : std_logic;
   signal writeRequestMaint : std_logic;
   signal readResponseMaint : std_logic;
   signal writeResponseMaint : std_logic;
-  signal wdptrMaint : std_logic;
-  signal payloadLengthMaint : std_logic_vector(3 downto 0);
-  signal payloadIndexMaint : std_logic_vector(3 downto 0);
-  signal payloadMaint : std_logic_vector(31 downto 0);
+  signal statusMaint : std_logic_vector(3 downto 0);
+  signal payloadLengthMaint : std_logic_vector(2 downto 0);
+  signal payloadIndexMaint : std_logic_vector(2 downto 0);
+  signal payloadMaint : std_logic_vector(63 downto 0);
   signal doneMaint : std_logic;
   
   -----------------------------------------------------------------------------
@@ -1082,12 +1088,12 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
   -- Configuration space signals.
   -----------------------------------------------------------------------------
 
-  signal configStb : std_logic;
+  signal configStb, configStbInternal : std_logic;
   signal configWe : std_logic;
   signal configAdr : std_logic_vector(23 downto 0);
   signal configDataWrite : std_logic_vector(31 downto 0);
   signal configDataRead, configDataReadInternal : std_logic_vector(31 downto 0);
-  signal configAck : std_logic;
+  signal configAck, configAckInternal : std_logic;
 
   -- REMARK: Make these variables instead...
   signal discovered : std_logic;
@@ -1127,7 +1133,7 @@ begin
       slaveAck_o=>slaveAck_o,
       lookupStb_o=>open,
       lookupAddr_o=>open, 
-      lookupData_i=>outboundFramePort,
+      lookupData_i=>outboundFramePort0,
       lookupAck_i=>'1',
       readFrameEmpty_i=>outboundReadFrameEmpty,
       readFrame_o=>outboundReadFrame, 
@@ -1137,18 +1143,31 @@ begin
       readContent_o=>outboundReadContent, 
       readContentEnd_i=>outboundReadContentEnd,
       readContentData_i=>outboundReadContentData, 
-      writeFramePort_o=>inboundFramePort,
+      writeFramePort_o=>inboundFramePort0,
       writeFrameFull_i=>inboundWriteFrameFull,
       writeFrame_o=>inboundWriteFrame, 
       writeFrameAbort_o=>inboundWriteFrameAbort,
       writeContent_o=>inboundWriteContent, 
       writeContentData_o=>inboundWriteContentData);
 
+  process(clk)
+  begin
+    if (clk'event and clk = '1') then
+      if (inboundReadFrame = '1') then
+        inboundFramePort <= inboundFramePort0;
+      end if;
+      if (outboundWriteFrame = '1') then
+        outboundFramePort0 <= outboundFramePort;
+      end if;
+    end if;
+  end process;
+  
   -----------------------------------------------------------------------------
   -- Packet queue.
   -- This queue should only contain one packet.
   -----------------------------------------------------------------------------
   -- REMARK: Use a packet-buffer with a configurable maximum sized packet...
+  -- the size of the memory is too large...
   PacketQueue: RioPacketBuffer
     generic map(SIZE_ADDRESS_WIDTH=>1, CONTENT_ADDRESS_WIDTH=>7)
     port map(
@@ -1231,6 +1250,8 @@ begin
       tt_o=>tt, 
       dstid_o=>dstIdInbound, 
       srcid_o=>srcIdInbound,
+      size_o=>sizeInbound,
+      status_o=>statusInbound,
       tid_o=>tid,
       hop_o=>hopInbound,
       offset_o=>offsetInbound,
@@ -1255,8 +1276,8 @@ begin
   portWriteOutbound <= (portWriteInbound and sendPacket) when (forwardPacket = '1') else '0';
   srcIdOutbound <= srcIdInbound when (forwardPacket = '1') else dstIdInbound;
   dstIdOutbound <= dstIdInbound when (forwardPacket = '1') else srcIdInbound;
+  statusOutbound <= statusInbound when (forwardPacket = '1') else statusMaint;
   hopOutbound <= std_logic_vector(unsigned(hopInbound)-1) when (forwardPacket = '1') else x"ff";
-  wdptrOutbound <= wdptrInbound when (forwardPacket = '1') else wdptrMaint;
   payloadLengthOutbound <= payloadLengthInbound when (forwardPacket = '1') else payloadLengthMaint;
   payloadOutbound <= payloadInbound when (forwardPacket = '1') else payloadMaint;
   -- REMARK: Connect enable to something...
@@ -1274,11 +1295,12 @@ begin
       tt_i=>tt, 
       dstid_i=>dstIdOutbound, 
       srcid_i=>srcIdOutbound,
-      status_i=>"0000",
+      size_i=>sizeInbound,
+      status_i=>statusOutbound,
       tid_i=>tid,
       hop_i=>hopOutbound,
       offset_i=>offsetInbound,
-      wdptr_i=>wdptrOutbound,
+      wdptr_i=>wdptrInbound,
       payloadLength_i=>payloadLengthOutbound, 
       payloadIndex_o=>payloadIndexOutbound, 
       payload_i=>payloadOutbound, 
@@ -1368,7 +1390,7 @@ begin
           -- REMARK: Wait for the packet to be fully transmitted to the target
           -- port. Then reset everything for the reception of a new packet.
           sendPacket <= '1';
-          if (doneOutbound = '1') then
+          if (doneInbound = '1') then
             masterState := STATE_IDLE;
           end if;
           
@@ -1391,7 +1413,8 @@ begin
     port map(
       clk=>clk, areset_n=>areset_n, enable=>'1', 
       readRequestReady_i=>readRequestMaint, 
-      writeRequestReady_i=>writeRequestMaint, 
+      writeRequestReady_i=>writeRequestMaint,
+      size_i=>sizeInbound,
       offset_i=>offsetInbound, 
       wdptr_i=>wdptrInbound, 
       payloadLength_i=>payloadLengthInbound, 
@@ -1399,8 +1422,8 @@ begin
       payload_i=>payloadInbound, 
       done_o=>doneMaint, 
       readResponseReady_o=>readResponseMaint, 
-      writeResponseReady_o=>writeResponseMaint, 
-      wdptr_o=>wdptrMaint, 
+      writeResponseReady_o=>writeResponseMaint,
+      status_o=>statusMaint,
       payloadLength_o=>payloadLengthMaint, 
       payloadIndex_i=>payloadIndexOutbound, 
       payload_o=>payloadMaint, 
@@ -1420,19 +1443,19 @@ begin
   outputPortEnable_o <= outputPortEnable;
   inputPortEnable_o <= inputPortEnable;
 
-  -- REMARK: Connect configAck...
   configStb_o <= '1' when ((configStb = '1') and (configAdr(23 downto 16) /= x"00")) else '0';
+  configStbInternal <= '1' when ((configStb = '1') and (configAdr(23 downto 16) = x"00")) else '0';
   configWe_o <= configWe;
   configAddr_o <= configAdr;
   configData_o <= configDataWrite;
-  configDataRead <= configData_i when (configAdr(23 downto 16) /= x"00") else
-                    configDataReadInternal;
+  configDataRead <= configData_i when (configStbInternal = '0') else configDataReadInternal;
+  configAck <= configAck_i when (configStbInternal = '0') else configAckInternal;
   
   ConfigMemory: process(areset_n, clk)
   begin
     if (areset_n = '0') then
       configDataReadInternal <= (others => '0');
-      configAck <= '0';
+      configAckInternal <= '0';
 
       routeTableEnable <= '1';
       routeTableWrite <= '0';
@@ -1457,9 +1480,9 @@ begin
       routeTableWrite <= '0';
       localAckIdWrite_o <= (others => '0');
       
-      if (configAck = '0') then
-        if (configStb = '1') then
-          configAck <= '1';
+      if (configAckInternal = '0') then
+        if (configStbInternal = '1') then
+          configAckInternal <= '1';
           
           -- Check if the access is into implementation defined space or if the
           -- access should be handled here.
@@ -1849,7 +1872,7 @@ begin
           -- Config memory not enabled.
         end if;
       else
-        configAck <= '0';
+        configAckInternal <= '0';
       end if;
     end if;
   end process;

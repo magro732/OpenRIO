@@ -9,7 +9,8 @@
 -- Contains automatic simulation test code to verify a RioSwitch implementation.
 -- 
 -- To Do:
--- -
+-- - Use the Wishbone port as a test port on the implementation defined config-space.
+-- - Test all sizes of packets that go through the maintenance port.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 
@@ -53,6 +54,7 @@ use ieee.math_real.all;
 library std;
 use std.textio.all;
 use work.rio_common.all;
+use work.TestPortPackage.all;
 
 
 -------------------------------------------------------------------------------
@@ -114,38 +116,11 @@ architecture TestRioSwitchImpl of TestRioSwitch is
       configWe_o : out std_logic;
       configAddr_o : out std_logic_vector(23 downto 0);
       configData_o : out std_logic_vector(31 downto 0);
-      configData_i : in std_logic_vector(31 downto 0));
+      configData_i : in std_logic_vector(31 downto 0);
+      configAck_i : in std_logic);
   end component;
 
-  component TestPort is
-    port(
-      clk : in std_logic;
-      areset_n : in std_logic;
-
-      frameValid_i : in std_logic;
-      frameWrite_i : in RioFrame;
-      frameComplete_o : out std_logic;
-      
-      frameExpected_i : in std_logic;
-      frameRead_i : in RioFrame;
-      frameReceived_o : out std_logic;
-
-      readFrameEmpty_o : out std_logic;
-      readFrame_i : in std_logic;
-      readFrameRestart_i : in std_logic;
-      readFrameAborted_o : out std_logic;
-      readContentEmpty_o : out std_logic;
-      readContent_i : in std_logic;
-      readContentEnd_o : out std_logic;
-      readContentData_o : out std_logic_vector(31 downto 0);
-      writeFrameFull_o : out std_logic;
-      writeFrame_i : in std_logic;
-      writeFrameAbort_i : in std_logic;
-      writeContent_i : in std_logic;
-      writeContentData_i : in std_logic_vector(31 downto 0));
-  end component;
-
-  constant PORTS : natural := 7;
+  constant PORTS : natural := 3;
   constant SWITCH_IDENTITY : std_logic_vector(15 downto 0) := x"0123";
   constant SWITCH_VENDOR_IDENTITY : std_logic_vector(15 downto 0) := x"4567";
   constant SWITCH_REV : std_logic_vector(31 downto 0) := x"89abcdef";
@@ -156,13 +131,39 @@ architecture TestRioSwitchImpl of TestRioSwitch is
   signal clk : std_logic;
   signal areset_n : std_logic;
 
-  signal frameValid : Array1(PORTS-1 downto 0);
-  signal frameWrite : RioFrameArray(PORTS-1 downto 0);
-  signal frameComplete : Array1(PORTS-1 downto 0);
-      
-  signal frameExpected : Array1(PORTS-1 downto 0);
-  signal frameRead : RioFrameArray(PORTS-1 downto 0);
-  signal frameReceived : Array1(PORTS-1 downto 0);
+  signal inboundEmpty : Array1(PORTS-1 downto 0);
+  signal inboundEmpty0 : std_logic;
+  signal inboundEmpty1 : std_logic;
+  signal inboundEmpty2 : std_logic;
+  signal inboundWrite : Array1(PORTS-1 downto 0);
+  signal inboundWrite0 : std_logic;
+  signal inboundWrite1 : std_logic;
+  signal inboundWrite2 : std_logic;
+  signal inboundMessage : TestPortMessagePacketBufferArray(PORTS-1 downto 0);
+  signal inboundMessage0 : TestPortMessagePacketBuffer;
+  signal inboundMessage1 : TestPortMessagePacketBuffer;
+  signal inboundMessage2 : TestPortMessagePacketBuffer;
+  signal inboundAck : Array1(PORTS-1 downto 0);
+  signal inboundAck0 : std_logic;
+  signal inboundAck1 : std_logic;
+  signal inboundAck2 : std_logic;
+  
+  signal outboundEmpty : Array1(PORTS-1 downto 0);
+  signal outboundEmpty0 : std_logic;
+  signal outboundEmpty1 : std_logic;
+  signal outboundEmpty2 : std_logic;
+  signal outboundWrite : Array1(PORTS-1 downto 0);
+  signal outboundWrite0 : std_logic;
+  signal outboundWrite1 : std_logic;
+  signal outboundWrite2 : std_logic;
+  signal outboundMessage : TestPortMessagePacketBufferArray(PORTS-1 downto 0);
+  signal outboundMessage0 : TestPortMessagePacketBuffer;
+  signal outboundMessage1 : TestPortMessagePacketBuffer;
+  signal outboundMessage2 : TestPortMessagePacketBuffer;
+  signal outboundAck : Array1(PORTS-1 downto 0);
+  signal outboundAck0 : std_logic;
+  signal outboundAck1 : std_logic;
+  signal outboundAck2 : std_logic;
   
   signal writeFrameFull : Array1(PORTS-1 downto 0);
   signal writeFrame : Array1(PORTS-1 downto 0);
@@ -194,11 +195,17 @@ architecture TestRioSwitchImpl of TestRioSwitch is
   signal outstandingAckIdRead : Array5(PORTS-1 downto 0);
   signal outboundAckIdRead : Array5(PORTS-1 downto 0);
         
-  signal configStb, configStbExpected : std_logic;
-  signal configWe, configWeExpected : std_logic;
-  signal configAddr, configAddrExpected : std_logic_vector(23 downto 0);
-  signal configDataWrite, configDataWriteExpected : std_logic_vector(31 downto 0);
-  signal configDataRead, configDataReadExpected : std_logic_vector(31 downto 0);
+  signal messageEmpty : std_logic;
+  signal messageWrite : std_logic;
+  signal message : TestPortMessageWishbone;
+  signal messageAck : std_logic;
+        
+  signal configStb : std_logic;
+  signal configWe : std_logic;
+  signal configAddr : std_logic_vector(23 downto 0);
+  signal configDataWrite : std_logic_vector(31 downto 0);
+  signal configDataRead : std_logic_vector(31 downto 0);
+  signal configAck : std_logic;
   
 begin
   
@@ -225,10 +232,18 @@ begin
     procedure SendFrame(constant portIndex : natural range 0 to 7;
                         constant frame : RioFrame) is
     begin
-      frameValid(portIndex) <= '1';
-      frameWrite(portIndex) <= frame;
-      wait until frameComplete(portIndex) = '1';
-      frameValid(portIndex) <= '0';
+      -- Crappy Modelsim cannot handle arrays of signals...
+      case portIndex is
+        when 0 =>
+          TestPortPacketBufferWrite(inboundWrite0, inboundMessage0, inboundAck0,
+                                    frame, false);
+        when 1 =>
+          TestPortPacketBufferWrite(inboundWrite1, inboundMessage1, inboundAck1,
+                                    frame, false);
+        when others =>
+          TestPortPacketBufferWrite(inboundWrite2, inboundMessage2, inboundAck2,
+                                    frame, false);
+      end case;
     end procedure;
 
     ---------------------------------------------------------------------------
@@ -237,10 +252,50 @@ begin
     procedure ReceiveFrame(constant portIndex : natural range 0 to 7;
                            constant frame : RioFrame) is
     begin
-      frameExpected(portIndex) <= '1';
-      frameRead(portIndex) <= frame;
-      wait until frameReceived(portIndex) = '1';
-      frameExpected(portIndex) <= '0';
+      -- Crappy Modelsim cannot handle arrays of signals...
+      case portIndex is
+        when 0 =>
+          TestPortPacketBufferWrite(outboundWrite0, outboundMessage0, outboundAck0,
+                                    frame, false);
+        when 1 =>
+          TestPortPacketBufferWrite(outboundWrite1, outboundMessage1, outboundAck1,
+                                    frame, false);
+        when others =>
+          TestPortPacketBufferWrite(outboundWrite2, outboundMessage2, outboundAck2,
+                                    frame, false);
+      end case;
+    end procedure;
+
+    ---------------------------------------------------------------------------
+    -- 
+    ---------------------------------------------------------------------------
+    procedure SendFrame(constant portIndex : natural range 0 to 7;
+                        constant sourceId : std_logic_vector(15 downto 0);
+                        constant destinationId : std_logic_vector(15 downto 0);
+                        constant payload : RioPayload) is
+      variable frame : RioFrame;
+    begin
+      frame := RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                              tt=>"01", ftype=>"0000", 
+                              sourceId=>sourceId, destId=>destinationId,
+                              payload=>payload);
+      SendFrame(portIndex, frame);
+    end procedure;
+    
+    ---------------------------------------------------------------------------
+    -- 
+    ---------------------------------------------------------------------------
+    procedure ReceiveFrame(constant portIndex : natural range 0 to 7;
+                           constant sourceId : std_logic_vector(15 downto 0);
+                           constant destinationId : std_logic_vector(15 downto 0);
+                           constant payload : RioPayload) is
+      variable frame : RioFrame;
+    begin
+      frame := RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                              tt=>"01", ftype=>"0000", 
+                              sourceId=>sourceId, destId=>destinationId,
+                              payload=>payload);
+      ReceiveFrame(portIndex, frame);
     end procedure;
 
     ---------------------------------------------------------------------------
@@ -340,76 +395,78 @@ begin
     begin
       frame := RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
                               tt=>"01", ftype=>"0000", 
-                              sourceId=>sourceId, destId=>destinationId,
+                              destId=>destinationId, sourceId=>sourceId, 
                               payload=>payload);
-      
-      frameExpected(destinationPortIndex) <= '1';
-      frameRead(destinationPortIndex) <= frame;
 
-      frameValid(sourcePortIndex) <= '1';
-      frameWrite(sourcePortIndex) <= frame;
-      wait until frameComplete(sourcePortIndex) = '1';
-      frameValid(sourcePortIndex) <= '0';
-      
-      wait until frameReceived(destinationPortIndex) = '1';
-      frameExpected(destinationPortIndex) <= '0';
-      
+      ReceiveFrame(destinationPortIndex, frame);
+      SendFrame(sourcePortIndex, frame);
     end procedure;
-    
+
     ---------------------------------------------------------------------------
     -- 
     ---------------------------------------------------------------------------
-    procedure SendFrame(constant portIndex : natural range 0 to 7;
-                        constant sourceId : std_logic_vector(15 downto 0);
-                        constant destinationId : std_logic_vector(15 downto 0);
-                        constant payload : RioPayload) is
-      variable frame : RioFrame;
+    procedure ExchangeFrames is
     begin
-      frame := RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                              tt=>"01", ftype=>"0000", 
-                              sourceId=>sourceId, destId=>destinationId,
-                              payload=>payload);
-      
-      frameValid(portIndex) <= '1';
-      frameWrite(portIndex) <= frame;
+      TestWait(inboundEmpty0, '1', "port0 frame sent");
+      TestWait(inboundEmpty1, '1', "port0 frame sent");
+      TestWait(inboundEmpty2, '1', "port0 frame sent");
+      TestWait(outboundEmpty0, '1', "port0 frame received");
+      TestWait(outboundEmpty1, '1', "port0 frame received");
+      TestWait(outboundEmpty2, '1', "port0 frame received");
     end procedure;
-    
+
     ---------------------------------------------------------------------------
     -- 
     ---------------------------------------------------------------------------
-    procedure ReceiveFrame(constant portIndex : natural range 0 to 7;
-                           constant sourceId : std_logic_vector(15 downto 0);
-                           constant destinationId : std_logic_vector(15 downto 0);
-                           constant payload : RioPayload) is
-      variable frame : RioFrame;
+    procedure ConfigRead(constant address : std_logic_vector(23 downto 0);
+                         constant data : std_logic_vector(31 downto 0)) is
     begin
-      frame := RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
-                              tt=>"01", ftype=>"0000", 
-                              sourceId=>sourceId, destId=>destinationId,
-                              payload=>payload);
-      
-      frameExpected(portIndex) <= '1';
-      frameRead(portIndex) <= frame;
+      TestPortWishboneWrite(writeSignal=>messageWrite,
+                            messageSignal=>message,
+                            ackSignal=>messageAck,
+                            writeAccess=>false,
+                            address=>(x"00000000" & x"00" & address),
+                            byteSelect=>x"00",
+                            data=>(x"00000000" & data),
+                            latency=>3);
     end procedure;
-    
+    procedure ConfigWrite(constant address : std_logic_vector(23 downto 0);
+                          constant data : std_logic_vector(31 downto 0)) is
+    begin
+      TestPortWishboneWrite(writeSignal=>messageWrite,
+                            messageSignal=>message,
+                            ackSignal=>messageAck,
+                            writeAccess=>true,
+                            address=>(x"00000000" & x"00" & address),
+                            byteSelect=>x"00",
+                            data=>(x"00000000" & data),
+                            latency=>3);
+    end procedure;
+
     -- These variabels are needed for the random number generation.
     variable seed1 : positive := 1;
     variable seed2: positive := 1;
 
+    variable maintData : DoubleWordArray(0 to 7);
     variable data : DoubleWordArray(0 to 31);
     variable randomPayload : RioPayload;
     variable randomPayload1 : RioPayload;
     variable randomPayload2 : RioPayload;
-    variable frame : RioFrameArray(0 to PORTS-1);
+    variable frame : RioFrame;
     
   begin
     areset_n <= '0';
 
     linkInitialized <= (others=>'0');
       
+    writeFrameFull <= (others=>'0');
     for portIndex in 0 to PORTS-1 loop
-      frameValid(portIndex) <= '0';
-      frameExpected(portIndex) <= '0';
+      inboundWrite0 <= '0';
+      outboundWrite0 <= '0';
+      inboundWrite1 <= '0';
+      outboundWrite1 <= '0';
+      inboundWrite2 <= '0';
+      outboundWrite2 <= '0';
       localAckIdWrite(portIndex) <= '0';
       clrOutstandingAckId(portIndex) <= '0';
       inboundAckIdWrite(portIndex) <= (others=>'0');
@@ -447,6 +504,8 @@ begin
     ReadConfig32(portIndex=>3, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"03", address=>x"00000c", data=>(SWITCH_ASSY_REV & x"0100"));
 
+    ExchangeFrames;
+
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
     PrintS("Step 2:");
@@ -462,6 +521,8 @@ begin
     ReadConfig32(portIndex=>4, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"04", address=>x"000010", data=>x"10000118");
 
+    ExchangeFrames;
+
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
     PrintS("Step 3:");
@@ -471,8 +532,10 @@ begin
     PrintR("TG_RioSwitch-TC1-Step3");
     ---------------------------------------------------------------------------
 
-    ReadConfig32(portIndex=>5, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"05", address=>x"000014", data=>x"00000705");
+    ReadConfig32(portIndex=>2, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
+                 tid=>x"05", address=>x"000014", data=>x"00000302");
+
+    ExchangeFrames;
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -485,6 +548,8 @@ begin
 
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"000034", data=>x"00000800");
+
+    ExchangeFrames;
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -540,6 +605,8 @@ begin
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"00", address=>x"000068", data=>x"0000ffff");
     
+    ExchangeFrames;
+
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
     PrintS("Step 6");
@@ -557,6 +624,8 @@ begin
 
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"00006c", data=>x"ffffffff");
+
+    ExchangeFrames;
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -577,6 +646,8 @@ begin
 
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"000120", data=>x"00000100");
+
+    ExchangeFrames;
 
     assert portLinkTimeout = x"000001" report "Unexpected portLinkTimeout." severity error;
 
@@ -604,6 +675,8 @@ begin
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"00013c", data=>x"00000000");
 
+    ExchangeFrames;
+
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
     PrintS("Step 9");
@@ -616,51 +689,29 @@ begin
     linkInitialized(0) <= '0';
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"000158", data=>x"00000001");
+    ExchangeFrames;
     linkInitialized(0) <= '1';
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"000158", data=>x"00000002");
+    ExchangeFrames;
 
     linkInitialized(1) <= '0';
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"000178", data=>x"00000001");
+    ExchangeFrames;
     linkInitialized(1) <= '1';
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"000178", data=>x"00000002");
+    ExchangeFrames;
 
     linkInitialized(2) <= '0';
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"000198", data=>x"00000001");
+    ExchangeFrames;
     linkInitialized(2) <= '1';
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"000198", data=>x"00000002");
-
-    linkInitialized(3) <= '0';
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001b8", data=>x"00000001");
-    linkInitialized(3) <= '1';
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001b8", data=>x"00000002");
-
-    linkInitialized(4) <= '0';
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001d8", data=>x"00000001");
-    linkInitialized(4) <= '1';
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001d8", data=>x"00000002");
-
-    linkInitialized(5) <= '0';
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001f8", data=>x"00000001");
-    linkInitialized(5) <= '1';
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001f8", data=>x"00000002");
-
-    linkInitialized(6) <= '0';
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"000218", data=>x"00000001");
-    linkInitialized(6) <= '1';
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"000218", data=>x"00000002");
+    ExchangeFrames;
 
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -683,6 +734,8 @@ begin
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"00015c", data=>x"00600001");
 
+    ExchangeFrames;
+
     assert outputPortEnable(0) = '1' report "Unexpected outputPortEnable." severity error;
     assert inputPortEnable(0) = '1' report "Unexpected inputPortEnable." severity error;
 
@@ -699,6 +752,8 @@ begin
     
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"00017c", data=>x"00600001");
+
+    ExchangeFrames;
 
     assert outputPortEnable(1) = '1' report "Unexpected outputPortEnable." severity error;
     assert inputPortEnable(1) = '1' report "Unexpected inputPortEnable." severity error;
@@ -717,77 +772,11 @@ begin
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"06", address=>x"00019c", data=>x"00600001");
 
+    ExchangeFrames;
+
     assert outputPortEnable(2) = '1' report "Unexpected outputPortEnable." severity error;
     assert inputPortEnable(2) = '1' report "Unexpected inputPortEnable." severity error;
 
-    ---------------------------------------------------------------------------
-    
-    assert outputPortEnable(3) = '0' report "Unexpected outputPortEnable." severity error;
-    assert inputPortEnable(3) = '0' report "Unexpected inputPortEnable." severity error;
-    
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001bc", data=>x"00000001");
-
-    WriteConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"06", address=>x"0001bc", data=>x"00600001");
-    
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001bc", data=>x"00600001");
-
-    assert outputPortEnable(3) = '1' report "Unexpected outputPortEnable." severity error;
-    assert inputPortEnable(3) = '1' report "Unexpected inputPortEnable." severity error;
-
-    ---------------------------------------------------------------------------
-    
-    assert outputPortEnable(4) = '0' report "Unexpected outputPortEnable." severity error;
-    assert inputPortEnable(4) = '0' report "Unexpected inputPortEnable." severity error;
-    
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001dc", data=>x"00000001");
-
-    WriteConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"06", address=>x"0001dc", data=>x"00600001");
-    
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001dc", data=>x"00600001");
-
-    assert outputPortEnable(4) = '1' report "Unexpected outputPortEnable." severity error;
-    assert inputPortEnable(4) = '1' report "Unexpected inputPortEnable." severity error;
-
-    ---------------------------------------------------------------------------
-    
-    assert outputPortEnable(5) = '0' report "Unexpected outputPortEnable." severity error;
-    assert inputPortEnable(5) = '0' report "Unexpected inputPortEnable." severity error;
-    
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001fc", data=>x"00000001");
-
-    WriteConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"06", address=>x"0001fc", data=>x"00600001");
-    
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"0001fc", data=>x"00600001");
-
-    assert outputPortEnable(5) = '1' report "Unexpected outputPortEnable." severity error;
-    assert inputPortEnable(5) = '1' report "Unexpected inputPortEnable." severity error;
-
-    ---------------------------------------------------------------------------
-    
-    assert outputPortEnable(6) = '0' report "Unexpected outputPortEnable." severity error;
-    assert inputPortEnable(6) = '0' report "Unexpected inputPortEnable." severity error;
-    
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"00021c", data=>x"00000001");
-
-    WriteConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"06", address=>x"00021c", data=>x"00600001");
-    
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"00021c", data=>x"00600001");
-
-    assert outputPortEnable(6) = '1' report "Unexpected outputPortEnable." severity error;
-    assert inputPortEnable(6) = '1' report "Unexpected inputPortEnable." severity error;
-    
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
     PrintS("Step 11");
@@ -797,22 +786,96 @@ begin
     PrintR("TG_RioSwitch-TC1-Step11");
     ---------------------------------------------------------------------------
 
-    configStbExpected <= '1';
-    configWeExpected <= '0';
-    configAddrExpected <= x"010000";
-    configDataReadExpected <= x"deadbeef";
-    
-    ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"010000", data=>x"deadbeef");
+    CreateRandomPayload(maintData, seed1, seed2);
+    ConfigRead(x"010000", maintData(0)(63 downto 32));
+    ConfigRead(x"010004", maintData(0)(31 downto 0));
+    ConfigRead(x"010008", maintData(1)(63 downto 32));
+    ConfigRead(x"01000c", maintData(1)(31 downto 0));
+    ConfigRead(x"010010", maintData(2)(63 downto 32));
+    ConfigRead(x"010014", maintData(2)(31 downto 0));
+    ConfigRead(x"010018", maintData(3)(63 downto 32));
+    ConfigRead(x"01001c", maintData(3)(31 downto 0));
+    ConfigRead(x"010020", maintData(4)(63 downto 32));
+    ConfigRead(x"010024", maintData(4)(31 downto 0));
+    ConfigRead(x"010028", maintData(5)(63 downto 32));
+    ConfigRead(x"01002c", maintData(5)(31 downto 0));
+    ConfigRead(x"010030", maintData(6)(63 downto 32));
+    ConfigRead(x"010034", maintData(6)(31 downto 0));
+    ConfigRead(x"010038", maintData(7)(63 downto 32));
+    ConfigRead(x"01003c", maintData(7)(31 downto 0));
 
-    configStbExpected <= '1';
-    configWeExpected <= '1';
-    configAddrExpected <= x"010004";
-    configDataWriteExpected <= x"c0debabe";
-    
-    WriteConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"06", address=>x"010004", data=>x"c0debabe");
+    SendFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                destId=>x"0000", sourceId=>x"dead", 
+                                payload=>RioMaintenance(transaction=>"0000",
+                                                        size=>"1100",
+                                                        tid=>x"ef",
+                                                        hopCount=>x"00",
+                                                        configOffset=>"000000010000000000000",
+                                                        wdptr=>'1',
+                                                        dataLength=>0,
+                                                        data=>maintData)));
 
+    ReceiveFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                   tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                   destId=>x"dead", sourceId=>x"0000", 
+                                   payload=>RioMaintenance(transaction=>"0010",
+                                                           size=>"0000",
+                                                           tid=>x"ef",
+                                                           hopCount=>x"ff",
+                                                           configOffset=>"000000000000000000000",
+                                                           wdptr=>'0',
+                                                           dataLength=>8,
+                                                           data=>maintData)));
+
+    ExchangeFrames;
+    TestWait(messageEmpty, '1', "config read");
+    
+    CreateRandomPayload(maintData, seed1, seed2);
+    ConfigWrite(x"010000", maintData(0)(63 downto 32));
+    ConfigWrite(x"010004", maintData(0)(31 downto 0));
+    ConfigWrite(x"010008", maintData(1)(63 downto 32));
+    ConfigWrite(x"01000c", maintData(1)(31 downto 0));
+    ConfigWrite(x"010010", maintData(2)(63 downto 32));
+    ConfigWrite(x"010014", maintData(2)(31 downto 0));
+    ConfigWrite(x"010018", maintData(3)(63 downto 32));
+    ConfigWrite(x"01001c", maintData(3)(31 downto 0));
+    ConfigWrite(x"010020", maintData(4)(63 downto 32));
+    ConfigWrite(x"010024", maintData(4)(31 downto 0));
+    ConfigWrite(x"010028", maintData(5)(63 downto 32));
+    ConfigWrite(x"01002c", maintData(5)(31 downto 0));
+    ConfigWrite(x"010030", maintData(6)(63 downto 32));
+    ConfigWrite(x"010034", maintData(6)(31 downto 0));
+    ConfigWrite(x"010038", maintData(7)(63 downto 32));
+    ConfigWrite(x"01003c", maintData(7)(31 downto 0));
+
+    SendFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                destId=>x"0000", sourceId=>x"dead", 
+                                payload=>RioMaintenance(transaction=>"0001",
+                                                        size=>"1100",
+                                                        tid=>x"ef",
+                                                        hopCount=>x"00",
+                                                        configOffset=>"000000010000000000000",
+                                                        wdptr=>'1',
+                                                        dataLength=>8,
+                                                        data=>maintData)));
+
+    ReceiveFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                   tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                   destId=>x"dead", sourceId=>x"0000", 
+                                   payload=>RioMaintenance(transaction=>"0011",
+                                                           size=>"0000",
+                                                           tid=>x"ef",
+                                                           hopCount=>x"ff",
+                                                           configOffset=>"000000000000000000000",
+                                                           wdptr=>'0',
+                                                           dataLength=>0,
+                                                           data=>maintData)));
+
+    ExchangeFrames;
+    TestWait(messageEmpty, '1', "config read");
+    
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
     PrintS("TG_RioSwitch-TC2");
@@ -839,12 +902,14 @@ begin
     CreateRandomPayload(randomPayload.data, seed1, seed2);
     RouteFrame(sourcePortIndex=>0, destinationPortIndex=>1,
                sourceId=>x"ffff", destinationId=>x"0000", payload=>randomPayload);
+
+    ExchangeFrames;
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
     PrintS("Step 2:");
-    PrintS("Action: Test the configuration of the default route->port 6.");
-    PrintS("Result: An unknown address should be routed to port 6.");
+    PrintS("Action: Test the configuration of the default route->port 2.");
+    PrintS("Result: An unknown address should be routed to port 2.");
     ---------------------------------------------------------------------------
     PrintR("TG_RioSwitch-TC2-Step2");
     ---------------------------------------------------------------------------
@@ -852,15 +917,204 @@ begin
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"0a", address=>x"000078", data=>x"00000000");
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"0b", address=>x"000078", data=>x"00000006");
+                  tid=>x"0b", address=>x"000078", data=>x"00000002");
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"0c", address=>x"000078", data=>x"00000006");
+                 tid=>x"0c", address=>x"000078", data=>x"00000002");
+    ExchangeFrames;
     
     -- Send a frame from a port and check if it is correctly routed.
     randomPayload.length := 4;
     CreateRandomPayload(randomPayload.data, seed1, seed2);
-    RouteFrame(sourcePortIndex=>1, destinationPortIndex=>6,
+    RouteFrame(sourcePortIndex=>1, destinationPortIndex=>2,
                sourceId=>x"0000", destinationId=>x"ffff", payload=>randomPayload);
+    ExchangeFrames;
+
+    ---------------------------------------------------------------------------
+    PrintS("-----------------------------------------------------------------");
+    PrintS("Step 3:");
+    PrintS("Action: Test to route a maintenance read request from port 2, ");
+    PrintS("        address 0.");
+    PrintS("Result: The packet should be routed to port 1 and hop decremented.");
+    ---------------------------------------------------------------------------
+    PrintR("TG_RioSwitch-TC2-Step3");
+    ---------------------------------------------------------------------------
+
+    SendFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                destId=>x"0000", sourceId=>x"dead", 
+                                payload=>RioMaintenance(transaction=>"0000",
+                                                        size=>"1000",
+                                                        tid=>x"be",
+                                                        hopCount=>x"01",
+                                                        configOffset=>"000000000000000000000",
+                                                        wdptr=>'0',
+                                                        dataLength=>0,
+                                                        data=>maintData)));
+    
+    ReceiveFrame(1, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                   tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                   destId=>x"0000", sourceId=>x"dead", 
+                                   payload=>RioMaintenance(transaction=>"0000",
+                                                           size=>"1000",
+                                                           tid=>x"be",
+                                                           hopCount=>x"00",
+                                                           configOffset=>"000000000000000000000",
+                                                           wdptr=>'0',
+                                                           dataLength=>0,
+                                                           data=>maintData)));
+
+    ExchangeFrames;
+
+    ---------------------------------------------------------------------------
+    PrintS("-----------------------------------------------------------------");
+    PrintS("Step 4:");
+    PrintS("Action: Test to route a maintenance write request from port 2, ");
+    PrintS("        address 0.");
+    PrintS("Result: The packet should be routed to port 1 and hop decremented.");
+    ---------------------------------------------------------------------------
+    PrintR("TG_RioSwitch-TC2-Step4");
+    ---------------------------------------------------------------------------
+
+    CreateRandomPayload(maintData, seed1, seed2);
+    SendFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                destId=>x"0000", sourceId=>x"dead", 
+                                payload=>RioMaintenance(transaction=>"0001",
+                                                        size=>"1100",
+                                                        tid=>x"ef",
+                                                        hopCount=>x"01",
+                                                        configOffset=>"000000000000000000000",
+                                                        wdptr=>'1',
+                                                        dataLength=>8,
+                                                        data=>maintData)));
+    
+    ReceiveFrame(1, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                   tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                   destId=>x"0000", sourceId=>x"dead", 
+                                   payload=>RioMaintenance(transaction=>"0001",
+                                                           size=>"1100",
+                                                           tid=>x"ef",
+                                                           hopCount=>x"00",
+                                                           configOffset=>"000000000000000000000",
+                                                           wdptr=>'1',
+                                                           dataLength=>8,
+                                                           data=>maintData)));
+    ExchangeFrames;
+
+    ---------------------------------------------------------------------------
+    PrintS("-----------------------------------------------------------------");
+    PrintS("Step 5:");
+    PrintS("Action: Test to route a maintenance read response from port 2, ");
+    PrintS("        address 0.");
+    PrintS("Result: The packet should be routed to port 1 and hop decremented.");
+    ---------------------------------------------------------------------------
+    PrintR("TG_RioSwitch-TC2-Step5");
+    ---------------------------------------------------------------------------
+
+    CreateRandomPayload(maintData, seed1, seed2);
+    SendFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                destId=>x"0000", sourceId=>x"dead", 
+                                payload=>RioMaintenance(transaction=>"0010",
+                                                        size=>"1100",
+                                                        tid=>x"ef",
+                                                        hopCount=>x"01",
+                                                        configOffset=>"000000000000000000000",
+                                                        wdptr=>'0',
+                                                        dataLength=>8,
+                                                        data=>maintData)));
+    
+    ReceiveFrame(1, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                   tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                   destId=>x"0000",sourceId=>x"dead", 
+                                   payload=>RioMaintenance(transaction=>"0010",
+                                                           size=>"1100",
+                                                           tid=>x"ef",
+                                                           hopCount=>x"00",
+                                                           configOffset=>"000000000000000000000",
+                                                           wdptr=>'0',
+                                                           dataLength=>8,
+                                                           data=>maintData)));
+    ExchangeFrames;
+    
+    ---------------------------------------------------------------------------
+    PrintS("-----------------------------------------------------------------");
+    PrintS("Step 6:");
+    PrintS("Action: Test to route a maintenance write response from port 2, ");
+    PrintS("        address 0.");
+    PrintS("Result: The packet should be routed to port 1 and hop decremented.");
+    ---------------------------------------------------------------------------
+    PrintR("TG_RioSwitch-TC2-Step6");
+    ---------------------------------------------------------------------------
+
+    SendFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                destId=>x"0000", sourceId=>x"dead", 
+                                payload=>RioMaintenance(transaction=>"0011",
+                                                        size=>"1000",
+                                                        tid=>x"ef",
+                                                        hopCount=>x"01",
+                                                        configOffset=>"000000000000000000000",
+                                                        wdptr=>'0',
+                                                        dataLength=>0,
+                                                        data=>maintData)));
+    
+    ReceiveFrame(1, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                   tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                   destId=>x"0000", sourceId=>x"dead", 
+                                   payload=>RioMaintenance(transaction=>"0011",
+                                                           size=>"1000",
+                                                           tid=>x"ef",
+                                                           hopCount=>x"00",
+                                                           configOffset=>"000000000000000000000",
+                                                           wdptr=>'0',
+                                                           dataLength=>0,
+                                                           data=>maintData)));
+    ExchangeFrames;
+
+    ---------------------------------------------------------------------------
+    PrintS("-----------------------------------------------------------------");
+    PrintS("Step 7:");
+    PrintS("Action: ");
+    PrintS("Result: ");
+    ---------------------------------------------------------------------------
+    PrintR("TG_RioSwitch-TC2-Step7");
+    ---------------------------------------------------------------------------
+
+    maintData(0) := x"0123456789abcdef";
+    maintData(1) := x"0011223344550100";
+    maintData(2) := x"1000011800000302";
+    maintData(3) := x"0000000000000000";
+    maintData(4) := x"0000000000000000";
+    maintData(5) := x"0000000000000000";
+    maintData(6) := x"0000000000000800";
+    maintData(7) := x"0000000000000000";
+
+    SendFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                destId=>x"0000", sourceId=>x"dead", 
+                                payload=>RioMaintenance(transaction=>"0001",
+                                                        size=>"1100",
+                                                        tid=>x"ef",
+                                                        hopCount=>x"00",
+                                                        configOffset=>"000000000000000000000",
+                                                        wdptr=>'1',
+                                                        dataLength=>8,
+                                                        data=>maintData)));
+
+    ReceiveFrame(2, RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
+                                   tt=>"01", ftype=>FTYPE_MAINTENANCE_CLASS, 
+                                   destId=>x"dead", sourceId=>x"0000", 
+                                   payload=>RioMaintenance(transaction=>"0011",
+                                                           size=>"0000",
+                                                           tid=>x"ef",
+                                                           hopCount=>x"ff",
+                                                           configOffset=>"000000000000000000000",
+                                                           wdptr=>'0',
+                                                           dataLength=>0,
+                                                           data=>maintData)));
+
+    ExchangeFrames;
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -879,27 +1133,19 @@ begin
     randomPayload.length := 3;
     CreateRandomPayload(randomPayload.data, seed1, seed2);
     SendFrame(portIndex=>0,
-              sourceId=>x"ffff", destinationId=>x"0000", payload=>randomPayload);
+              destinationId=>x"0000", sourceId=>x"ffff", payload=>randomPayload);
     ReceiveFrame(portIndex=>1,
-                 sourceId=>x"ffff", destinationId=>x"0000", payload=>randomPayload);
+                 destinationId=>x"0000", sourceId=>x"ffff", payload=>randomPayload);
 
     -- Frame on port 1 to port 6.
     randomPayload.length := 4;
     CreateRandomPayload(randomPayload.data, seed1, seed2);
     SendFrame(portIndex=>1,
-              sourceId=>x"0000", destinationId=>x"ffff", payload=>randomPayload);
+              destinationId=>x"ffff", sourceId=>x"0000", payload=>randomPayload);
     ReceiveFrame(portIndex=>6,
-                 sourceId=>x"0000", destinationId=>x"ffff", payload=>randomPayload);
+                 destinationId=>x"ffff", sourceId=>x"0000", payload=>randomPayload);
 
-    wait until frameComplete(1) = '1';
-    frameValid(1) <= '0';
-    wait until frameReceived(6) = '1';
-    frameExpected(6) <= '0';
-
-    wait until frameComplete(0) = '1';
-    frameValid(0) <= '0';
-    wait until frameReceived(1) = '1';
-    frameExpected(1) <= '0';
+    ExchangeFrames;
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");
@@ -915,57 +1161,36 @@ begin
     -- Frame on port 0 to port 1.
     randomPayload.length := 5;
     CreateRandomPayload(randomPayload.data, seed1, seed2);
-    SendFrame(portIndex=>0,
-              sourceId=>x"ffff", destinationId=>x"0000", payload=>randomPayload);
+    RouteFrame(sourcePortIndex=>0, destinationPortIndex=>1,
+               destinationId=>x"0000", sourceId=>x"ffff", payload=>randomPayload);
 
-    -- Frame on port 1 to port 6.
+    -- Frame on port 1 to port 2.
     randomPayload1.length := 6;
     CreateRandomPayload(randomPayload1.data, seed1, seed2);
-    SendFrame(portIndex=>1,
-              sourceId=>x"0000", destinationId=>x"ffff", payload=>randomPayload1);
+    RouteFrame(sourcePortIndex=>2, destinationPortIndex=>2,
+               destinationId=>x"ffff", sourceId=>x"0000", payload=>randomPayload1);
 
-    -- Frame on port 2 to port 6.
+    -- Frame on port 2 to port 2.
     randomPayload2.length := 7;
     CreateRandomPayload(randomPayload2.data, seed1, seed2);
-    SendFrame(portIndex=>2,
-              sourceId=>x"0000", destinationId=>x"ffff", payload=>randomPayload2);
+    RouteFrame(sourcePortIndex=>2, destinationPortIndex=>2,
+               destinationId=>x"ffff", sourceId=>x"0000", payload=>randomPayload2);
 
+    writeFrameFull <= (others=>'1');
     wait for 10 us;
 
-    ReceiveFrame(portIndex=>1,
-                 sourceId=>x"ffff", destinationId=>x"0000", payload=>randomPayload);
-    wait until frameComplete(0) = '1';
-    frameValid(0) <= '0';
-    wait until frameReceived(1) = '1';
-    frameExpected(1) <= '0';
-    
+    writeFrameFull(1) <= '0';
     wait for 10 us;
     
-    ReceiveFrame(portIndex=>6,
-                 sourceId=>x"0000", destinationId=>x"ffff", payload=>randomPayload1);
-    wait until frameComplete(1) = '1';
-    frameValid(1) <= '0';
-    wait until frameReceived(6) = '1';
-    frameExpected(6) <= '0';
-    
+    writeFrameFull(2) <= '0';
     wait for 10 us;
     
-    ReceiveFrame(portIndex=>6,
-                 sourceId=>x"0000", destinationId=>x"ffff", payload=>randomPayload2);
-    wait until frameComplete(2) = '1';
-    frameValid(2) <= '0';
-    wait until frameReceived(6) = '1';
-    frameExpected(6) <= '0';
+    ExchangeFrames;
     
     ---------------------------------------------------------------------------
     -- Test completed.
     ---------------------------------------------------------------------------
     
-    wait for 10 us;
-
-    assert readContentEmpty = "1111111"
-      report "Pending frames exist." severity error;
-
     TestEnd;
   end process;
 
@@ -973,44 +1198,68 @@ begin
   -- Instantiate a process receiving the configuration accesses to the
   -- implementation defined space.
   -----------------------------------------------------------------------------
-  process
-  begin
-    loop
-      wait until configStb = '1' and clk'event and clk = '1';
-      assert configStb = configStbExpected report "Unexpected configStb." severity error;
-      assert configWe = configWeExpected report "Unexpected configWe." severity error;
-      assert configAddr = configAddrExpected report "Unexpected configAddr." severity error;
-      if (configWe = '1') then
-        assert configDataWrite = configDataWriteExpected report "Unexpected configDataWrite." severity error;
-      else
-        configDataRead <= configDataReadExpected;
-      end if;
-    end loop;
-  end process;
+  
+  TestWishbone: TestPortWishbone
+    generic map(ADDRESS_WIDTH=>24, SEL_WIDTH=>1, DATA_WIDTH=>32)
+    port map(
+      clk=>clk, areset_n=>areset_n, 
+      messageEmpty_o=>messageEmpty, 
+      messageWrite_i=>messageWrite, 
+      message_i=>message, 
+      messageAck_o=>messageAck, 
+      cyc_i=>configStb, 
+      stb_i=>configStb, 
+      we_i=>configWe, 
+      adr_i=>configAddr, 
+      sel_i=>"0", 
+      dat_i=>configDataWrite, 
+      dat_o=>configDataRead, 
+      err_o=>open, 
+      ack_o=>configAck);
   
   -----------------------------------------------------------------------------
   -- Instantiate the test port array.
   -----------------------------------------------------------------------------
-  
+  inboundEmpty2 <= inboundEmpty(2);
+  inboundEmpty1 <= inboundEmpty(1);
+  inboundEmpty0 <= inboundEmpty(0);
+  inboundWrite <= inboundWrite2 & inboundWrite1 & inboundWrite0;
+  inboundMessage <= inboundMessage2 & inboundMessage1 & inboundMessage0;
+  inboundAck2 <= inboundAck(2);
+  inboundAck1 <= inboundAck(1);
+  inboundAck0 <= inboundAck(0);
+  outboundEmpty2 <= outboundEmpty(2);
+  outboundEmpty1 <= outboundEmpty(1);
+  outboundEmpty0 <= outboundEmpty(0);
+  outboundWrite <= outboundWrite2 & outboundWrite1 & outboundWrite0;
+  outboundMessage <= outboundMessage2 & outboundMessage1 & outboundMessage0;
+  outboundAck2 <= outboundAck(2);
+  outboundAck1 <= outboundAck(1);
+  outboundAck0 <= outboundAck(0);
   TestPortGeneration: for portIndex in 0 to PORTS-1 generate
-    TestPortInst: TestPort
+    TestPortPacketBufferInst: TestPortPacketBuffer
+      generic map(READ_CONTENT_END_DATA_VALID=>false)
       port map(
         clk=>clk, areset_n=>areset_n, 
-        frameValid_i=>frameValid(portIndex),
-        frameWrite_i=>frameWrite(portIndex), 
-        frameComplete_o=>frameComplete(portIndex), 
-        frameExpected_i=>frameExpected(portIndex), 
-        frameRead_i=>frameRead(portIndex), 
-        frameReceived_o=>frameReceived(portIndex), 
+        readEmpty_o=>inboundEmpty(portIndex), 
+        readWrite_i=>inboundWrite(portIndex), 
+        readMessage_i=>inboundMessage(portIndex), 
+        readAck_o=>inboundAck(portIndex), 
+        writeEmpty_o=>outboundEmpty(portIndex), 
+        writeWrite_i=>outboundWrite(portIndex), 
+        writeMessage_i=>outboundMessage(portIndex), 
+        writeAck_o=>outboundAck(portIndex), 
         readFrameEmpty_o=>readFrameEmpty(portIndex), 
         readFrame_i=>readFrame(portIndex), 
-        readFrameRestart_i=>readFrameRestart(portIndex), 
-        readFrameAborted_o=>readFrameAborted(portIndex), 
+        readFrameRestart_i=>'0', 
+        readFrameAborted_o=>readFrameAborted(portIndex),
+        readWindowEmpty_o=>open,
+        readWindowReset_i=>'0',
+        readWindowNext_i=>readFrame(portIndex),
         readContentEmpty_o=>readContentEmpty(portIndex), 
         readContent_i=>readContent(portIndex), 
         readContentEnd_o=>readContentEnd(portIndex), 
         readContentData_o=>readContentData(portIndex), 
-        writeFrameFull_o=>writeFrameFull(portIndex), 
         writeFrame_i=>writeFrame(portIndex), 
         writeFrameAbort_i=>writeFrameAbort(portIndex), 
         writeContent_i=>writeContent(portIndex), 
@@ -1023,7 +1272,7 @@ begin
 
   TestSwitch: RioSwitch
     generic map(
-      SWITCH_PORTS=>7,
+      SWITCH_PORTS=>PORTS,
       DEVICE_IDENTITY=>SWITCH_IDENTITY,
       DEVICE_VENDOR_IDENTITY=>SWITCH_VENDOR_IDENTITY,
       DEVICE_REV=>SWITCH_REV,
@@ -1053,213 +1302,7 @@ begin
       outstandingAckId_i=>outstandingAckIdRead, 
       outboundAckId_i=>outboundAckIdRead, 
       configStb_o=>configStb, configWe_o=>configWe, configAddr_o=>configAddr,
-      configData_o=>configDataWrite, configData_i=>configDataRead);
+      configData_o=>configDataWrite, configData_i=>configDataRead, configAck_i=>configAck);
   
   
-end architecture;
-
-
-
--------------------------------------------------------------------------------
--- 
--------------------------------------------------------------------------------
--- REMARK: Add support for testing partially complete frames, cut-through-routing...
-library ieee;
-use ieee.std_logic_1164.all;
-use ieee.numeric_std.all;
-library std;
-use std.textio.all;
-use work.rio_common.all;
- 
-
--------------------------------------------------------------------------------
--- 
--------------------------------------------------------------------------------
-entity TestPort is
-  port(
-    clk : in std_logic;
-    areset_n : in std_logic;
-
-    frameValid_i : in std_logic;
-    frameWrite_i : in RioFrame;
-    frameComplete_o : out std_logic;
-    
-    frameExpected_i : in std_logic;
-    frameRead_i : in RioFrame;
-    frameReceived_o : out std_logic;
-
-    readFrameEmpty_o : out std_logic;
-    readFrame_i : in std_logic;
-    readFrameRestart_i : in std_logic;
-    readFrameAborted_o : out std_logic;
-    readContentEmpty_o : out std_logic;
-    readContent_i : in std_logic;
-    readContentEnd_o : out std_logic;
-    readContentData_o : out std_logic_vector(31 downto 0);
-    
-    writeFrameFull_o : out std_logic;
-    writeFrame_i : in std_logic;
-    writeFrameAbort_i : in std_logic;
-    writeContent_i : in std_logic;
-    writeContentData_i : in std_logic_vector(31 downto 0));
-end entity;
-
-
--------------------------------------------------------------------------------
--- 
--------------------------------------------------------------------------------
-architecture TestPortImpl of TestPort is
-begin
-  
-  -----------------------------------------------------------------------------
-  -- 
-  -----------------------------------------------------------------------------
-  FrameReader: process
-    type StateType is (STATE_IDLE, STATE_WRITE);
-    variable state : StateType;
-    variable frameIndex : natural range 0 to 69;
-  begin
-    writeFrameFull_o <= '1';
-    frameReceived_o <= '0';
-    wait until areset_n = '1';
-
-    state := STATE_IDLE;
-
-    loop
-      wait until clk'event and clk = '1';
-    
-      case state is
-        
-        when STATE_IDLE =>
-          frameReceived_o <= '0';
-          if (frameExpected_i = '1') then
-            writeFrameFull_o <= '0';
-            state := STATE_WRITE;
-            frameIndex := 0;
-          else
-            writeFrameFull_o <= '1';
-          end if;
-          assert writeFrame_i = '0' report "Unexpected frame." severity error;
-          assert writeFrameAbort_i = '0' report "Unexpected frame abort." severity error;
-          assert writeContent_i = '0' report "Unexpected data." severity error;
-          
-        when STATE_WRITE =>
-          if (writeContent_i = '1') then
-            -- Writing content.
-            if (frameIndex < frameRead_i.length) then
-              assert writeContentData_i = frameRead_i.payload(frameIndex)
-                report "Unexpected frame content received:" &
-                " index=" & integer'image(frameIndex) &
-                " expected=" & integer'image(to_integer(unsigned(frameRead_i.payload(frameIndex)))) &
-                " got=" & integer'image(to_integer(unsigned(writeContentData_i)))
-                severity error;
-              
-              frameIndex := frameIndex + 1;
-            else
-              report "Unexpected frame content received:" &
-                " index=" & integer'image(frameIndex) &
-                " expected=" & integer'image(to_integer(unsigned(frameRead_i.payload(frameIndex)))) &
-                " got=" & integer'image(to_integer(unsigned(writeContentData_i)))
-                severity error;
-              
-              frameIndex := frameIndex + 1;
-            end if;
-          else
-            -- Not writing any content.
-          end if;
-          
-          if (writeFrame_i = '1') then
-            -- Writing a complete frame.
-            assert frameIndex = frameRead_i.length report "Unexpected frame length received." severity error;
-            state := STATE_IDLE;
-            frameReceived_o <= '1';
-            writeFrameFull_o <= '1';
-          else
-            -- Not writing any frame.
-          end if;
-
-          if (writeFrameAbort_i = '1') then
-            -- The frame should be aborted.
-            frameIndex := 0;
-          else
-            -- Not aborting any frame.
-          end if;
-      end case;
-    end loop;    
-  end process;
-
-  -----------------------------------------------------------------------------
-  -- 
-  -----------------------------------------------------------------------------
-  -- REMARK: add support for these signals...
-  -- readFrameEmpty_i : in std_logic;
-  -- readFrameAborted_i : in std_logic;
-  FrameSender: process
-    type StateType is (STATE_IDLE, STATE_READ);
-    variable state : StateType;
-    variable frameIndex : natural range 0 to 69;
-  begin
-    readFrameEmpty_o <= '1';
-    readFrameAborted_o <= '0';
-    readContentEmpty_o <= '1';
-    readContentEnd_o <= '1';
-    readContentData_o <= (others => 'U');
-    frameComplete_o <= '0';
-    wait until areset_n = '1';
-
-    state := STATE_IDLE;
-
-    loop
-      wait until clk'event and clk = '1';
-    
-      case state is
-
-        when STATE_IDLE =>
-          frameComplete_o <= '0';
-          if (frameValid_i = '1') then
-            state := STATE_READ;
-            frameIndex := 0;
-            readContentEmpty_o <= '0';
-            readFrameEmpty_o <= '0';
-          else
-            readContentEmpty_o <= '1';
-          end if;
-          
-        when STATE_READ =>
-          if (readFrameRestart_i = '1') then
-            readContentEnd_o <= '0';
-            frameIndex := 0;
-          else
-            -- Not restarting a frame.
-          end if;
-          
-          if (readContent_i = '1') then
-            if (frameIndex < frameWrite_i.length) then
-              readContentData_o <= frameWrite_i.payload(frameIndex);
-              readContentEnd_o <= '0';
-              frameIndex := frameIndex + 1;
-            elsif (frameIndex = frameWrite_i.length) then
-              readContentEnd_o <= '1';
-            else
-              report "Reading empty frame." severity error;
-            end if;
-          else
-            -- Not reading data.
-          end if;
-
-          if (readFrame_i = '1') then
-            state := STATE_IDLE;
-            assert frameIndex = frameWrite_i.length report "Unread frame data discarded." severity error;
-            frameComplete_o <= '1';
-            readFrameEmpty_o <= '1';
-            readContentEmpty_o <= '1';
-            readContentData_o <= (others => 'U');
-          else
-            -- Not reading a frame.
-          end if;
-
-      end case;
-    end loop;
-  end process;
-
 end architecture;

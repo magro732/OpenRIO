@@ -9,6 +9,8 @@
 -- Contains a platform to build endpoints on.
 -- 
 -- To Do:
+-- - Fix bug with one extra write in inbound direction.
+-- - Rewrite to decrease resource usage.
 -- - Clean up and increase the speed of the interface to packet handlers.
 -- - 8-bit deviceId has not been verified, fix.
 -- - Egress; Place packets in different queues depending on the packet priority?
@@ -44,6 +46,7 @@
 -- 
 -------------------------------------------------------------------------------
 
+
 -------------------------------------------------------------------------------
 -- RioLogicalCommon.
 -------------------------------------------------------------------------------
@@ -66,7 +69,7 @@ use work.rio_common.all;
 
 
 -------------------------------------------------------------------------------
--- 
+-- Entity for RioLogicalCommon.
 -------------------------------------------------------------------------------
 entity RioLogicalCommon is
   generic(
@@ -102,7 +105,7 @@ end entity;
 
 
 -------------------------------------------------------------------------------
--- 
+-- Architecture for RioLogicalCommon.
 -------------------------------------------------------------------------------
 architecture RioLogicalCommon of RioLogicalCommon is
 
@@ -213,6 +216,7 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.rio_common.all;
 
+
 -------------------------------------------------------------------------------
 -- Entity for RioLogicalCommonIngress.
 -------------------------------------------------------------------------------
@@ -236,7 +240,7 @@ end entity;
 
 
 -------------------------------------------------------------------------------
--- 
+-- Architecture for RioLogicalCommonIngress.
 -------------------------------------------------------------------------------
 architecture RioLogicalCommonIngress of RioLogicalCommonIngress is
   type StateType is (IDLE,
@@ -466,6 +470,7 @@ begin
 end architecture;
 
 
+
 -------------------------------------------------------------------------------
 -- RioLogicalCommonEgress.
 -- Only 8-bit and 16-bit deviceId are supported. The first write must contain
@@ -478,6 +483,7 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.rio_common.all;
+
 
 -------------------------------------------------------------------------------
 -- Entity for RioLogicalCommonEgress.
@@ -734,20 +740,15 @@ begin
           ---------------------------------------------------------------------
           -- 
           ---------------------------------------------------------------------
-          if (packetPosition < 19) then
+          if (packetPosition <= 19) then
             if (tt = "01") then
               writeContent <= '1';
               writeContentData1 <= crc16Current & x"0000";
-            end if;
-          elsif (packetPosition = 19) then
-            if (tt = "01") then
-
             end if;
           else
             if (tt = "01") then
               writeContent <= '1';
               writeContentData1 <= writeContentData2(31 downto 16) & crc16Temp;
-              packetPosition <= packetPosition + 1;
             end if;
           end if;
           
@@ -798,9 +799,8 @@ end architecture;
 
 
 -------------------------------------------------------------------------------
--- 
+-- RioLogicalCommonIngress.
 -------------------------------------------------------------------------------
-
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all; 
@@ -808,7 +808,7 @@ use work.rio_common.all;
 
 
 -------------------------------------------------------------------------------
--- 
+-- Entity for RioLogicalCommonInterconnect.
 -------------------------------------------------------------------------------
 entity RioLogicalCommonInterconnect is
   generic(
@@ -828,7 +828,7 @@ end entity;
 
 
 -------------------------------------------------------------------------------
--- 
+-- Architecture for RioLogicalCommonInterconnect.
 -------------------------------------------------------------------------------
 architecture RioLogicalCommonInterconnectImpl of RioLogicalCommonInterconnect is
   signal activeCycle : std_logic;

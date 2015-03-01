@@ -10,10 +10,9 @@
 -- NWRITE, NWRITER and NREAD are currently supported.
 -- 
 -- To Do:
--- - Move packet handlers to RioLogicalPackets.
--- - Move component declarations to riocommon.
--- - Update the Maintenance handler to the new interface. It currently does not
---   compile.
+-- - Move packet handlers to RioLogicalPackets and make them symetrical.
+-- - Add support for addressing to implementation defined config space by
+--   adding interface to top entity.
 -- - Set the stb_o to '0' in between read accesses to conform better to a
 --   block transfer in the Wishbone standard.
 -- - Clean up cyc-signals, only stb-signals are needed (between
@@ -21,8 +20,6 @@
 -- - Add support for the lock_o to be sure to transfer all the packet
 --   content atomically?
 -- - Add support for EXTENDED_ADDRESS.
--- - Add support for addressing to implementation defined config space by
---   adding interface to top entity.
 -- - Use the baseDeviceId when sending packets? Currently, all responses
 --   are sent with destination<->source exchanged so the baseDeviceId is not
 --   needed.
@@ -275,21 +272,22 @@ architecture RioWbBridgeImpl of RioWbBridge is
   signal ttInbound : std_logic_vector(1 downto 0);
   signal dstIdInbound : std_logic_vector(31 downto 0);
   signal srcIdInbound : std_logic_vector(31 downto 0);
+  signal sizeInbound : std_logic_vector(3 downto 0);
   signal tidInbound : std_logic_vector(7 downto 0);
   signal offsetInbound : std_logic_vector(20 downto 0);
   signal wdptrInbound : std_logic;
-  signal payloadLengthInbound : std_logic_vector(3 downto 0);
-  signal payloadInbound : std_logic_vector(31 downto 0);
+  signal payloadLengthInbound : std_logic_vector(2 downto 0);
+  signal payloadInbound : std_logic_vector(63 downto 0);
 
   signal readResponseMaint : std_logic;
   signal writeResponseMaint : std_logic;
-  signal wdptrMaint : std_logic;
-  signal payloadLengthMaint : std_logic_vector(3 downto 0);
-  signal payloadIndexMaint : std_logic_vector(3 downto 0);
-  signal payloadMaint : std_logic_vector(31 downto 0);
+  signal statusMaint : std_logic_vector(3 downto 0);
+  signal payloadLengthMaint : std_logic_vector(2 downto 0);
+  signal payloadIndexMaint : std_logic_vector(2 downto 0);
+  signal payloadMaint : std_logic_vector(63 downto 0);
   signal doneMaint : std_logic;
   
-  signal payloadIndexOutbound : std_logic_vector(3 downto 0);
+  signal payloadIndexOutbound : std_logic_vector(2 downto 0);
   signal doneOutbound : std_logic;
 
   signal configStb : std_logic;
@@ -571,7 +569,9 @@ begin
       prio_o=>prioInbound, 
       tt_o=>ttInbound, 
       dstid_o=>dstIdInbound, 
-      srcid_o=>srcIdInbound, 
+      srcid_o=>srcIdInbound,
+      size_o=>sizeInbound,
+      status_o=>open,
       tid_o=>tidInbound,
       hop_o=>open,
       offset_o=>offsetInbound,
@@ -600,11 +600,12 @@ begin
       tt_i=>ttInbound, 
       dstid_i=>srcIdInbound, 
       srcid_i=>dstIdInbound,
-      status_i=>"0000",
+      size_i=>(others=>'0'),
+      status_i=>statusMaint,
       tid_i=>tidInbound,
       hop_i=>x"ff",
       offset_i=>(others=>'0'),
-      wdptr_i=>wdptrMaint,
+      wdptr_i=>'0',
       payloadLength_i=>payloadLengthMaint, 
       payloadIndex_o=>payloadIndexOutbound, 
       payload_i=>payloadMaint,
@@ -618,7 +619,8 @@ begin
     port map(
       clk=>clk, areset_n=>areset_n, enable=>enable, 
       readRequestReady_i=>readRequestInbound, 
-      writeRequestReady_i=>writeRequestInbound, 
+      writeRequestReady_i=>writeRequestInbound,
+      size_i=>sizeInbound,
       offset_i=>offsetInbound, 
       wdptr_i=>wdptrInbound, 
       payloadLength_i=>payloadLengthInbound, 
@@ -627,7 +629,7 @@ begin
       done_o=>doneMaint,
       readResponseReady_o=>readResponseMaint, 
       writeResponseReady_o=>writeResponseMaint,
-      wdptr_o=>wdptrMaint, 
+      status_o=>statusMaint, 
       payloadLength_o=>payloadLengthMaint, 
       payloadIndex_i=>payloadIndexOutbound, 
       payload_o=>payloadMaint, 
@@ -1151,22 +1153,6 @@ end entity;
 -- 
 -------------------------------------------------------------------------------
 architecture WriteClassInbound of WriteClassInbound is
-  component MemorySimpleDualPort
-    generic(
-      ADDRESS_WIDTH : natural := 1;
-      DATA_WIDTH : natural := 1);
-    port(
-      clkA_i : in std_logic;
-      enableA_i : in std_logic;
-      addressA_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-      dataA_i : in std_logic_vector(DATA_WIDTH-1 downto 0);
-
-      clkB_i : in std_logic;
-      enableB_i : in std_logic;
-      addressB_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-      dataB_o : out std_logic_vector(DATA_WIDTH-1 downto 0));
-  end component;
-
   type StateType is (RECEIVE_PACKET, READY);
   signal state : StateType;
 
@@ -1482,22 +1468,6 @@ end entity;
 -- 
 -------------------------------------------------------------------------------
 architecture ResponseClassOutbound of ResponseClassOutbound is
-  component MemorySimpleDualPort
-    generic(
-      ADDRESS_WIDTH : natural := 1;
-      DATA_WIDTH : natural := 1);
-    port(
-      clkA_i : in std_logic;
-      enableA_i : in std_logic;
-      addressA_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-      dataA_i : in std_logic_vector(DATA_WIDTH-1 downto 0);
-
-      clkB_i : in std_logic;
-      enableB_i : in std_logic;
-      addressB_i : in std_logic_vector(ADDRESS_WIDTH-1 downto 0);
-      dataB_o : out std_logic_vector(DATA_WIDTH-1 downto 0));
-  end component;
-
   signal header : std_logic_vector(31 downto 0);
   
   type StateType is (WAIT_PACKET, SEND_RESPONSE, 

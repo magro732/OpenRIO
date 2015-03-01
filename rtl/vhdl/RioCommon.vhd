@@ -140,19 +140,20 @@ package rio_common is
 
       readRequestReady_i : in std_logic;
       writeRequestReady_i : in std_logic;
+      size_i : in std_logic_vector(3 downto 0);
       offset_i : in std_logic_vector(20 downto 0);
       wdptr_i : in std_logic;
-      payloadLength_i : in std_logic_vector(3 downto 0);
-      payloadIndex_o : out std_logic_vector(3 downto 0);
-      payload_i : in std_logic_vector(31 downto 0);
+      payloadLength_i : in std_logic_vector(2 downto 0);
+      payloadIndex_o : out std_logic_vector(2 downto 0);
+      payload_i : in std_logic_vector(63 downto 0);
       done_o : out std_logic;
       
       readResponseReady_o : out std_logic;
       writeResponseReady_o : out std_logic;
-      wdptr_o : out std_logic;
-      payloadLength_o : out std_logic_vector(3 downto 0);
-      payloadIndex_i : in std_logic_vector(3 downto 0);
-      payload_o : out std_logic_vector(31 downto 0);
+      status_o : out std_logic_vector(3 downto 0);
+      payloadLength_o : out std_logic_vector(2 downto 0);
+      payloadIndex_i : in std_logic_vector(2 downto 0);
+      payload_o : out std_logic_vector(63 downto 0);
       done_i : in std_logic;
       
       configStb_o : out std_logic;
@@ -180,13 +181,15 @@ package rio_common is
       tt_o : out std_logic_vector(1 downto 0);
       dstid_o : out std_logic_vector(31 downto 0);
       srcid_o : out std_logic_vector(31 downto 0);
+      size_o : out std_logic_vector(3 downto 0);
+      status_o : out std_logic_vector(3 downto 0);
       tid_o : out std_logic_vector(7 downto 0);
       hop_o : out std_logic_vector(7 downto 0);
       offset_o : out std_logic_vector(20 downto 0);
       wdptr_o : out std_logic;
-      payloadLength_o : out std_logic_vector(3 downto 0);
-      payloadIndex_i : in std_logic_vector(3 downto 0);
-      payload_o : out std_logic_vector(31 downto 0);
+      payloadLength_o : out std_logic_vector(2 downto 0);
+      payloadIndex_i : in std_logic_vector(2 downto 0);
+      payload_o : out std_logic_vector(63 downto 0);
       done_i : in std_logic;
       
       inboundCyc_i : in std_logic;
@@ -213,14 +216,15 @@ package rio_common is
       tt_i : in std_logic_vector(1 downto 0);
       dstid_i : in std_logic_vector(31 downto 0);
       srcid_i : in std_logic_vector(31 downto 0);
+      size_i : in std_logic_vector(3 downto 0);
       status_i : in std_logic_vector(3 downto 0);
       tid_i : in std_logic_vector(7 downto 0);
       hop_i : in std_logic_vector(7 downto 0);
       offset_i : in std_logic_vector(20 downto 0);
       wdptr_i : in std_logic;
-      payloadLength_i : in std_logic_vector(3 downto 0);
-      payloadIndex_o : out std_logic_vector(3 downto 0);
-      payload_i : in std_logic_vector(31 downto 0);
+      payloadLength_i : in std_logic_vector(2 downto 0);
+      payloadIndex_o : out std_logic_vector(2 downto 0);
+      payload_i : in std_logic_vector(63 downto 0);
       done_o : out std_logic;
       
       outboundCyc_o : out std_logic;
@@ -401,11 +405,11 @@ package rio_common is
   -- Create a randomly initialized data array.
   ---------------------------------------------------------------------------
   procedure CreateRandomPayload(
-    variable payload : out HalfwordArray(0 to 132);
+    variable payload : out HalfwordArray;
     variable seed1 : inout positive;
     variable seed2 : inout positive);
   procedure CreateRandomPayload(
-    variable payload : out DoublewordArray(0 to 31);
+    variable payload : out DoublewordArray;
     variable seed1 : inout positive;
     variable seed2 : inout positive);
 
@@ -671,7 +675,7 @@ package body rio_common is
   -- Create a randomly initialized data array.
   ---------------------------------------------------------------------------
   procedure CreateRandomPayload(
-    variable payload : out HalfwordArray(0 to 132);
+    variable payload : out HalfwordArray;
     variable seed1 : inout positive;
     variable seed2 : inout positive) is
     variable rand: real;
@@ -689,7 +693,7 @@ package body rio_common is
   end procedure;
 
   procedure CreateRandomPayload(
-    variable payload : out DoublewordArray(0 to 31);
+    variable payload : out DoublewordArray;
     variable seed1 : inout positive;
     variable seed2 : inout positive) is
     variable rand: real;
