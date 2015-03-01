@@ -1388,7 +1388,7 @@ begin
 
                 -- Check if the link is able to accept the new frame.
                 if ((bufferStatus_i /= "00000") and
-                    ((unsigned(ackIdWindow_i) - unsigned(ackId_i)) /= 31)) then
+                    ((unsigned(ackIdWindow_i)+1) /= unsigned(ackId_i))) then
                   -- New data is available for transmission and there
                   -- is room to receive it at the other side.
                   -- The packet may be transmitted.
@@ -1428,8 +1428,7 @@ begin
               symbolDataContentOut <=
                 std_logic_vector(ackIdWindow_i) & "0" &
                 frameContent_i((32*NUMBER_WORDS)-7 downto (32*(NUMBER_WORDS-1)));
-
-              -- REMARK: Code frameWordCounter as 0=1 or 1=1???
+              
               if (unsigned(frameWordCounter_i) /= 0) then
                 frameWordCounter_o <=
                   std_logic_vector(unsigned(frameWordCounter_i) - 1);
@@ -1440,7 +1439,7 @@ begin
                 frameContent_o <= readContentData_i;
                 readContentOut <= '1';
               end if;
-                
+              
               -- Continue to send the rest of the body of the packet.
               frameState_o <= FRAME_MIDDLE;
               
@@ -1514,7 +1513,7 @@ begin
                 -- cannot receive it.
                 if ((readWindowEmpty_i = '0') and
                     (bufferStatus_i /= "00000") and
-                    ((unsigned(ackIdWindow_i) - unsigned(ackId_i)) /= 31)) then
+                    ((unsigned(ackIdWindow_i)+2) /= unsigned(ackId_i))) then
                   readContentOut <= '1';
                   frameState_o <= FRAME_START;
                 else
@@ -1527,12 +1526,12 @@ begin
               -- 
               -----------------------------------------------------------------
               
-              -- Start a new frame the next time.
-              frameState_o <= FRAME_IDLE;
-              
               -- Send a control symbol to end the packet.
               symbolControlEndOut <= '1';
                             
+              -- Start a new frame the next time.
+              frameState_o <= FRAME_IDLE;
+              
             when FRAME_DISCARD =>
               ---------------------------------------------------------------
               -- 
