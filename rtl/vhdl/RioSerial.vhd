@@ -738,14 +738,21 @@ begin
   process(areset_n, clk)
   begin
     if (areset_n = '0') then
+      timeSentElapsed <= (others=>'0');
+      timeSentDelta <= (others=>'0');
       timeCurrent <= (others=>'0');
     elsif (clk'event and clk = '1') then
+      if (timeSentEnable = '0') then
+        timeSentElapsed <= unsigned(timeCurrent) - unsigned(timeSentReadData);
+        timeSentDelta <= unsigned('0' & portLinkTimeout_i) - timeSentElapsed;
+      else
+        timeSentElapsed <= (others=>'0');
+        timeSentDelta <= (others=>'0');
+      end if;
       timeCurrent <= std_logic_vector(unsigned(timeCurrent) + 1);
     end if;
   end process;
   
-  timeSentElapsed <= unsigned(timeCurrent) - unsigned(timeSentReadData);
-  timeSentDelta <= unsigned('0' & portLinkTimeout_i) - timeSentElapsed;
   timeSentExpired <= timeSentDelta(TIMEOUT_WIDTH);
   
   timeSentEnable <= (not txFull_i) and (timeSentSet or timeSentReset);
@@ -1348,6 +1355,7 @@ begin
     frameWordCounter_o <= frameWordCounter_i;
     frameContent_o <= frameContent_i;
     ackIdWindow_o <= ackIdWindow_i;
+    maintenanceClass_o <= maintenanceClass_i;
     
     timeSentSet_o <= '0';
 
@@ -1412,8 +1420,6 @@ begin
           -- Check if a frame transfer is in progress.
           -- REMARK: Hold any data symbol if there is a pending symbol from the
           -- receiver side...
-
-          -- REMARK: This statemachine does not work... one tick ahead is needed...
           case frameState_i is
             
             when FRAME_IDLE =>
@@ -2931,6 +2937,8 @@ architecture RioFifoImpl of RioFifo is
   signal readAddressInc : std_logic_vector(DEPTH_WIDTH-1 downto 0);
   signal writeAddress : std_logic_vector(DEPTH_WIDTH-1 downto 0);
   signal writeAddressInc : std_logic_vector(DEPTH_WIDTH-1 downto 0);
+
+  signal change : std_logic;
 begin
 
   -- REMARK: Remove full here...
@@ -2988,7 +2996,7 @@ begin
     port map(
       clkA_i=>clk, enableA_i=>write_i,
       addressA_i=>writeAddress, dataA_i=>data_i,
-      addressB_i=>readAddress, dataB_o=>data_o);  
+      addressB_i=>readAddress, dataB_o=>data_o);
 end architecture;
 
 
