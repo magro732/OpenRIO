@@ -177,11 +177,8 @@
 --   information that should be forwarded. Should be active for one tick.
 -- inboundSymbol_i - The inbound symbol. See outboundSymbol_o for formating.
 -------------------------------------------------------------------------------
--- REMARK: Multi-symbol support is not fully supported yet...
--- REMARK: Optimize the piggy-backing of symbols from the receiver, use the
--- number of words that remain to determine when to insert a control-symbol
--- into a stream of data-symbols...
--- REMARK: Optimize the transmitter better, too low performance...
+-- REMARK: Remove multi-symbol support to make the code more readable...
+-- REMARK: Make more signals synchronous...
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -986,10 +983,11 @@ architecture RioTransmitterCoreImpl of RioTransmitterCore is
   constant FRAME_FIRST : std_logic_vector(3 downto 0) := "0011";
   constant FRAME_MIDDLE : std_logic_vector(3 downto 0) := "0100";
   constant FRAME_INSERT_IDLE : std_logic_vector(3 downto 0) := "0101";
-  constant FRAME_LAST : std_logic_vector(3 downto 0) := "0110";
-  constant FRAME_START_CONTINUE : std_logic_vector(3 downto 0) := "0111";
-  constant FRAME_END : std_logic_vector(3 downto 0) := "1000";
-  constant FRAME_DISCARD : std_logic_vector(3 downto 0) := "1001";
+  constant FRAME_INSERT_WAIT : std_logic_vector(3 downto 0) := "0110";
+  constant FRAME_LAST : std_logic_vector(3 downto 0) := "0111";
+  constant FRAME_START_CONTINUE : std_logic_vector(3 downto 0) := "1000";
+  constant FRAME_END : std_logic_vector(3 downto 0) := "1001";
+  constant FRAME_DISCARD : std_logic_vector(3 downto 0) := "1010";
   
   component Crc5ITU is
     port(
@@ -1503,7 +1501,7 @@ begin
               frameContent_o <= readContentData_i;
               frameState_o <= FRAME_MIDDLE;
               
-            when FRAME_MIDDLE =>
+            when FRAME_MIDDLE | FRAME_INSERT_WAIT =>
               ---------------------------------------------------------------
               -- The frame has not been fully sent.
               -- Send a data symbol until the last part of the packet is
@@ -1520,12 +1518,15 @@ begin
                 -- The packet is ending.
                 readWindowNextOut <= '1';
                 frameState_o <= FRAME_LAST;
-              elsif (rxControlEmpty_i = '0') then
+              elsif ((frameState_i = FRAME_MIDDLE) and (rxControlEmpty_i = '0')) then
                 -- There is a pending control-symbol from the receiver.
+                -- This must only be entered if the previous state was a data
+                -- symbol, not if an idle symbol was inserted.
                 frameState_o <= FRAME_INSERT_IDLE;
               else
                 -- The packet is not ending.
                 readContentOut <= '1';
+                frameState_o <= FRAME_MIDDLE;
               end if;
 
             when FRAME_INSERT_IDLE =>
@@ -1536,7 +1537,7 @@ begin
 
               symbolDataOut <= '0';
               readContentOut <= '1';
-              frameState_o <= FRAME_MIDDLE;
+              frameState_o <= FRAME_INSERT_WAIT;
               
             when FRAME_LAST =>
               -----------------------------------------------------------------
