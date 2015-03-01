@@ -194,8 +194,7 @@ use work.rio_common.all;
 -------------------------------------------------------------------------------
 entity RioSerial is
   generic(
-    TIMEOUT_WIDTH : natural := 20;
-    NUMBER_WORDS : natural range 1 to 4 := 1);
+    TIMEOUT_WIDTH : natural := 20);
   port(
     -- System signals.
     clk : in std_logic;
@@ -228,23 +227,23 @@ entity RioSerial is
     readContentEmpty_i : in std_logic;
     readContent_o : out std_logic;
     readContentEnd_i : in std_logic;
-    readContentData_i : in std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
+    readContentData_i : in std_logic_vector(31 downto 0);
 
     -- Inbound frame interface.
     writeFrameFull_i : in std_logic;
     writeFrame_o : out std_logic;
     writeFrameAbort_o : out std_logic;
     writeContent_o : out std_logic;
-    writeContentData_o : out std_logic_vector(2+(32*NUMBER_WORDS-1) downto 0);
+    writeContentData_o : out std_logic_vector(31 downto 0);
 
     -- PCS layer signals.
     portInitialized_i : in std_logic;
     outboundSymbolFull_i : in std_logic;
     outboundSymbolWrite_o : out std_logic;
-    outboundSymbol_o : out std_logic_vector(((2+32)*NUMBER_WORDS-1) downto 0);
+    outboundSymbol_o : out std_logic_vector(((2+32)-1) downto 0);
     inboundSymbolEmpty_i : in std_logic;
     inboundSymbolRead_o : out std_logic;
-    inboundSymbol_i : in std_logic_vector(((2+32)*NUMBER_WORDS-1) downto 0));
+    inboundSymbol_i : in std_logic_vector(((2+32)-1) downto 0));
 end entity;
 
 
@@ -354,6 +353,8 @@ architecture RioSerialImpl of RioSerial is
       writeContentData_o : out std_logic_vector(32*NUMBER_WORDS-1 downto 0));
   end component;
 
+  constant NUMBER_WORDS : natural := 1;
+  
   signal linkInitializedRx : std_logic;
   signal linkInitializedTx : std_logic;
   signal ackIdStatus : std_logic_vector(4 downto 0);
@@ -424,7 +425,7 @@ begin
       readContentEmpty_i=>readContentEmpty_i,
       readContent_o=>readContent_o, 
       readContentEnd_i=>readContentEnd_i,
-      readContentWords_i=>readContentData_i(2+(32*NUMBER_WORDS-1) downto 1+(32*NUMBER_WORDS-1)),
+      readContentWords_i=>"00",
       readContentData_i=>readContentData_i(32*NUMBER_WORDS-1 downto 0));
 
   SymbolFifo: for i in 0 to NUMBER_WORDS-1 generate
@@ -476,7 +477,7 @@ begin
       writeFrame_o=>writeFrame_o,
       writeFrameAbort_o=>writeFrameAbort_o, 
       writeContent_o=>writeContent_o,
-      writeContentWords_o=>writeContentData_o(2+(32*NUMBER_WORDS-1) downto 1+(32*NUMBER_WORDS-1)),
+      writeContentWords_o=>open,
       writeContentData_o=>writeContentData_o(32*NUMBER_WORDS-1 downto 0));
         
 end architecture;
@@ -1761,6 +1762,7 @@ begin
           -- The port is not initialized.
           -- Reset initialization variables.
           counter_o <= NUMBER_STATUS_TRANSMIT;
+          symbolsTransmitted_o <= (others=>'0');
         end if;
       else
         ---------------------------------------------------------------------
