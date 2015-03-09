@@ -372,6 +372,26 @@ package rio_common is
       outboundReadContentData_o : out std_logic_vector(31 downto 0));
   end component;
 
+  component Timer is
+  generic(timerWidth    : positive := 16;      -- After 'resetValue' number of 'timerTick's, Expired gets high! A brief '1' on wd preload the timer counter.
+          repeatedPulse : boolean  := true);   -- if False, a steady '1' is present on Expired after timeout elapsed. if True, a pulse on Expired after each timeout period.
+     port(clk_i : in  std_logic;               -- the clk input..
+       reset_ni : in  std_logic;               -- apply '0' for reset
+   resetValue_i : in  std_logic_vector(timerWidth-1 downto 0); -- on each wd_i pulse, this is the value that load into counter. 
+    timerTick_i : in  std_logic;               -- apply Ticker pulse on this signal
+           wd_i : in  std_logic;               -- a '1' restart the timer.
+      expired_o : out std_logic);              -- '1' when timer has expired
+  end component;
+
+  component Ticker is
+  generic(clksPerTick : positive := 10);       -- select based on clk rate and desired tick rate.
+     port(clk_i : in  std_logic;               -- for example: 25MHz/10 = 2.5 MHz. 
+       reset_ni : in  std_logic;               -- reset when '0'
+         tick_o : out std_logic);              -- pulsed high one clk each clksPerTick clk's
+  end component;
+
+
+  
   -----------------------------------------------------------------------------
   -- Commonly used types.
   -----------------------------------------------------------------------------
@@ -401,6 +421,13 @@ package rio_common is
   -----------------------------------------------------------------------------
   -- Commonly used constants.
   -----------------------------------------------------------------------------
+  -- Symbols between the serial and the pcs layer.
+  constant SYMBOL_IDLE : std_logic_vector(1 downto 0) := "00";
+  constant SYMBOL_CONTROL : std_logic_vector(1 downto 0) := "01";
+  constant SYMBOL_ERROR : std_logic_vector(1 downto 0) := "10";
+  constant SYMBOL_DATA : std_logic_vector(1 downto 0) := "11";
+  constant SYMBOL_CONTROL_SC : std_logic_vector(1 downto 0) := "01";
+  constant SYMBOL_CONTROL_PD : std_logic_vector(1 downto 0) := "10";
   
   -- STYPE0 constants.
   constant STYPE0_PACKET_ACCEPTED : std_logic_vector(2 downto 0) := "000";
@@ -1417,6 +1444,100 @@ begin
   
 end architecture;
 
+
+
+-------------------------------------------------------------------------------
+-- Timer Counter with watch dog input
+-------------------------------------------------------------------------------
+
+library ieee;
+    use ieee.std_logic_1164.all;
+    use ieee.numeric_std.all; 
+
+entity Timer is
+  generic(timerWidth    : positive := 16;
+          repeatedPulse : boolean  := true);
+     port(clk_i : in  std_logic;
+       reset_ni : in  std_logic;
+   resetValue_i : in  std_logic_vector(timerWidth-1 downto 0);
+    timerTick_i : in  std_logic;
+           wd_i : in  std_logic;
+      expired_o : out std_logic);
+end entity;
+
+architecture rtl of Timer is
+   signal counter : unsigned(timerWidth-1 downto 0) := (others=>'0');
+   signal inhibit : std_logic := '1';
+begin
+
+   process(reset_ni, clk_i)
+   begin
+      if reset_ni='0' then
+         counter<=(others=>'0');
+         expired_o<='0';
+         inhibit  <='1';
+      elsif rising_edge(clk_i) then
+         --
+         if resetValue_i=(resetValue_i'range=>'0') then
+            inhibit <= '1';
+         else
+            inhibit <= '0';
+         end if;
+         --
+         if  wd_i='1' or inhibit='1' then
+            counter<=unsigned(resetValue_i);
+            expired_o<='0';
+         elsif timerTick_i='1' then
+            if counter=0 then
+               counter<=unsigned(resetValue_i);
+               expired_o<='1';
+            else
+               counter<=counter-1;
+            end if;
+         elsif repeatedPulse then
+            expired_o<='0';
+         end if;
+      end if;
+   end process;
+end architecture;
+
+
+-------------------------------------------------------------------------------
+-- Ticker generator
+-------------------------------------------------------------------------------
+
+library ieee;
+    use ieee.std_logic_1164.all;
+    use ieee.numeric_std.all; 
+    use ieee.math_real."log2";
+    use ieee.math_real."floor";
+
+entity Ticker is
+  generic(clksPerTick : positive := 10);  --select based on clk rate and desired tick rate.
+     port(clk_i : in  std_logic;          --for example: 25MHz/10 = 2.5 MHz. 
+       reset_ni : in  std_logic;
+         tick_o : out std_logic);
+end entity;
+
+architecture rtl of Ticker is
+   signal counter : unsigned(integer(floor(log2(real(clksPerTick-1)))) downto 0) := (others=>'0');
+begin
+   process(reset_ni, clk_i)
+   begin
+      if reset_ni='0' then
+         counter<=(others=>'0');
+         tick_o<='0';
+      elsif rising_edge(clk_i) then
+         if counter=0 then
+            counter<=to_unsigned(clksPerTick-1,counter'length);
+            tick_o<='1';
+         else
+            counter<=counter-1;
+            tick_o<='0';
+         end if;
+      end if;
+   end process;
+end architecture;
 
 
 

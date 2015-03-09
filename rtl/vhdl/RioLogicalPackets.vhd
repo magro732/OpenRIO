@@ -1045,7 +1045,7 @@ begin
                   elsif (writeResponseReady_i = '1') then
                     outboundDat_o <= TTYPE_MAINTENANCE_WRITE_RESPONSE & status_i & tid_i & hop_i & x"00";
                   elsif (portWriteReady_i = '1') then
-                    outboundDat_o <= TTYPE_MAINTENANCE_PORT_WRITE & status_i & x"00" & hop_i & x"00";
+                    outboundDat_o <= TTYPE_MAINTENANCE_PORT_WRITE & size_i & x"00" & hop_i & x"00";
                   end if;
                   
                   packetIndex <= packetIndex + 1;
@@ -1067,7 +1067,7 @@ begin
                     outboundDat_o <= x"0000" & payload_i(63 downto 48);
                     state <= WAIT_COMPLETE;
                   elsif (portWriteReady_i = '1') then
-                    outboundDat_o <= x"0000" & payload_i(63 downto 48);
+                    outboundDat_o <= x"000" & '0' & wdptr_i & "00" & payload_i(63 downto 48);
                   end if;
 
                   payload <= payload_i(47 downto 0);
