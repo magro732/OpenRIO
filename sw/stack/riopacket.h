@@ -80,8 +80,11 @@
 #define STANDARD_ROUTE_CONFIGURATION_DESTINATION_ID_SELECT_CSR ((uint32_t)0x00000070ul)
 #define STANDARD_ROUTE_CONFIGURATION_PORT_SELECT_CSR ((uint32_t)0x00000074ul)
 #define STANDARD_ROUTE_DEFAULT_PORT_CSR ((uint32_t)0x00000078ul)
+
 #define EXTENDED_FEATURES_OFFSET ((uint32_t)0x00000100ul)
+
 #define IMPLEMENTATION_DEFINED_OFFSET ((uint32_t)0x00010000ul)
+
 #define LP_SERIAL_REGISTER_BLOCK_HEADER(offset) (offset)
 #define PORT_LINK_TIMEOUT_CONTROL_CSR(offset) ((offset) + 0x00000020ul)
 #define PORT_RESPONSE_TIMEOUT_CONTROL_CSR(offset) ((offset) + 0x00000024ul)
@@ -89,6 +92,14 @@
 #define PORT_N_LOCAL_ACKID_CSR(offset, n) ((offset) + (0x00000048ul+((n)*0x00000020ul)))
 #define PORT_N_ERROR_AND_STATUS_CSR(offset, n) ((offset) + (0x00000058ul+((n)*0x00000020ul)))
 #define PORT_N_CONTROL_CSR(offset, n) ((offset) + (0x0000005cul+((n)*0x00000020ul)))
+
+#define ERROR_MANAGEMENT_EXTENSIONS_BLOCK_HEADER(offset) (offset)
+#define ERROR_MANAGEMENT_HOT_SWAP_EXTENSIONS_BLOCK_CAR(offset) ((offset)+0x4ul)
+#define PORT_WRITE_TARGET_DEVICE_ID_CSR(offset) ((offset)+0x28ul)
+#define PORT_WRITE_TRANSMISSION_CONTROL_CSR(offset) ((offset)+0x34ul)
+#define PORT_N_ERROR_DETECT_CSR(offset, port) ((offset)+(0x40ul+(0x40ul*(port))))
+#define PORT_N_ERROR_RATE_ENABLE_CSR(offset, port) ((offset)+(0x44ul+(0x40ul*(port))))
+
 
 /* Packet ftype constants. */
 #define RIOPACKET_FTYPE_REQUEST 0x2
