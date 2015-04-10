@@ -401,7 +401,7 @@ void RIOPACKET_toString(RioPacket_t *packet, char *buffer)
           RIOPACKET_getNwrite(packet, &destId, &srcId, &address, &payloadSize, payload);
 
           index = sprintf(&buffer[0], 
-                          "NWRITE: dstid=%04x srcid=%04x address=%08x payloadSize=%04x", 
+                          "NWRITE: dstid=%04x srcid=%04x address=%08x payloadSize=%04x ", 
                           destId, srcId, address, payloadSize);
           for(i = 0; i < payloadSize; i++)
           {
@@ -413,7 +413,7 @@ void RIOPACKET_toString(RioPacket_t *packet, char *buffer)
           RIOPACKET_getNwriteR(packet, &destId, &srcId, &tid, &address, &payloadSize, payload);
 
           index = sprintf(&buffer[0], 
-                          "NWRITER: dstid=%04x srcid=%04x tid=%02x address=%08x payloadSize=%04x", 
+                          "NWRITER: dstid=%04x srcid=%04x tid=%02x address=%08x payloadSize=%04x ", 
                           destId, srcId, tid, address, payloadSize);
           for(i = 0; i < payloadSize; i++)
           {
@@ -524,7 +524,7 @@ void RIOPACKET_toString(RioPacket_t *packet, char *buffer)
         RIOPACKET_getMessage(packet, &destId, &srcId, &tid, &payloadSize, payload);
 
         index = sprintf(&buffer[0], 
-                        "MESSAGE: dstid=%04x srcid=%04x mailbox=%02x payloadSize=%04x", 
+                        "MESSAGE: dstid=%04x srcid=%04x mailbox=%02x payloadSize=%04x ", 
                         destId, srcId, tid, payloadSize);
         for(i = 0; i < payloadSize; i++)
         {
