@@ -274,20 +274,20 @@ begin
     wait until clk'event and clk = '1';
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioLogicalCommon");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioLogicalCommon-TC1");
-    PrintS("Description: Test all sizes of packets in the inbound direction.");
-    PrintS("Requirement: ");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Add inbound packets in all allowed sized.");
-    PrintS("Result: The payload of the inbound packets should be received on ");
-    PrintS("        the other side without CRC.");
-    PrintS("-----------------------------------------------------------------");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioLogicalCommon");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioLogicalCommon-TC1");
+    TestSpec("Description: Test all sizes of packets in the inbound direction.");
+    TestSpec("Requirement: ");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Add inbound packets in all allowed sized.");
+    TestSpec("Result: The payload of the inbound packets should be received on ");
+    TestSpec("        the other side without CRC.");
+    TestSpec("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC1-Step1");
+    TestCaseStart("TG_RioLogicalCommon-TC1-Step1");
     ---------------------------------------------------------------------------
     -- REMARK: Use random data...
     for j in 1 to 133 loop
@@ -310,28 +310,28 @@ begin
     TestWait(inboundMessageEmpty, '1', "inboundMessage empty");
     
     ---------------------------------------------------------------------------
-    --PrintS("-----------------------------------------------------------------");
-    --PrintS("Step 2:");
-    --PrintS("Action: Send an inbound frame that are too long.");
-    --PrintS("Result: The tail of the packet should be discarded.");
-    --PrintS("-----------------------------------------------------------------");
+    --TestSpec("-----------------------------------------------------------------");
+    --TestSpec("Step 2:");
+    --TestSpec("Action: Send an inbound frame that are too long.");
+    --TestSpec("Result: The tail of the packet should be discarded.");
+    --TestSpec("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
-    --PrintR("TG_RioLogicalCommon-TC1-Step2");
+    --TestCaseStart("TG_RioLogicalCommon-TC1-Step2");
     ---------------------------------------------------------------------------
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioLogicalCommon-TC2");
-    PrintS("Description: Test all sizes of packets in the outbound direction.");
-    PrintS("Requirement: ");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Add outbound packets in all allowed sized.");
-    PrintS("Result: The payload of the outbound packets should be received on ");
-    PrintS("        the other side with CRC added.");
-    PrintS("-----------------------------------------------------------------");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioLogicalCommon-TC2");
+    TestSpec("Description: Test all sizes of packets in the outbound direction.");
+    TestSpec("Requirement: ");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Add outbound packets in all allowed sized.");
+    TestSpec("Result: The payload of the outbound packets should be received on ");
+    TestSpec("        the other side with CRC added.");
+    TestSpec("-----------------------------------------------------------------");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioLogicalCommon-TC2-Step1");
+    TestCaseStart("TG_RioLogicalCommon-TC2-Step1");
     ---------------------------------------------------------------------------
 
     for j in 1 to 133 loop
@@ -354,13 +354,13 @@ begin
     TestWait(outboundMessageEmpty, '1', "outboundMessage empty");
     
     -----------------------------------------------------------------------------
-    --PrintS("-----------------------------------------------------------------");
-    --PrintS("Step 2:");
-    --PrintS("Action: Send an outbound frame that are too long.");
-    --PrintS("Result: The tail of the packet should be discarded.");
-    --PrintS("-----------------------------------------------------------------");
+    --TestSpec("-----------------------------------------------------------------");
+    --TestSpec("Step 2:");
+    --TestSpec("Action: Send an outbound frame that are too long.");
+    --TestSpec("Result: The tail of the packet should be discarded.");
+    --TestSpec("-----------------------------------------------------------------");
     -----------------------------------------------------------------------------
-    --PrintR("TG_RioLogicalCommon-TC1-Step2");
+    --TestCaseStart("TG_RioLogicalCommon-TC1-Step2");
     -----------------------------------------------------------------------------
 
     ---------------------------------------------------------------------------

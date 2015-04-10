@@ -48,13 +48,44 @@
 -------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
-use work.rio_common.all;
+use ieee.numeric_std.all;
+use ieee.math_real.all;
 use std.textio.all;
+use work.rio_common.all;
 
 -------------------------------------------------------------------------------
 -- 
 -------------------------------------------------------------------------------
 package TestPortPackage is
+  -----------------------------------------------------------------------------
+  -- Types used in simulations.
+  -----------------------------------------------------------------------------
+  type ByteArray is array (natural range <>) of
+    std_logic_vector(7 downto 0);
+  type HalfwordArray is array (natural range <>) of
+    std_logic_vector(15 downto 0);
+  type WordArray is array (natural range <>) of
+    std_logic_vector(31 downto 0);
+  type DoublewordArray is array (natural range <>) of
+    std_logic_vector(63 downto 0);
+
+  -- Type defining a RapidIO frame.
+  type RioFrame is record
+    length : natural range 0 to 69;
+    payload : WordArray(0 to 68);
+  end record;
+  type RioFrameArray is array (natural range <>) of RioFrame;
+
+  -- Type defining a RapidIO payload.
+  type RioPayload is record
+    length : natural range 0 to 133;
+    data : HalfwordArray(0 to 132);
+  end record;
+
+  -----------------------------------------------------------------------------
+  -- 
+  -----------------------------------------------------------------------------
+  
   constant ADDRESS_WIDTH_MAX : natural := 64;
   constant DATA_WIDTH_MAX : natural := 64;
   constant SEL_WIDTH_MAX : natural := 8;
@@ -180,6 +211,9 @@ package TestPortPackage is
   -- Procedures for test control.
   ---------------------------------------------------------------------------
 
+  procedure TestSpec(constant str : string);
+  procedure TestCaseStart(constant str : string);
+  
   procedure TestWarning(constant tag : in string);
   procedure TestError(constant tag : in string;
                       constant stopAtError : in boolean := true);
@@ -217,6 +251,130 @@ package TestPortPackage is
 
   procedure TestEnd;
 
+  -----------------------------------------------------------------------------
+  -- 
+  -----------------------------------------------------------------------------
+  
+  -----------------------------------------------------------------------------
+  -- Crc5 calculation function.
+  -- ITU, polynom=0x15.
+  -----------------------------------------------------------------------------
+  function Crc5(constant data : in std_logic_vector(18 downto 0);
+                constant crc : in std_logic_vector(4 downto 0))
+    return std_logic_vector;
+  
+  ---------------------------------------------------------------------------
+  -- Create a RapidIO physical layer control symbol.
+  ---------------------------------------------------------------------------
+  function RioControlSymbolCreate(
+    constant stype0 : in std_logic_vector(2 downto 0);
+    constant parameter0 : in std_logic_vector(4 downto 0);
+    constant parameter1 : in std_logic_vector(4 downto 0);
+    constant stype1 : in std_logic_vector(2 downto 0);
+    constant cmd : in std_logic_vector(2 downto 0))
+    return std_logic_vector;
+
+  -----------------------------------------------------------------------------
+  -- Crc16 calculation function.
+  -- CITT, polynom=0x1021.
+  -----------------------------------------------------------------------------
+  function Crc16(constant data : in std_logic_vector(15 downto 0);
+                 constant crc : in std_logic_vector(15 downto 0))
+    return std_logic_vector;
+  
+  ---------------------------------------------------------------------------
+  -- Create a randomly initialized data array.
+  ---------------------------------------------------------------------------
+  procedure CreateRandomPayload(
+    variable payload : out HalfwordArray;
+    variable seed1 : inout positive;
+    variable seed2 : inout positive);
+  procedure CreateRandomPayload(
+    variable payload : out DoublewordArray;
+    variable seed1 : inout positive;
+    variable seed2 : inout positive);
+
+  ---------------------------------------------------------------------------
+  -- Create a generic RapidIO frame.
+  ---------------------------------------------------------------------------
+  function RioFrameCreate(
+    constant ackId : in std_logic_vector(4 downto 0);
+    constant vc : in std_logic;
+    constant crf : in std_logic;
+    constant prio : in std_logic_vector(1 downto 0);
+    constant tt : in std_logic_vector(1 downto 0);
+    constant ftype : in std_logic_vector(3 downto 0);
+    constant sourceId : in std_logic_vector(15 downto 0);
+    constant destId : in std_logic_vector(15 downto 0);
+    constant payload : in RioPayload)
+    return RioFrame;
+  
+  ---------------------------------------------------------------------------
+  -- Create a NWRITE RapidIO frame.
+  ---------------------------------------------------------------------------
+  function RioNwrite(
+    constant wrsize : in std_logic_vector(3 downto 0);
+    constant address : in std_logic_vector(28 downto 0);
+    constant wdptr : in std_logic;
+    constant xamsbs : in std_logic_vector(1 downto 0);
+    constant dataLength : in natural range 1 to 32;
+    constant data : in DoublewordArray(0 to 31))
+    return RioPayload;
+  
+  ---------------------------------------------------------------------------
+  -- Create a NWRITER RapidIO frame.
+  ---------------------------------------------------------------------------
+  function RioNwriteR(
+    constant wrsize : in std_logic_vector(3 downto 0);
+    constant tid : in std_logic_vector(7 downto 0);
+    constant address : in std_logic_vector(28 downto 0);
+    constant wdptr : in std_logic;
+    constant xamsbs : in std_logic_vector(1 downto 0);
+    constant dataLength : in natural range 1 to 32;
+    constant data : in DoublewordArray(0 to 31))
+    return RioPayload;
+  
+  ---------------------------------------------------------------------------
+  -- Create a NREAD RapidIO frame.
+  ---------------------------------------------------------------------------
+  function RioNread(
+    constant rdsize : in std_logic_vector(3 downto 0);
+    constant tid : in std_logic_vector(7 downto 0);
+    constant address : in std_logic_vector(28 downto 0);
+    constant wdptr : in std_logic;
+    constant xamsbs : in std_logic_vector(1 downto 0))
+    return RioPayload;
+  
+  ---------------------------------------------------------------------------
+  -- Create a RESPONSE RapidIO frame.
+  ---------------------------------------------------------------------------
+  function RioResponse(
+    constant status : in std_logic_vector(3 downto 0);
+    constant tid : in std_logic_vector(7 downto 0);
+    constant dataLength : in natural range 0 to 32;
+    constant data : in DoublewordArray(0 to 31))
+    return RioPayload;
+  
+  ---------------------------------------------------------------------------
+  -- Create a Maintenance RapidIO frame.
+  ---------------------------------------------------------------------------
+  function RioMaintenance(
+    constant transaction : in std_logic_vector(3 downto 0);
+    constant size : in std_logic_vector(3 downto 0);
+    constant tid : in std_logic_vector(7 downto 0);
+    constant hopCount : in std_logic_vector(7 downto 0);
+    constant configOffset : in std_logic_vector(20 downto 0);
+    constant wdptr : in std_logic;
+    constant dataLength : in natural range 0 to 8;
+    constant data : in DoublewordArray(0 to 7))
+    return RioPayload;
+  
+  -----------------------------------------------------------------------------
+  -- Function to convert a std_logic_vector to a string.
+  -----------------------------------------------------------------------------
+  function byteToString(constant byte : std_logic_vector(7 downto 0))
+    return string;
+  
 end package;
 
 -------------------------------------------------------------------------------
@@ -313,6 +471,25 @@ package body TestPortPackage is
   ---------------------------------------------------------------------------
   -- Procedures to handle tests.
   ---------------------------------------------------------------------------
+
+  procedure TestSpec(constant str : string) is
+    file specFile  : text;
+    variable specLine, outputLine : line;
+    variable fStatus: FILE_OPEN_STATUS;
+  begin
+    file_open(fStatus, specFile, "testspec.txt", append_mode);
+    write(specLine, string'(str));
+    writeline (specFile, specLine);
+    file_close(specFile);
+  end procedure;
+
+  procedure TestCaseStart(constant str : string) is
+    file reportFile  : text;
+    variable reportLine, outputLine : line;
+    variable fStatus: FILE_OPEN_STATUS;
+  begin
+    report str severity note;
+  end procedure;
 
   procedure TestWarning(constant tag : in string) is
     variable writeBuffer : line;
@@ -521,6 +698,432 @@ package body TestPortPackage is
     std.env.stop(0);
   end TestEnd;
 
+  -----------------------------------------------------------------------------
+  -- 
+  -----------------------------------------------------------------------------
+  -----------------------------------------------------------------------------
+  -- Crc5 calculation function.
+  -- ITU, polynom=0x15.
+  -----------------------------------------------------------------------------
+  function Crc5(constant data : in std_logic_vector(18 downto 0);
+                constant crc : in std_logic_vector(4 downto 0))
+    return std_logic_vector is
+    type crcTableType is array (0 to 31) of std_logic_vector(7 downto 0);
+    constant crcTable : crcTableType := (
+      x"00", x"15", x"1f", x"0a", x"0b", x"1e", x"14", x"01",
+      x"16", x"03", x"09", x"1c", x"1d", x"08", x"02", x"17",
+      x"19", x"0c", x"06", x"13", x"12", x"07", x"0d", x"18",
+      x"0f", x"1a", x"10", x"05", x"04", x"11", x"1b", x"0e" );
+    variable index : natural range 0 to 31;
+    variable result : std_logic_vector(4 downto 0);
+  begin
+    result := crc;
+    index := to_integer(unsigned(data(18 downto 14) xor result));
+    result := crcTable(index)(4 downto 0);
+    index := to_integer(unsigned(data(13 downto 9) xor result));
+    result := crcTable(index)(4 downto 0);
+    index := to_integer(unsigned(data(8 downto 4) xor result));
+    result := crcTable(index)(4 downto 0);
+    index := to_integer(unsigned((data(3 downto 0) & '0') xor result));
+    return crcTable(index)(4 downto 0);
+  end Crc5;
+
+  ---------------------------------------------------------------------------
+  -- Create a RapidIO physical layer control symbol.
+  ---------------------------------------------------------------------------
+  function RioControlSymbolCreate(
+    constant stype0 : in std_logic_vector(2 downto 0);
+    constant parameter0 : in std_logic_vector(4 downto 0);
+    constant parameter1 : in std_logic_vector(4 downto 0);
+    constant stype1 : in std_logic_vector(2 downto 0);
+    constant cmd : in std_logic_vector(2 downto 0))
+    return std_logic_vector is
+    variable returnValue : std_logic_vector(23 downto 0);
+    variable symbolData : std_logic_vector(18 downto 0);
+  begin
+    symbolData(18 downto 16) := stype0;
+    symbolData(15 downto 11) := parameter0;
+    symbolData(10 downto 6) := parameter1;
+    symbolData(5 downto 3) := stype1;
+    symbolData(2 downto 0) := cmd;
+
+    returnValue(23 downto 5) := symbolData;
+    returnValue(4 downto 0) := Crc5(symbolData, "11111");
+
+    return returnValue;
+  end function;
+
+  -----------------------------------------------------------------------------
+  -- Crc16 calculation function.
+  -- CITT, polynom=0x1021.
+  -----------------------------------------------------------------------------
+  function Crc16(constant data : in std_logic_vector(15 downto 0);
+                 constant crc : in std_logic_vector(15 downto 0))
+    return std_logic_vector is
+    type crcTableType is array (0 to 255) of std_logic_vector(15 downto 0);
+    constant crcTable : crcTableType := (
+      x"0000", x"1021", x"2042", x"3063", x"4084", x"50a5", x"60c6", x"70e7",
+      x"8108", x"9129", x"a14a", x"b16b", x"c18c", x"d1ad", x"e1ce", x"f1ef",
+      x"1231", x"0210", x"3273", x"2252", x"52b5", x"4294", x"72f7", x"62d6",
+      x"9339", x"8318", x"b37b", x"a35a", x"d3bd", x"c39c", x"f3ff", x"e3de",
+      x"2462", x"3443", x"0420", x"1401", x"64e6", x"74c7", x"44a4", x"5485",
+      x"a56a", x"b54b", x"8528", x"9509", x"e5ee", x"f5cf", x"c5ac", x"d58d",
+      x"3653", x"2672", x"1611", x"0630", x"76d7", x"66f6", x"5695", x"46b4",
+      x"b75b", x"a77a", x"9719", x"8738", x"f7df", x"e7fe", x"d79d", x"c7bc",
+      x"48c4", x"58e5", x"6886", x"78a7", x"0840", x"1861", x"2802", x"3823",
+      x"c9cc", x"d9ed", x"e98e", x"f9af", x"8948", x"9969", x"a90a", x"b92b",
+      x"5af5", x"4ad4", x"7ab7", x"6a96", x"1a71", x"0a50", x"3a33", x"2a12",
+      x"dbfd", x"cbdc", x"fbbf", x"eb9e", x"9b79", x"8b58", x"bb3b", x"ab1a",
+      x"6ca6", x"7c87", x"4ce4", x"5cc5", x"2c22", x"3c03", x"0c60", x"1c41",
+      x"edae", x"fd8f", x"cdec", x"ddcd", x"ad2a", x"bd0b", x"8d68", x"9d49",
+      x"7e97", x"6eb6", x"5ed5", x"4ef4", x"3e13", x"2e32", x"1e51", x"0e70",
+      x"ff9f", x"efbe", x"dfdd", x"cffc", x"bf1b", x"af3a", x"9f59", x"8f78",
+      x"9188", x"81a9", x"b1ca", x"a1eb", x"d10c", x"c12d", x"f14e", x"e16f",
+      x"1080", x"00a1", x"30c2", x"20e3", x"5004", x"4025", x"7046", x"6067",
+      x"83b9", x"9398", x"a3fb", x"b3da", x"c33d", x"d31c", x"e37f", x"f35e",
+      x"02b1", x"1290", x"22f3", x"32d2", x"4235", x"5214", x"6277", x"7256",
+      x"b5ea", x"a5cb", x"95a8", x"8589", x"f56e", x"e54f", x"d52c", x"c50d",
+      x"34e2", x"24c3", x"14a0", x"0481", x"7466", x"6447", x"5424", x"4405",
+      x"a7db", x"b7fa", x"8799", x"97b8", x"e75f", x"f77e", x"c71d", x"d73c",
+      x"26d3", x"36f2", x"0691", x"16b0", x"6657", x"7676", x"4615", x"5634",
+      x"d94c", x"c96d", x"f90e", x"e92f", x"99c8", x"89e9", x"b98a", x"a9ab",
+      x"5844", x"4865", x"7806", x"6827", x"18c0", x"08e1", x"3882", x"28a3",
+      x"cb7d", x"db5c", x"eb3f", x"fb1e", x"8bf9", x"9bd8", x"abbb", x"bb9a",
+      x"4a75", x"5a54", x"6a37", x"7a16", x"0af1", x"1ad0", x"2ab3", x"3a92",
+      x"fd2e", x"ed0f", x"dd6c", x"cd4d", x"bdaa", x"ad8b", x"9de8", x"8dc9",
+      x"7c26", x"6c07", x"5c64", x"4c45", x"3ca2", x"2c83", x"1ce0", x"0cc1",
+      x"ef1f", x"ff3e", x"cf5d", x"df7c", x"af9b", x"bfba", x"8fd9", x"9ff8",
+      x"6e17", x"7e36", x"4e55", x"5e74", x"2e93", x"3eb2", x"0ed1", x"1ef0" );
+    variable index : natural range 0 to 255;
+    variable result : std_logic_vector(15 downto 0);
+  begin
+    result := crc;
+    index := to_integer(unsigned(data(15 downto 8) xor result(15 downto 8)));
+    result := crcTable(index) xor (result(7 downto 0) & x"00");
+    index := to_integer(unsigned(data(7 downto 0) xor result(15 downto 8)));
+    result := crcTable(index) xor (result(7 downto 0) & x"00");
+    return result;
+  end Crc16;
+  
+  ---------------------------------------------------------------------------
+  -- Create a randomly initialized data array.
+  ---------------------------------------------------------------------------
+  procedure CreateRandomPayload(
+    variable payload : out HalfwordArray;
+    variable seed1 : inout positive;
+    variable seed2 : inout positive) is
+    variable rand: real;
+    variable int_rand: integer;
+    variable stim: std_logic_vector(7 downto 0);
+  begin
+    for i in payload'range loop
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(7 downto 0) := std_logic_vector(to_unsigned(int_rand, 8));
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(15 downto 8) := std_logic_vector(to_unsigned(int_rand, 8));
+    end loop;
+  end procedure;
+
+  procedure CreateRandomPayload(
+    variable payload : out DoublewordArray;
+    variable seed1 : inout positive;
+    variable seed2 : inout positive) is
+    variable rand: real;
+    variable int_rand: integer;
+    variable stim: std_logic_vector(7 downto 0);
+  begin
+    for i in payload'range loop
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(7 downto 0) := std_logic_vector(to_unsigned(int_rand, 8));
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(15 downto 8) := std_logic_vector(to_unsigned(int_rand, 8));
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(23 downto 16) := std_logic_vector(to_unsigned(int_rand, 8));
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(31 downto 24) := std_logic_vector(to_unsigned(int_rand, 8));
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(39 downto 32) := std_logic_vector(to_unsigned(int_rand, 8));
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(47 downto 40) := std_logic_vector(to_unsigned(int_rand, 8));
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(55 downto 48) := std_logic_vector(to_unsigned(int_rand, 8));
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(63 downto 56) := std_logic_vector(to_unsigned(int_rand, 8));
+    end loop;
+  end procedure;
+  ---------------------------------------------------------------------------
+  -- Create a generic RapidIO frame.
+  ---------------------------------------------------------------------------
+  function RioFrameCreate(
+    constant ackId : in std_logic_vector(4 downto 0);
+    constant vc : in std_logic;
+    constant crf : in std_logic;
+    constant prio : in std_logic_vector(1 downto 0);
+    constant tt : in std_logic_vector(1 downto 0);
+    constant ftype : in std_logic_vector(3 downto 0);
+    constant sourceId : in std_logic_vector(15 downto 0);
+    constant destId : in std_logic_vector(15 downto 0);
+    constant payload : in RioPayload) return RioFrame is
+    variable frame : RioFrame;
+    variable result : HalfwordArray(0 to 137);
+    variable crc : std_logic_vector(15 downto 0) := x"ffff";
+  begin
+    -- Add the header and addresses.
+    result(0) := ackId & "0" & vc & crf & prio & tt & ftype;
+    result(1) := destId;
+    result(2) := sourceId;
+
+    -- Update the calculated CRC with the header contents.
+    crc := Crc16("00000" & result(0)(10 downto 0), crc);
+    crc := Crc16(result(1), crc);
+    crc := Crc16(result(2), crc);
+
+    -- Check if a single CRC should be added or two.
+    if (payload.length <= 37) then
+      -- Single CRC.
+      for i in 0 to payload.length-1 loop
+        result(i+3) := payload.data(i);
+        crc := Crc16(payload.data(i), crc);
+      end loop;
+      result(payload.length+3) := crc;
+
+      -- Check if paddning is needed to make the payload even 32-bit.
+      if ((payload.length mod 2) = 1) then
+        result(payload.length+4) := x"0000";
+        frame.length := (payload.length+5) / 2;
+      else
+        frame.length := (payload.length+4) / 2;
+      end if;      
+    else
+      -- Double CRC.
+      for i in 0 to 36 loop
+        result(i+3) := payload.data(i);
+        crc := Crc16(payload.data(i), crc);
+      end loop;
+
+      -- Add in-the-middle crc.
+      result(40) := crc;
+      crc := Crc16(crc, crc);
+      
+      for i in 37 to payload.length-1 loop
+        result(i+4) := payload.data(i);
+        crc := Crc16(payload.data(i), crc);
+      end loop;
+      result(payload.length+4) := crc;
+
+      -- Check if paddning is needed to make the payload even 32-bit.
+      if ((payload.length mod 2) = 0) then
+        result(payload.length+5) := x"0000";
+        frame.length := (payload.length+6) / 2;
+      else
+        frame.length := (payload.length+5) / 2;
+      end if;      
+    end if;
+    
+    -- Update the result length.
+    for i in 0 to frame.length-1 loop
+      frame.payload(i) := result(2*i) & result(2*i+1);
+    end loop;
+
+    return frame;
+  end function;
+
+  -----------------------------------------------------------------------------
+  -- 
+  -----------------------------------------------------------------------------
+  function RioNwrite(
+    constant wrsize : in std_logic_vector(3 downto 0);
+    constant address : in std_logic_vector(28 downto 0);
+    constant wdptr : in std_logic;
+    constant xamsbs : in std_logic_vector(1 downto 0);
+    constant dataLength : in natural range 1 to 32;
+    constant data : in DoublewordArray(0 to 31))
+    return RioPayload is
+    variable payload : RioPayload;
+  begin
+    payload.data(0)(15 downto 12) := "0100";
+    payload.data(0)(11 downto 8) := wrsize;
+    payload.data(0)(7 downto 0) := (others=>'0');
+
+    payload.data(1) := address(28 downto 13);
+    
+    payload.data(2)(15 downto 3) := address(12 downto 0);
+    payload.data(2)(2) := wdptr;
+    payload.data(2)(1 downto 0) := xamsbs;
+
+    for i in 0 to dataLength-1 loop
+      payload.data(3+4*i) := data(i)(63 downto 48);
+      payload.data(4+4*i) := data(i)(47 downto 32);
+      payload.data(5+4*i) := data(i)(31 downto 16);
+      payload.data(6+4*i) := data(i)(15 downto 0);
+    end loop;
+
+    payload.length := 3 + 4*dataLength;
+    
+    return payload;
+  end function;
+  
+  -----------------------------------------------------------------------------
+  -- 
+  -----------------------------------------------------------------------------
+  function RioNwriteR(
+    constant wrsize : in std_logic_vector(3 downto 0);
+    constant tid : in std_logic_vector(7 downto 0);
+    constant address : in std_logic_vector(28 downto 0);
+    constant wdptr : in std_logic;
+    constant xamsbs : in std_logic_vector(1 downto 0);
+    constant dataLength : in natural range 1 to 32;
+    constant data : in DoublewordArray(0 to 31))
+    return RioPayload is
+    variable payload : RioPayload;
+  begin
+    payload.data(0)(15 downto 12) := "0101";
+    payload.data(0)(11 downto 8) := wrsize;
+    payload.data(0)(7 downto 0) := tid;
+
+    payload.data(1) := address(28 downto 13);
+    
+    payload.data(2)(15 downto 3) := address(12 downto 0);
+    payload.data(2)(2) := wdptr;
+    payload.data(2)(1 downto 0) := xamsbs;
+
+    for i in 0 to dataLength-1 loop
+      payload.data(3+4*i) := data(i)(63 downto 48);
+      payload.data(4+4*i) := data(i)(47 downto 32);
+      payload.data(5+4*i) := data(i)(31 downto 16);
+      payload.data(6+4*i) := data(i)(15 downto 0);
+    end loop;
+
+    payload.length := 3 + 4*dataLength;
+    
+    return payload;
+  end function;
+  
+  -----------------------------------------------------------------------------
+  -- 
+  -----------------------------------------------------------------------------
+  function RioNread(
+    constant rdsize : in std_logic_vector(3 downto 0);
+    constant tid : in std_logic_vector(7 downto 0);
+    constant address : in std_logic_vector(28 downto 0);
+    constant wdptr : in std_logic;
+    constant xamsbs : in std_logic_vector(1 downto 0))
+    return RioPayload is
+    variable payload : RioPayload;
+  begin
+    payload.data(0)(15 downto 12) := "0100";
+    payload.data(0)(11 downto 8) := rdsize;
+    payload.data(0)(7 downto 0) := tid;
+
+    payload.data(1) := address(28 downto 13);
+    
+    payload.data(2)(15 downto 3) := address(12 downto 0);
+    payload.data(2)(2) := wdptr;
+    payload.data(2)(1 downto 0) := xamsbs;
+
+    payload.length := 3;
+
+    return payload;
+  end function;
+  
+  ---------------------------------------------------------------------------
+  -- Create a RESPONSE RapidIO frame.
+  ---------------------------------------------------------------------------
+  function RioResponse(
+    constant status : in std_logic_vector(3 downto 0);
+    constant tid : in std_logic_vector(7 downto 0);
+    constant dataLength : in natural range 0 to 32;
+    constant data : in DoublewordArray(0 to 31))
+    return RioPayload is
+    variable payload : RioPayload;
+  begin
+    payload.data(0)(11 downto 8) := status;
+    payload.data(0)(7 downto 0) := tid;
+
+    if (dataLength = 0) then
+      payload.data(0)(15 downto 12) := "0000";
+      payload.length := 1;
+    else
+      payload.data(0)(15 downto 12) := "1000";
+      
+      for i in 0 to dataLength-1 loop
+        payload.data(1+4*i) := data(i)(63 downto 48);
+        payload.data(2+4*i) := data(i)(47 downto 32);
+        payload.data(3+4*i) := data(i)(31 downto 16);
+        payload.data(4+4*i) := data(i)(15 downto 0);
+      end loop;
+
+      payload.length := 1 + 4*dataLength;
+    end if;
+
+    return payload;
+  end function;
+  
+  ---------------------------------------------------------------------------
+  -- Create a Maintenance RapidIO frame.
+  ---------------------------------------------------------------------------
+  function RioMaintenance(
+    constant transaction : in std_logic_vector(3 downto 0);
+    constant size : in std_logic_vector(3 downto 0);
+    constant tid : in std_logic_vector(7 downto 0);
+    constant hopCount : in std_logic_vector(7 downto 0);
+    constant configOffset : in std_logic_vector(20 downto 0);
+    constant wdptr : in std_logic;
+    constant dataLength : in natural range 0 to 8;
+    constant data : in DoublewordArray(0 to 7))
+    return RioPayload is
+    variable payload : RioPayload;
+  begin
+    payload.data(0)(15 downto 12) := transaction;
+    payload.data(0)(11 downto 8) := size;
+    payload.data(0)(7 downto 0) := tid;
+
+    payload.data(1)(15 downto 8) := hopCount;
+    payload.data(1)(7 downto 0) := configOffset(20 downto 13);
+    
+    payload.data(2)(15 downto 3) := configOffset(12 downto 0);
+    payload.data(2)(2) := wdptr;
+    payload.data(2)(1 downto 0) := "00";
+
+    if (dataLength = 0) then
+      payload.length := 3;
+    else
+      for i in 0 to dataLength-1 loop
+        payload.data(3+4*i) := data(i)(63 downto 48);
+        payload.data(4+4*i) := data(i)(47 downto 32);
+        payload.data(5+4*i) := data(i)(31 downto 16);
+        payload.data(6+4*i) := data(i)(15 downto 0);
+      end loop;
+
+      payload.length := 3 + 4*dataLength;
+    end if;
+
+    return payload;
+  end function;
+  
+  -----------------------------------------------------------------------------
+  -- Function to convert a std_logic_vector to a string.
+  -----------------------------------------------------------------------------
+  function byteToString(constant byte : std_logic_vector(7 downto 0))
+    return string is
+    constant table : string(1 to 16) := "0123456789abcdef";
+    variable returnValue : string(1 to 2);
+  begin
+    returnValue(1) := table(to_integer(unsigned(byte(7 downto 4))) + 1);
+    returnValue(2) := table(to_integer(unsigned(byte(3 downto 0))) + 1);
+    return returnValue;
+  end function;
+  
 end package body;
 
 

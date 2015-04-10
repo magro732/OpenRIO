@@ -10,7 +10,9 @@
 -- implementation.
 -- 
 -- To Do:
--- -
+-- - Update this to handle the readContentEnd being output at the last content
+--   in a frame in the window-version. There are some errors indicated by this
+--   testbench due to this.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 
@@ -53,6 +55,7 @@ use ieee.math_real.all;
 library std;
 use std.textio.all;
 use work.rio_common.all;
+use work.TestPortPackage.all;
 
 
 -------------------------------------------------------------------------------
@@ -364,19 +367,19 @@ begin
     wait until clk'event and clk = '1';
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioPacketBuffer");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioPacketBuffer-TC1");
-    PrintS("Description: Test normal operation without using the window. Only");
-    PrintS("             full frames are tested.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Complete a small frame and read it.");
-    PrintS("Result: The read frame should be equal to the one written.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioPacketBuffer");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioPacketBuffer-TC1");
+    TestSpec("Description: Test normal operation without using the window. Only");
+    TestSpec("             full frames are tested.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Complete a small frame and read it.");
+    TestSpec("Result: The read frame should be equal to the one written.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC1-Step1");
+    TestCaseStart("TG_RioPacketBuffer-TC1-Step1");
     ---------------------------------------------------------------------------
     -- REMARK: Update testcases for inbound and outbound...
 
@@ -421,12 +424,12 @@ begin
       report "Unexpected readFrameEmpty." severity error;
         
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Write a rio maximum size frame and read it.");
-    PrintS("Result: The read frame should be equal to the one written.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Write a rio maximum size frame and read it.");
+    TestSpec("Result: The read frame should be equal to the one written.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC1-Step2");
+    TestCaseStart("TG_RioPacketBuffer-TC1-Step2");
     ---------------------------------------------------------------------------
 
     for i in 0 to 68 loop
@@ -469,13 +472,13 @@ begin
       report "Unexpected readFrameEmpty." severity error;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: Fill the maximum number of small frames without filling ");
-    PrintS("        the memory.");
-    PrintS("Result: The frame buffer should accept 63 frames.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 3:");
+    TestSpec("Action: Fill the maximum number of small frames without filling ");
+    TestSpec("        the memory.");
+    TestSpec("Result: The frame buffer should accept 63 frames.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC1-Step3");
+    TestCaseStart("TG_RioPacketBuffer-TC1-Step3");
     ---------------------------------------------------------------------------
 
     ---------------------------------------------------------------------------
@@ -562,12 +565,12 @@ begin
       report "Unexpected readFrameEmpty." severity error;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 4:");
-    PrintS("Action: Fill the memory to its limit.");
-    PrintS("Result: The frame buffer should accept 255-69 words.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 4:");
+    TestSpec("Action: Fill the memory to its limit.");
+    TestSpec("Result: The frame buffer should accept 255-69 words.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC1-Step4");
+    TestCaseStart("TG_RioPacketBuffer-TC1-Step4");
     ---------------------------------------------------------------------------
 
     for i in 0 to 186 loop
@@ -608,17 +611,17 @@ begin
       report "Unexpected readFrameEmpty." severity error;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioPacketBuffer-TC2");
-    PrintS("Description: Test operation when using the window.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Add one frame and update the window.");
-    PrintS("Result: The window empty flag and the read frame empty flag should");
-    PrintS("        be updated and it should be possible to read the frame again.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioPacketBuffer-TC2");
+    TestSpec("Description: Test operation when using the window.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Add one frame and update the window.");
+    TestSpec("Result: The window empty flag and the read frame empty flag should");
+    TestSpec("        be updated and it should be possible to read the frame again.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC2-Step1");
+    TestCaseStart("TG_RioPacketBuffer-TC2-Step1");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -709,12 +712,12 @@ begin
       report "Unexpected readWindowEmpty." severity error;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Add two frames and test the window accesses.");
-    PrintS("Result: .");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Add two frames and test the window accesses.");
+    TestSpec("Result: .");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC2-Step2");
+    TestCaseStart("TG_RioPacketBuffer-TC2-Step2");
     ---------------------------------------------------------------------------
 
     ---------------------------------------------------------------------------
@@ -950,12 +953,12 @@ begin
       report "Unexpected readWindowEmpty." severity error;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: Add maximum number of frames and test the window accesses.");
-    PrintS("Result: The buffer should be full and not accept more frames.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 3:");
+    TestSpec("Action: Add maximum number of frames and test the window accesses.");
+    TestSpec("Result: The buffer should be full and not accept more frames.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC2-Step3");
+    TestCaseStart("TG_RioPacketBuffer-TC2-Step3");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1130,12 +1133,12 @@ begin
       report "Unexpected readWindowEmpty." severity error;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 4:");
-    PrintS("Action: Add maximum number of words and test the window accesses.");
-    PrintS("Result: The content memory should be full.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 4:");
+    TestSpec("Action: Add maximum number of words and test the window accesses.");
+    TestSpec("Result: The content memory should be full.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC2-Step4");
+    TestCaseStart("TG_RioPacketBuffer-TC2-Step4");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1338,12 +1341,12 @@ begin
       report "Unexpected readWindowEmpty." severity error;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 5:");
-    PrintS("Action: Add maximum number of words -1 and test the window accesses.");
-    PrintS("Result: The content memory should not accept more frames.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 5:");
+    TestSpec("Action: Add maximum number of words -1 and test the window accesses.");
+    TestSpec("Result: The content memory should not accept more frames.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC2-Step5");
+    TestCaseStart("TG_RioPacketBuffer-TC2-Step5");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1458,14 +1461,14 @@ begin
       report "Unexpected readWindowEmpty." severity error;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 6:");
-    PrintS("Action: Add two frames and start reading the second, then remove");
-    PrintS("        the first.");
-    PrintS("Result: The readContentEnd flag should not be changed when frames");
-    PrintS("        are removed.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 6:");
+    TestSpec("Action: Add two frames and start reading the second, then remove");
+    TestSpec("        the first.");
+    TestSpec("Result: The readContentEnd flag should not be changed when frames");
+    TestSpec("        are removed.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC2-Step6");
+    TestCaseStart("TG_RioPacketBuffer-TC2-Step6");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1602,18 +1605,18 @@ begin
       report "Unexpected readWindowEmpty." severity error;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioPacketBuffer");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioPacketBuffer-TC3");
-    PrintS("Description: Test operation when restarting and aborting frames.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Write one frame and abort it.");
-    PrintS("Result: The aborted frame should be discarded.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioPacketBuffer");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioPacketBuffer-TC3");
+    TestSpec("Description: Test operation when restarting and aborting frames.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Write one frame and abort it.");
+    TestSpec("Result: The aborted frame should be discarded.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC3-Step1");
+    TestCaseStart("TG_RioPacketBuffer-TC3-Step1");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1642,13 +1645,13 @@ begin
       report "Unexpected readWindowEmpty." severity error;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Write one full frame then one more that is aborted.");
-    PrintS("Result: The first frame should remain and the aborted should be ");
-    PrintS("        discarded.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Write one full frame then one more that is aborted.");
+    TestSpec("Result: The first frame should remain and the aborted should be ");
+    TestSpec("        discarded.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC3-Step2");
+    TestCaseStart("TG_RioPacketBuffer-TC3-Step2");
     ---------------------------------------------------------------------------
 
     for i in 0 to 3 loop
@@ -1774,12 +1777,12 @@ begin
       report "Unexpected readWindowEmpty." severity error;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: Write one full frame then read one that is restarted.");
-    PrintS("Result: The content of the first frame should be read twice. ");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 3:");
+    TestSpec("Action: Write one full frame then read one that is restarted.");
+    TestSpec("Result: The content of the first frame should be read twice. ");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC3-Step3");
+    TestCaseStart("TG_RioPacketBuffer-TC3-Step3");
     ---------------------------------------------------------------------------
 
     for i in 0 to 3 loop
@@ -1861,18 +1864,18 @@ begin
       report "Unexpected readWindowEmpty." severity error;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioPacketBuffer");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioPacketBuffer-TC4");
-    PrintS("Description: Test operation when partial frames are read.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Write a one word frame and read it before it is completed.");
-    PrintS("Result: Empty signals should reflect the status of the frame.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioPacketBuffer");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioPacketBuffer-TC4");
+    TestSpec("Description: Test operation when partial frames are read.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Write a one word frame and read it before it is completed.");
+    TestSpec("Result: Empty signals should reflect the status of the frame.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC4-Step1");
+    TestCaseStart("TG_RioPacketBuffer-TC4-Step1");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1935,14 +1938,14 @@ begin
       report "Unexpected readContentEmpty." severity error;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Write content to a frame and read it, then abort the frame.");
-    PrintS("Result: The reader should be notified about the aborted frame. The");
-    PrintS("        notification should be reset when the frame has been ");
-    PrintS("        restarted.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Write content to a frame and read it, then abort the frame.");
+    TestSpec("Result: The reader should be notified about the aborted frame. The");
+    TestSpec("        notification should be reset when the frame has been ");
+    TestSpec("        restarted.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC4-Step2");
+    TestCaseStart("TG_RioPacketBuffer-TC4-Step2");
     ---------------------------------------------------------------------------
 
     SetOutboundWriteContent(std_logic_vector(to_unsigned(1, 32)));
@@ -2054,12 +2057,12 @@ begin
       report "Unexpected readFrameAborted." severity error;
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: Write one complete frame then abort a second.");
-    PrintS("Result: The reader should not notice the aborted frame. ");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 3:");
+    TestSpec("Action: Write one complete frame then abort a second.");
+    TestSpec("Result: The reader should not notice the aborted frame. ");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioPacketBuffer-TC4-Step3");
+    TestCaseStart("TG_RioPacketBuffer-TC4-Step3");
     ---------------------------------------------------------------------------
 
     SetOutboundWriteContent(std_logic_vector(to_unsigned(1, 32)));

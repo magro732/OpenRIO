@@ -51,6 +51,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use work.rio_common.all;
+use work.TestPortPackage.all;
 
 package TestRioSerialPackage is
   type MessageSymbol is record
@@ -442,18 +443,18 @@ begin
     TestWait(outboundSymbolWriteEmpty, '1', "Outbound symbol empty.");
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioSerial");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioSerial-TC1");
-    PrintS("Description: Test idle-sequence transmission at startup.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Read transmission port.");
-    PrintS("Result: Idle sequence symbols should be read.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioSerial");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioSerial-TC1");
+    TestSpec("Description: Test idle-sequence transmission at startup.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Read transmission port.");
+    TestSpec("Result: Idle sequence symbols should be read.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC1-Step1");
+    TestCaseStart("TG_RioSerial-TC1-Step1");
     ---------------------------------------------------------------------------
 
     -- Make sure only idle-sequences are transmitted at startup.
@@ -470,17 +471,17 @@ begin
     TestWait(outboundSymbolWriteEmpty, '1', "Outbound symbol empty.");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioSerial-TC2");
-    PrintS("Description: Test idle-sequence and status symbol transmission");
-    PrintS("             when the port has been initialized.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Set port initialized and read transmission port.");
-    PrintS("Result: Idle sequence and status symbols should be read.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioSerial-TC2");
+    TestSpec("Description: Test idle-sequence and status symbol transmission");
+    TestSpec("             when the port has been initialized.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Set port initialized and read transmission port.");
+    TestSpec("Result: Idle sequence and status symbols should be read.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC2-Step1");
+    TestCaseStart("TG_RioSerial-TC2-Step1");
     ---------------------------------------------------------------------------
 
     -- Initialize the port to trigger a change of state.
@@ -514,13 +515,13 @@ begin
     TestWait(outboundSymbolWriteEmpty, '1', "Outbound symbol empty.");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Toggle port initialized pin and check that no status ");
-    PrintS("        symbols are transmitted when uninitialized.");
-    PrintS("Result: Only idle sequences should be read when uninitialized.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Toggle port initialized pin and check that no status ");
+    TestSpec("        symbols are transmitted when uninitialized.");
+    TestSpec("Result: Only idle sequences should be read when uninitialized.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC2-Step2");
+    TestCaseStart("TG_RioSerial-TC2-Step2");
     ---------------------------------------------------------------------------
 
     -- Deassert the port initialized flag.
@@ -569,14 +570,14 @@ begin
     TestWait(outboundSymbolWriteEmpty, '1', "Outbound symbol empty.");
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: Send one error free status symbol to trigger the ");
-    PrintS("        transmission of status symbols with a higher frequency.");
-    PrintS("Result: Idle sequence and status symbols should be read but ");
-    PrintS("        status symbols should be recived more often.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 3:");
+    TestSpec("Action: Send one error free status symbol to trigger the ");
+    TestSpec("        transmission of status symbols with a higher frequency.");
+    TestSpec("Result: Idle sequence and status symbols should be read but ");
+    TestSpec("        status symbols should be recived more often.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC2-Step3");
+    TestCaseStart("TG_RioSerial-TC2-Step3");
     ---------------------------------------------------------------------------
 
     -- A received error-free status triggers transmission of status symbols in
@@ -611,26 +612,26 @@ begin
     TestWait(outboundSymbolWriteEmpty, '1', "Outbound symbol empty.");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 4:");
-    PrintS("Action: Send one errornous status symbol to restart the status ");
-    PrintS("        counting.");
-    PrintS("Result: Idle sequence and status symbols should be read but ");
-    PrintS("        status symbols should still be received more often.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 4:");
+    TestSpec("Action: Send one errornous status symbol to restart the status ");
+    TestSpec("        counting.");
+    TestSpec("Result: Idle sequence and status symbols should be read but ");
+    TestSpec("        status symbols should still be received more often.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC2-Step4");
+    TestCaseStart("TG_RioSerial-TC2-Step4");
     ---------------------------------------------------------------------------
     
     -- REMARK: Add this...
-    PrintR("Not implemented.");
+    TestCaseStart("Not implemented.");
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 5:");
-    PrintS("Action: Send seven additional status symbols.");
-    PrintS("Result: The link should become fully initialized.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 5:");
+    TestSpec("Action: Send seven additional status symbols.");
+    TestSpec("Result: The link should become fully initialized.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC2-Step5");
+    TestCaseStart("TG_RioSerial-TC2-Step5");
     ---------------------------------------------------------------------------
 
     -- Make the link fully initialized by sending 7 additional statuses.
@@ -660,16 +661,16 @@ begin
     TestWait(outboundSymbolWriteEmpty, '1', "Outbound symbol empty.");
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioSerial-TC3");
-    PrintS("Description: Test port reception.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Send an inbound frame with pad after the CRC.");
-    PrintS("Result: The frame should end up in a frame buffer.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioSerial-TC3");
+    TestSpec("Description: Test port reception.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Send an inbound frame with pad after the CRC.");
+    TestSpec("Result: The frame should end up in a frame buffer.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step1");
+    TestCaseStart("TG_RioSerial-TC3-Step1");
     ---------------------------------------------------------------------------
 
     -- Create the frame.
@@ -698,12 +699,12 @@ begin
     TestCompare(inboundFrameWriteEmpty, '1', "Packet was received.");
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Send an inbound frame without a pad after the CRC.");
-    PrintS("Result: The frame should end up in a frame buffer.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Send an inbound frame without a pad after the CRC.");
+    TestSpec("Result: The frame should end up in a frame buffer.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step2");
+    TestCaseStart("TG_RioSerial-TC3-Step2");
     ---------------------------------------------------------------------------
     
     -- Create the frame.
@@ -733,12 +734,12 @@ begin
     TestCompare(inboundFrameWriteEmpty, '1', "Packet was received.");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: Send an inbound frame with maximum size.");
-    PrintS("Result: The frame should end up in a frame buffer.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 3:");
+    TestSpec("Action: Send an inbound frame with maximum size.");
+    TestSpec("Result: The frame should end up in a frame buffer.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step3");
+    TestCaseStart("TG_RioSerial-TC3-Step3");
     ---------------------------------------------------------------------------
     
     -- Create the frame.
@@ -767,12 +768,12 @@ begin
     TestCompare(inboundFrameWriteEmpty, '1', "Packet was received.");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 4:");
-    PrintS("Action: Send two packets without end-of-packet in between.");
-    PrintS("Result: Both packets should be accepted.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 4:");
+    TestSpec("Action: Send two packets without end-of-packet in between.");
+    TestSpec("Result: Both packets should be accepted.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step4");
+    TestCaseStart("TG_RioSerial-TC3-Step4");
     ---------------------------------------------------------------------------
     
     -- Create the first frame.
@@ -819,14 +820,14 @@ begin
     TestCompare(inboundFrameWriteEmpty, '1', "Packet was received.");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 5:");
-    PrintS("Action: Start to send a packet. Abort it with stomp. Then send ");
-    PrintS("        another packet.");
-    PrintS("Result: The first packet should be discarded and the second should");
-    PrintS("        be accepted. The retried packet should be acknowledged.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 5:");
+    TestSpec("Action: Start to send a packet. Abort it with stomp. Then send ");
+    TestSpec("        another packet.");
+    TestSpec("Result: The first packet should be discarded and the second should");
+    TestSpec("        be accepted. The retried packet should be acknowledged.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step5");
+    TestCaseStart("TG_RioSerial-TC3-Step5");
     ---------------------------------------------------------------------------
     
     -- Create a frame, send it and abort it with STOMP.
@@ -880,14 +881,14 @@ begin
     TestCompare(inboundFrameWriteEmpty, '1', "Packet was received.");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 6:");
-    PrintS("Action: Start to send a packet but dont send any payload. Abort it");
-    PrintS("        with stomp. Then send another packet.");
-    PrintS("Result: The first packet should be discarded and the second should");
-    PrintS("        be accepted. The retried packet should be acknowledged.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 6:");
+    TestSpec("Action: Start to send a packet but dont send any payload. Abort it");
+    TestSpec("        with stomp. Then send another packet.");
+    TestSpec("Result: The first packet should be discarded and the second should");
+    TestSpec("        be accepted. The retried packet should be acknowledged.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step6");
+    TestCaseStart("TG_RioSerial-TC3-Step6");
     ---------------------------------------------------------------------------
     
     -- Start the reception of a frame and abort it.
@@ -938,15 +939,15 @@ begin
     TestCompare(inboundFrameWriteEmpty, '1', "Packet was received.");
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 7:");
-    PrintS("Action: Start to send a packet with payload, then send a ");
-    PrintS("        link-request. Then send another packet.");
-    PrintS("Result: The first packet should be canceled without any ");
-    PrintS("        confirmation and a link-response should be returned. The");
-    PrintS("        second packet should be accepted.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 7:");
+    TestSpec("Action: Start to send a packet with payload, then send a ");
+    TestSpec("        link-request. Then send another packet.");
+    TestSpec("Result: The first packet should be canceled without any ");
+    TestSpec("        confirmation and a link-response should be returned. The");
+    TestSpec("        second packet should be accepted.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step7");
+    TestCaseStart("TG_RioSerial-TC3-Step7");
     ---------------------------------------------------------------------------
     
     -- Create a new frame and abort it with a link-request/input-status to
@@ -1003,15 +1004,15 @@ begin
     TestCompare(inboundFrameWriteEmpty, '1', "Packet was received.");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 8:");
-    PrintS("Action: Start to send a packet, no payload, then send a ");
-    PrintS("        link-request. Then send another packet.");
-    PrintS("Result: The first packet should be canceled without any ");
-    PrintS("        confirmation and a link-response should be returned. The");
-    PrintS("        second packet should be accepted.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 8:");
+    TestSpec("Action: Start to send a packet, no payload, then send a ");
+    TestSpec("        link-request. Then send another packet.");
+    TestSpec("Result: The first packet should be canceled without any ");
+    TestSpec("        confirmation and a link-response should be returned. The");
+    TestSpec("        second packet should be accepted.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step8");
+    TestCaseStart("TG_RioSerial-TC3-Step8");
     ---------------------------------------------------------------------------
 
     -- Start a frame then send link-request/input-status to abort it.
@@ -1056,14 +1057,14 @@ begin
     TestCompare(inboundFrameWriteEmpty, '1', "Packet was received.");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 9:");
-    PrintS("Action: Send a packet when no buffers are available. Reset receiver");
-    PrintS("        with link-request.");
-    PrintS("Result: A packet-retry should be transmitted and receiver should");
-    PrintS("        enter input-retry-stopped.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 9:");
+    TestSpec("Action: Send a packet when no buffers are available. Reset receiver");
+    TestSpec("        with link-request.");
+    TestSpec("Result: A packet-retry should be transmitted and receiver should");
+    TestSpec("        enter input-retry-stopped.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step9");
+    TestCaseStart("TG_RioSerial-TC3-Step9");
     ---------------------------------------------------------------------------
 
     -- Indicate the inbound frame queue is full.
@@ -1113,14 +1114,14 @@ begin
     inboundFrameFull <= '0';
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 10:");
-    PrintS("Action: Send a packet when no buffers is available. Reset receiver");
-    PrintS("        with restart-from-retry.");
-    PrintS("Result: A packet-retry should be transmitted and receiver should");
-    PrintS("        enter input-retry-stopped.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 10:");
+    TestSpec("Action: Send a packet when no buffers is available. Reset receiver");
+    TestSpec("        with restart-from-retry.");
+    TestSpec("Result: A packet-retry should be transmitted and receiver should");
+    TestSpec("        enter input-retry-stopped.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step10");
+    TestCaseStart("TG_RioSerial-TC3-Step10");
     ---------------------------------------------------------------------------
 
     -- Indicate the inbound frame queue is full.
@@ -1170,12 +1171,12 @@ begin
     inboundFrameFull <= '0';
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 11:");
-    PrintS("Action: Start a new packet when in input-retry-stopped state.");
-    PrintS("Result: The packet should be discarded.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 11:");
+    TestSpec("Action: Start a new packet when in input-retry-stopped state.");
+    TestSpec("Result: The packet should be discarded.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step11");
+    TestCaseStart("TG_RioSerial-TC3-Step11");
     ---------------------------------------------------------------------------
 
     -- Indicate the inbound frame queue is full.
@@ -1260,14 +1261,14 @@ begin
     TestCompare(inboundFrameWriteEmpty, '1', "Packet was received.");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 12:");
-    PrintS("Action: Send an erronous control-symbol. Then restore with");
-    PrintS("        link-request.");
-    PrintS("Result: Receiver should enter input-error-stopped and return to");
-    PrintS("        normal operation after the link-request was receiver.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 12:");
+    TestSpec("Action: Send an erronous control-symbol. Then restore with");
+    TestSpec("        link-request.");
+    TestSpec("Result: Receiver should enter input-error-stopped and return to");
+    TestSpec("        normal operation after the link-request was receiver.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step12");
+    TestCaseStart("TG_RioSerial-TC3-Step12");
     ---------------------------------------------------------------------------
 
     -- Create, corrupt and send a control symbol.
@@ -1342,13 +1343,13 @@ begin
     TestCompare(inboundFrameWriteEmpty, '1', "Packet was received.");
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 13:");
-    PrintS("Action: Send an erronous packet. Then restore with link-request.");
-    PrintS("Result: Receiver should enter input-error-stopped and return to");
-    PrintS("        normal operation after the link-request was receiver.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 13:");
+    TestSpec("Action: Send an erronous packet. Then restore with link-request.");
+    TestSpec("Result: Receiver should enter input-error-stopped and return to");
+    TestSpec("        normal operation after the link-request was receiver.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC3-Step13");
+    TestCaseStart("TG_RioSerial-TC3-Step13");
     ---------------------------------------------------------------------------
 
     -- Create a packet and send it with a bit error. It should be discarded.
@@ -1413,17 +1414,17 @@ begin
     -- REMARK: Complete with some more error situations: invalid ackId, too
     -- short packet, too long packet, etc...
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioSerial-TC4");
-    PrintS("Description: Test port transmission.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Send an outbound frame.");
-    PrintS("Result: The frame should be read from the frame buffer and ");
-    PrintS("        received as symbols.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioSerial-TC4");
+    TestSpec("Description: Test port transmission.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Send an outbound frame.");
+    TestSpec("Result: The frame should be read from the frame buffer and ");
+    TestSpec("        received as symbols.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step1");
+    TestCaseStart("TG_RioSerial-TC4-Step1");
     ---------------------------------------------------------------------------
     
     -- Create the frame.
@@ -1467,14 +1468,14 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet transmitted");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Send one more outbound packets than there are ackIds.");
-    PrintS("Result: The packets should be fragmented and received in symbols.");
-    PrintS("        The last packet should be delayed and sent once the first");
-    PrintS("        packet has been accepted.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Send one more outbound packets than there are ackIds.");
+    TestSpec("Result: The packets should be fragmented and received in symbols.");
+    TestSpec("        The last packet should be delayed and sent once the first");
+    TestSpec("        packet has been accepted.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step2");
+    TestCaseStart("TG_RioSerial-TC4-Step2");
     ---------------------------------------------------------------------------
     -- REMARK: 32 packet should ideally be supported, not just 31...fix.
     for i in 0 to 4 loop
@@ -1553,12 +1554,12 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: Send an outbound packet with maximum length.");
-    PrintS("Result: The packet should be fragmented and received in symbols.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 3:");
+    TestSpec("Action: Send an outbound packet with maximum length.");
+    TestSpec("Result: The packet should be fragmented and received in symbols.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step3");
+    TestCaseStart("TG_RioSerial-TC4-Step3");
     ---------------------------------------------------------------------------
     
     -- Create the frame.
@@ -1600,13 +1601,13 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 4:");
-    PrintS("Action: Send a packet and confirm it with packet-retry.");
-    PrintS("Result: A restart-from-retry should be transmitted and the packet");
-    PrintS("        should be retransmitted.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 4:");
+    TestSpec("Action: Send a packet and confirm it with packet-retry.");
+    TestSpec("Result: A restart-from-retry should be transmitted and the packet");
+    TestSpec("        should be retransmitted.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step4");
+    TestCaseStart("TG_RioSerial-TC4-Step4");
     ---------------------------------------------------------------------------
     
     -- Create the frame.
@@ -1674,13 +1675,13 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 5:");
-    PrintS("Action: Send a packet and confirm it with packet-not-accepted. ");
-    PrintS("Result: A link-request should be transmitted and the packet should");
-    PrintS("        be retransmitted.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 5:");
+    TestSpec("Action: Send a packet and confirm it with packet-not-accepted. ");
+    TestSpec("Result: A link-request should be transmitted and the packet should");
+    TestSpec("        be retransmitted.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step5");
+    TestCaseStart("TG_RioSerial-TC4-Step5");
     ---------------------------------------------------------------------------
     
     -- Create the frame.
@@ -1749,13 +1750,13 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 6:");
-    PrintS("Action: Let a packet timeout expire. Then answer with link-response.");
-    PrintS("Result: A link-request should be transmitted and the packet should");
-    PrintS("        be retransmitted.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 6:");
+    TestSpec("Action: Let a packet timeout expire. Then answer with link-response.");
+    TestSpec("Result: A link-request should be transmitted and the packet should");
+    TestSpec("        be retransmitted.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step6");
+    TestCaseStart("TG_RioSerial-TC4-Step6");
     ---------------------------------------------------------------------------
     
     -- Create the frame.
@@ -1835,14 +1836,14 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 7:");
-    PrintS("Action: Let a packet timeout expire. Then answer with link-response");
-    Prints("        that indicates that the packet was received.");
-    PrintS("Result: A link-request should be transmitted and the packet should");
-    PrintS("        not be retransmitted.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 7:");
+    TestSpec("Action: Let a packet timeout expire. Then answer with link-response");
+    TestSpec("        that indicates that the packet was received.");
+    TestSpec("Result: A link-request should be transmitted and the packet should");
+    TestSpec("        not be retransmitted.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step7");
+    TestCaseStart("TG_RioSerial-TC4-Step7");
     ---------------------------------------------------------------------------
     
     -- Create the frame.
@@ -1902,13 +1903,13 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 8:");
-    PrintS("Action: Let a packet timeout expire. No more replies.");
-    PrintS("Result: Three link-requests should be transmitted. When the third");
-    PrintS("        times out the link will be restarted.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 8:");
+    TestSpec("Action: Let a packet timeout expire. No more replies.");
+    TestSpec("Result: Three link-requests should be transmitted. When the third");
+    TestSpec("        times out the link will be restarted.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step8");
+    TestCaseStart("TG_RioSerial-TC4-Step8");
     ---------------------------------------------------------------------------
     
     -- Create the frame.
@@ -2024,14 +2025,14 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 9:");
-    PrintS("Action: Let a packet timeout expire. Then answer with totally ");
-    PrintS("        unexpected ackId.");
-    PrintS("Result: A link request should be transmitted and the link should ");
-    PrintS("        be restarted.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 9:");
+    TestSpec("Action: Let a packet timeout expire. Then answer with totally ");
+    TestSpec("        unexpected ackId.");
+    TestSpec("Result: A link request should be transmitted and the link should ");
+    TestSpec("        be restarted.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step9");
+    TestCaseStart("TG_RioSerial-TC4-Step9");
     ---------------------------------------------------------------------------
     
     -- Create the frame.
@@ -2136,12 +2137,12 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 10:");
-    PrintS("Action: Send status with unexpected ackId in normal operation.");
-    PrintS("Result: The transmitter should disregard the error.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 10:");
+    TestSpec("Action: Send status with unexpected ackId in normal operation.");
+    TestSpec("Result: The transmitter should disregard the error.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step10");
+    TestCaseStart("TG_RioSerial-TC4-Step10");
     ---------------------------------------------------------------------------
 
     -- Send a status with unexpected ackId.
@@ -2162,12 +2163,12 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 11:");
-    PrintS("Action: Send packet-retry with unexpected ackId in normal operation.");
-    PrintS("Result: The transmitter should enter output-error-stopped.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 11:");
+    TestSpec("Action: Send packet-retry with unexpected ackId in normal operation.");
+    TestSpec("Result: The transmitter should enter output-error-stopped.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step11");
+    TestCaseStart("TG_RioSerial-TC4-Step11");
     ---------------------------------------------------------------------------
     
     -- Send a packet-retry with unexpected ackId.
@@ -2222,13 +2223,13 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 12:");
-    PrintS("Action: Send packet-accepted with unexpected ackId in normal ");
-    PrintS("        operation.");
-    PrintS("Result: The transmitter should enter output-error-stopped.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 12:");
+    TestSpec("Action: Send packet-accepted with unexpected ackId in normal ");
+    TestSpec("        operation.");
+    TestSpec("Result: The transmitter should enter output-error-stopped.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step12");
+    TestCaseStart("TG_RioSerial-TC4-Step12");
     ---------------------------------------------------------------------------
 
     -- Send a packet-accepted with unexpected ackId.
@@ -2283,12 +2284,12 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 13:");
-    PrintS("Action: Send a packet and then accept it with unexpected ackId.");
-    PrintS("Result: The transmitter should enter output-error-stopped.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 13:");
+    TestSpec("Action: Send a packet and then accept it with unexpected ackId.");
+    TestSpec("Result: The transmitter should enter output-error-stopped.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC4-Step13");
+    TestCaseStart("TG_RioSerial-TC4-Step13");
     ---------------------------------------------------------------------------
     
     -- Create the frame.
@@ -2338,18 +2339,18 @@ begin
     TestCompare(outboundFrameWriteEmpty, '1', "packet pending");
  
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioSerial-TC5");
-    PrintS("Description: Test mixed port transmission and reception.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Start sending an outbound packet and while in transmission, ");
-    PrintS("        start and complete an inbound packet.");
-    PrintS("Result: The ack for the inbound packet should be inserted into the");
-    PrintS("        outbound packet.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioSerial-TC5");
+    TestSpec("Description: Test mixed port transmission and reception.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Start sending an outbound packet and while in transmission, ");
+    TestSpec("        start and complete an inbound packet.");
+    TestSpec("Result: The ack for the inbound packet should be inserted into the");
+    TestSpec("        outbound packet.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSerial-TC5-Step1");
+    TestCaseStart("TG_RioSerial-TC5-Step1");
     ---------------------------------------------------------------------------
 
     -- Send a long outbound frame.

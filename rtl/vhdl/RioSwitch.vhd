@@ -88,9 +88,6 @@ entity RioSwitch is
 
     readFrameEmpty_i : in Array1(SWITCH_PORTS-1 downto 0);
     readFrame_o : out Array1(SWITCH_PORTS-1 downto 0);
-    readFrameRestart_o : out Array1(SWITCH_PORTS-1 downto 0);
-    readFrameAborted_i : in Array1(SWITCH_PORTS-1 downto 0);
-    readContentEmpty_i : in Array1(SWITCH_PORTS-1 downto 0);
     readContent_o : out Array1(SWITCH_PORTS-1 downto 0);
     readContentEnd_i : in Array1(SWITCH_PORTS-1 downto 0);
     readContentData_i : in Array32(SWITCH_PORTS-1 downto 0);
@@ -259,9 +256,6 @@ architecture RioSwitchImpl of RioSwitch is
 
       readFrameEmpty_i : in std_logic;
       readFrame_o : out std_logic;
-      readFrameRestart_o : out std_logic;
-      readFrameAborted_i : in std_logic;
-      readContentEmpty_i : in std_logic;
       readContent_o : out std_logic;
       readContentEnd_i : in std_logic;
       readContentData_i : in std_logic_vector(31 downto 0);
@@ -337,25 +331,34 @@ begin
         PORT_INDEX=>portIndex)
       port map(
         clk=>clk, areset_n=>areset_n,
-        masterCyc_o=>masterCyc(portIndex), masterStb_o=>masterStb(portIndex),
-        masterWe_o=>masterWe(portIndex), masterAddr_o=>masterAddr(portIndex),
+        masterCyc_o=>masterCyc(portIndex),
+        masterStb_o=>masterStb(portIndex),
+        masterWe_o=>masterWe(portIndex),
+        masterAddr_o=>masterAddr(portIndex),
         masterData_o=>masterDataWrite(portIndex),
-        masterData_i=>masterDataRead(portIndex), masterAck_i=>masterAck(portIndex),
-        slaveCyc_i=>slaveCyc(portIndex), slaveStb_i=>slaveStb(portIndex),
-        slaveWe_i=>slaveWe(portIndex), slaveAddr_i=>slaveAddr(portIndex),
+        masterData_i=>masterDataRead(portIndex),
+        masterAck_i=>masterAck(portIndex),
+        slaveCyc_i=>slaveCyc(portIndex),
+        slaveStb_i=>slaveStb(portIndex),
+        slaveWe_i=>slaveWe(portIndex),
+        slaveAddr_i=>slaveAddr(portIndex),
         slaveData_i=>slaveDataWrite(portIndex),
-        slaveData_o=>slaveDataRead(portIndex), slaveAck_o=>slaveAck(portIndex),
+        slaveData_o=>slaveDataRead(portIndex),
+        slaveAck_o=>slaveAck(portIndex),
         lookupStb_o=>masterLookupStb(portIndex),
         lookupAddr_o=>masterLookupAddr(portIndex), 
-        lookupData_i=>masterLookupData(portIndex), lookupAck_i=>masterLookupAck(portIndex),
-        readFrameEmpty_i=>readFrameEmpty_i(portIndex), readFrame_o=>readFrame_o(portIndex), 
-        readFrameRestart_o=>readFrameRestart_o(portIndex),
-        readFrameAborted_i=>readFrameAborted_i(portIndex), 
-        readContentEmpty_i=>readContentEmpty_i(portIndex), readContent_o=>readContent_o(portIndex), 
-        readContentEnd_i=>readContentEnd_i(portIndex), readContentData_i=>readContentData_i(portIndex), 
+        lookupData_i=>masterLookupData(portIndex),
+        lookupAck_i=>masterLookupAck(portIndex),
+        readFrameEmpty_i=>readFrameEmpty_i(portIndex),
+        readFrame_o=>readFrame_o(portIndex),
+        readContent_o=>readContent_o(portIndex), 
+        readContentEnd_i=>readContentEnd_i(portIndex), 
+        readContentData_i=>readContentData_i(portIndex), 
         writeFramePort_o=>open,
-        writeFrameFull_i=>writeFrameFull_i(portIndex), writeFrame_o=>writeFrame_o(portIndex), 
-        writeFrameAbort_o=>writeFrameAbort_o(portIndex), writeContent_o=>writeContent_o(portIndex), 
+        writeFrameFull_i=>writeFrameFull_i(portIndex),
+        writeFrame_o=>writeFrame_o(portIndex), 
+        writeFrameAbort_o=>writeFrameAbort_o(portIndex),
+        writeContent_o=>writeContent_o(portIndex), 
         writeContentData_o=>writeContentData_o(portIndex));
   end generate;
   
@@ -450,9 +453,6 @@ entity SwitchPort is
     -- Physical port frame buffer interface.
     readFrameEmpty_i : in std_logic;
     readFrame_o : out std_logic;
-    readFrameRestart_o : out std_logic;
-    readFrameAborted_i : in std_logic;
-    readContentEmpty_i : in std_logic;
     readContent_o : out std_logic;
     readContentEnd_i : in std_logic;
     readContentData_i : in std_logic_vector(31 downto 0);
@@ -505,11 +505,9 @@ begin
       
       readContent_o <= '0';
       readFrame_o <= '0';
-      readFrameRestart_o <= '0';
     elsif rising_edge(clk) then
       readContent_o <= '0';
       readFrame_o <= '0';
-      readFrameRestart_o <= '0';
 
       case masterState is
 
@@ -947,9 +945,6 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
 
       readFrameEmpty_i : in std_logic;
       readFrame_o : out std_logic;
-      readFrameRestart_o : out std_logic;
-      readFrameAborted_i : in std_logic;
-      readContentEmpty_i : in std_logic;
       readContent_o : out std_logic;
       readContentEnd_i : in std_logic;
       readContentData_i : in std_logic_vector(31 downto 0);
@@ -1308,9 +1303,6 @@ begin
       lookupAck_i=>'1',
       readFrameEmpty_i=>outboundReadFrameEmpty,
       readFrame_o=>outboundReadFrame, 
-      readFrameRestart_o=>open,
-      readFrameAborted_i=>'0', 
-      readContentEmpty_i=>'0',
       readContent_o=>outboundReadContent, 
       readContentEnd_i=>outboundReadContentEnd,
       readContentData_i=>outboundReadContentData, 
@@ -1340,7 +1332,7 @@ begin
   -- REMARK: Use a packet-buffer with a configurable maximum sized packet. The
   -- size of the resulting memory is larger than needed since maintenance
   -- packets never contain more than 8 double-words.
-  PacketQueue: RioPacketBuffer
+  PacketQueue: RioFrameBuffer
     generic map(SIZE_ADDRESS_WIDTH=>1, CONTENT_ADDRESS_WIDTH=>7)
     port map(
       clk=>clk, areset_n=>areset_n, 
@@ -1353,7 +1345,8 @@ begin
       inboundReadFrame_i=>inboundReadFrame, 
       inboundReadFrameRestart_i=>'0', 
       inboundReadFrameAborted_o=>open, 
-      inboundReadContentEmpty_o=>open, 
+      inboundReadContentEmpty_o=>open,
+      inboundReadFrameSize_o=>open,
       inboundReadContent_i=>inboundReadContent, 
       inboundReadContentEnd_o=>inboundReadContentEnd, 
       inboundReadContentData_o=>inboundReadContentData, 
@@ -1365,7 +1358,8 @@ begin
       outboundReadFrameEmpty_o=>outboundReadFrameEmpty, 
       outboundReadFrame_i=>outboundReadFrame, 
       outboundReadFrameRestart_i=>'0', 
-      outboundReadFrameAborted_o=>open, 
+      outboundReadFrameAborted_o=>open,
+      outboundReadFrameSize_o=>open,
       outboundReadContentEmpty_o=>open, 
       outboundReadContent_i=>outboundReadContent, 
       outboundReadContentEnd_o=>outboundReadContentEnd, 
@@ -2597,8 +2591,8 @@ begin
   -- Interconnection matrix.
   -----------------------------------------------------------------------------
   Interconnect: for i in 0 to WIDTH-1 generate
-    slaveCyc_o(i) <= masterCyc_i(selectedMaster) when (selectedSlave = i) else '0';
-    slaveStb_o(i) <= masterStb_i(selectedMaster) when (selectedSlave = i) else '0';
+    slaveCyc_o(i) <= masterCyc_i(selectedMaster) when ((activeCycle = '1') and (selectedSlave = i)) else '0';
+    slaveStb_o(i) <= masterStb_i(selectedMaster) when ((activeCycle = '1') and (selectedSlave = i)) else '0';
     slaveWe_o(i) <= masterWe_i(selectedMaster);
     slaveAddr_o(i) <= masterAddr_i(selectedMaster);
     slaveData_o(i) <= masterData_i(selectedMaster);
