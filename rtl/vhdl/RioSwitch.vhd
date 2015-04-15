@@ -10,7 +10,6 @@
 -- entity RioSwitch.
 -- 
 -- To Do:
--- - Add support for portWrite maintenance packets.
 -- - Add a real crossbar as interconnect.
 -- - Change the internal addressing to one-hot.
 -- - Remove acknowledge cycle when transfering packets between ports to double
@@ -20,9 +19,6 @@
 --   using the interconnect. This will allow alternative routes since the
 --   sending port can see if a receiving port is up or not.
 -- - Add support for extended route.
--- - Add validity-bit to know if a route has been activly set for a particular
---   deviceId. Currently, we rely on that the routing table memory is
---   initialized in the enumeration or at device startup.
 -- 
 -- Author(s): 
 -- - Magnus Rosenius, magro732@opencores.org 
@@ -1844,7 +1840,7 @@ begin
                 -----------------------------------------------------------------
 
                 -- One feature only, 0x0003=Generic End Point Free Device.
-                configDataReadInternal(31 downto 16) <= x"0200";  --next EF_PTR is Error/HotSwap
+                configDataReadInternal(31 downto 16) <= x"2100";  --next EF_PTR is Error/HotSwap
                 configDataReadInternal(15 downto 0) <= x"0003";
                 
               when x"000120" =>
@@ -1877,14 +1873,14 @@ begin
               --------------------------------------------------------------------
               -- Extended features. (Error/)HotSwap Extensions Register Block
               --------------------------------------------------------------------
-              when x"000200" => --0x00
+              when x"002100" => --0x00
                  -----------------------------------------------------------------
                  -- Error Managment/HotSwap Extensions Block Header.
                  -----------------------------------------------------------------
                  configDataReadInternal(31 downto 16) <= x"0000";  --Next EF_PTR is N/A
                  configDataReadInternal(15 downto  0) <= x"0017";  --EF_ID=0x0017; only HotSwap part of error management is supported (0x0007=Error management, with or without hot swap support)
                  --
-              when x"000204" => --0x04
+              when x"002104" => --0x04
                  -----------------------------------------------------------------
                  -- Error Managment/HotSwap Extensions Block CAR.
                  -----------------------------------------------------------------
@@ -1894,7 +1890,7 @@ begin
                  configDataReadInternal(28) <= LTlayerErrorCaptureFifoSupport;   --Logical/Transport Layer Error Capture FIFO: 0=may not be supported, 1=full support   ****check this bit!!****
                  configDataReadInternal(27 downto  0) <= (others=>'0');
                  --
-              when x"000228" => --0x28
+              when x"002128" => --0x28
                  -----------------------------------------------------------------
                  -- Port Write Target deviceID CSR
                  -----------------------------------------------------------------
@@ -1912,7 +1908,7 @@ begin
                --configDataReadInternal(14)           <= Dev32_PW;            --'0'=devID is controlled by Dev8_or_16 field, '1'=dev32 deviceID
                  configDataReadInternal(14 downto  0) <= (others=>'0');       --Reserved bits.
                  --
-           -- when x"00022C" => --0x2C
+           -- when x"00212C" => --0x2C
            --    -----------------------------------------------------------------
            --    -- Packet Time-to-live CSR
            --    -----------------------------------------------------------------
@@ -1923,7 +1919,7 @@ begin
            --    configDataReadInternal(31 downto 16) <= PacketTimeToLiveValue; --Maximum time a packet is allowed to exist within a switch device. 0xFFFF=100ms+-34%, 0=timeout is disabled.
            --    configDataReadInternal(15 downto  0) <= (others=>'0');
            --    --
-           -- when x"000230" => --0x30
+           -- when x"002130" => --0x30
            --    -----------------------------------------------------------------
            --    -- Port-write DEV32 Target deviceID CSR
            --    -----------------------------------------------------------------
@@ -1933,7 +1929,7 @@ begin
            --    
            --    configDataReadInternal <= Dev32_deviceID;                   --ID to use when Dev32_PW bit is set.
            --    --
-              when x"000234" => --0x34
+              when x"002134" => --0x34
                  -----------------------------------------------------------------
                  -- Port Write Transmission Control CSR
                  -----------------------------------------------------------------
@@ -1946,15 +1942,15 @@ begin
                  --
        ---------------------------------------------------------------------------
        --        -- Not yet implemented: Error management
-       --     when x"000208" => -- 0x08  Logical/Transport Layer Error Detect CSR
+       --     when x"002108" => -- 0x08  Logical/Transport Layer Error Detect CSR
        --                       configDataReadInternal <= LogicalTransportLayerErrorDetectCSR;
-       --     when x"00020C" |  -- 0x0C  Logical/Transport Layer Error Enable CSR
-       --          x"000210" |  -- 0x10  Logical/Transport Layer High Address Capture SCR
-       --          x"000214" |  -- 0x14  Logical/Transport Layer Address Capture SCR
-       --          x"000218" |  -- 0x18  Logical/Transport Layer Device ID Capture CSR
-       --          x"00021C" |  -- 0x1C  Logical/Transport Layer Control Capture CSR
-       --          x"000220" |  -- 0x20  Logical/Transport Layer Dev32 Destination ID Capture CSR
-       --          x"000224" => -- 0x24  Logical/Transport Layer Dev32 Source ID Capture CSR
+       --     when x"00210C" |  -- 0x0C  Logical/Transport Layer Error Enable CSR
+       --          x"002110" |  -- 0x10  Logical/Transport Layer High Address Capture SCR
+       --          x"002114" |  -- 0x14  Logical/Transport Layer Address Capture SCR
+       --          x"002118" |  -- 0x18  Logical/Transport Layer Device ID Capture CSR
+       --          x"00211C" |  -- 0x1C  Logical/Transport Layer Control Capture CSR
+       --          x"002120" |  -- 0x20  Logical/Transport Layer Dev32 Destination ID Capture CSR
+       --          x"002124" => -- 0x24  Logical/Transport Layer Dev32 Source ID Capture CSR
        --                       configDataReadInternal <= (others=>'0');
                  -----------------------------------------------------------------
 
@@ -1971,7 +1967,7 @@ begin
 
                   -----------------------------------------------------
                   --Error Managment/HotSwap **Port related** Registers:
-                  if unsigned(configAdr) = (x"000240" + (x"000040"*portIndex)) then
+                  if unsigned(configAdr) = (x"002140" + (x"000040"*portIndex)) then
                      -----------------------------------------------------------------
                      -- Port N Error Detect CSR.
                      -----------------------------------------------------------------
@@ -1986,7 +1982,7 @@ begin
                      --
                      configDataReadInternal <= PortNerrorDetect_CSR(portIndex);
                      --
-                  elsif unsigned(configAdr) = (x"000244" + (x"000040"*portIndex)) then
+                  elsif unsigned(configAdr) = (x"002144" + (x"000040"*portIndex)) then
                      -----------------------------------------------------------------
                      -- Port N Error Rate Enable CSR.
                      -----------------------------------------------------------------
@@ -2002,7 +1998,7 @@ begin
                      configDataReadInternal(28) <= LinkUninitToOkTransitionEnable(portIndex);      -- Enable event notification for when the link has transitioned from a link uninitialized to link initialized state.
                      configDataReadInternal(27 downto 0) <= (others=>'0');
                      --
-                  elsif unsigned(configAdr) = (x"000270" + (x"000040"*portIndex)) then
+                  elsif unsigned(configAdr) = (x"002170" + (x"000040"*portIndex)) then
                      -----------------------------------------------------------------
                      -- Port N Link Uninit Discard Timer CSR.
                      -----------------------------------------------------------------
@@ -2013,7 +2009,7 @@ begin
                      configDataReadInternal(31 downto 8) <= LinkUninitTimeout(portIndex);   --0xFFFFFF shall correspond to 6-12 s, if 0 the discard timer shall be disabled.
                      configDataReadInternal( 7 downto 0) <= (others=>'0');
                      --
-         --       elsif unsigned(configAdr) = (x"00027C" + (x"000040"*portIndex)) then
+         --       elsif unsigned(configAdr) = (x"00217C" + (x"000040"*portIndex)) then
          --          -----------------------------------------------------------------
          --          -- Port N FIFO Error Detect CSR. (Not required for HotSwap according Part 8:Table 2-4, but contain hotSwap bits if bit 2 of Error Management/HotSwap Extension block CAR is set!
          --          -----------------------------------------------------------------
@@ -2025,19 +2021,19 @@ begin
          --          --
          ---------------------------------------------------------------------------
          --          -- Not yet implemented: Error management
-         --       elsif (unsigned(configAdr) = (x"000248" + (x"000040"*portIndex))) or  -- Port n Attributes Capture CSR
-         --             (unsigned(configAdr) = (x"00024C" + (x"000040"*portIndex))) or  -- Port n Capture 0 CSR
-         --             (unsigned(configAdr) = (x"000250" + (x"000040"*portIndex))) or  -- Port n Capture 1 CSR
-         --             (unsigned(configAdr) = (x"000254" + (x"000040"*portIndex))) or  -- Port n Capture 2 CSR
-         --             (unsigned(configAdr) = (x"000258" + (x"000040"*portIndex))) or  -- Port n Capture 3 CSR
-         --             (unsigned(configAdr) = (x"00025C" + (x"000040"*portIndex))) or  -- Port n Capture 4 CSR
-         --             (unsigned(configAdr) = (x"000260" + (x"000040"*portIndex))) or  -- Reserved
-         --             (unsigned(configAdr) = (x"000264" + (x"000040"*portIndex))) or  -- Reserved
-         --             (unsigned(configAdr) = (x"000268" + (x"000040"*portIndex))) or  -- Port n Error Rate CSR
-         --             (unsigned(configAdr) = (x"00026C" + (x"000040"*portIndex))) or  -- Port n Error Rate Threshold CSR
-         --             (unsigned(configAdr) = (x"000274" + (x"000040"*portIndex))) or  -- Reserved
-         --             (unsigned(configAdr) = (x"000278" + (x"000040"*portIndex))) or  -- Reserved
-         --           --(unsigned(configAdr) = (x"00027C" + (x"000040"*portIndex)))     -- Port n Error Detect FIFO CSR
+         --       elsif (unsigned(configAdr) = (x"002148" + (x"000040"*portIndex))) or  -- Port n Attributes Capture CSR
+         --             (unsigned(configAdr) = (x"00214C" + (x"000040"*portIndex))) or  -- Port n Capture 0 CSR
+         --             (unsigned(configAdr) = (x"002150" + (x"000040"*portIndex))) or  -- Port n Capture 1 CSR
+         --             (unsigned(configAdr) = (x"002154" + (x"000040"*portIndex))) or  -- Port n Capture 2 CSR
+         --             (unsigned(configAdr) = (x"002158" + (x"000040"*portIndex))) or  -- Port n Capture 3 CSR
+         --             (unsigned(configAdr) = (x"00215C" + (x"000040"*portIndex))) or  -- Port n Capture 4 CSR
+         --             (unsigned(configAdr) = (x"002160" + (x"000040"*portIndex))) or  -- Reserved
+         --             (unsigned(configAdr) = (x"002164" + (x"000040"*portIndex))) or  -- Reserved
+         --             (unsigned(configAdr) = (x"002168" + (x"000040"*portIndex))) or  -- Port n Error Rate CSR
+         --             (unsigned(configAdr) = (x"00216C" + (x"000040"*portIndex))) or  -- Port n Error Rate Threshold CSR
+         --             (unsigned(configAdr) = (x"002174" + (x"000040"*portIndex))) or  -- Reserved
+         --             (unsigned(configAdr) = (x"002178" + (x"000040"*portIndex))) or  -- Reserved
+         --           --(unsigned(configAdr) = (x"00217C" + (x"000040"*portIndex)))     -- Port n Error Detect FIFO CSR
          --       then
          --          configDataReadInternal <= (others=>'0');
          --          --
