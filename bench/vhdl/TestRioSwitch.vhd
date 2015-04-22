@@ -101,6 +101,7 @@ architecture TestRioSwitchImpl of TestRioSwitch is
       linkInitialized_i : in Array1(SWITCH_PORTS-1 downto 0);
       outputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
       inputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
+      portDisable_o : out Array1(SWITCH_PORTS-1 downto 0);    
       
       localAckIdWrite_o : out Array1(SWITCH_PORTS-1 downto 0);
       clrOutstandingAckId_o : out Array1(SWITCH_PORTS-1 downto 0);
@@ -188,6 +189,7 @@ architecture TestRioSwitchImpl of TestRioSwitch is
   signal linkInitialized : Array1(PORTS-1 downto 0);
   signal outputPortEnable : Array1(PORTS-1 downto 0);
   signal inputPortEnable : Array1(PORTS-1 downto 0);
+  signal portDisable : Array1(PORTS-1 downto 0);
       
   signal localAckIdWrite : Array1(PORTS-1 downto 0);
   signal clrOutstandingAckId : Array1(PORTS-1 downto 0);
@@ -256,6 +258,7 @@ begin
       portLinkTimeout_o=>portLinkTimeout,
       linkInitialized_i=>linkInitialized,
       outputPortEnable_o=>outputPortEnable, inputPortEnable_o=>inputPortEnable,
+      portDisable_o=>portDisable,
       localAckIdWrite_o=>localAckIdWrite, 
       clrOutstandingAckId_o=>clrOutstandingAckId, 
       inboundAckId_o=>inboundAckIdWrite, 
@@ -626,7 +629,7 @@ begin
     ---------------------------------------------------------------------------
 
     ReadConfig32(portIndex=>6, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"06", address=>x"000034", data=>x"00000800");
+                 tid=>x"06", address=>x"000034", data=>x"000007ff");
 
     ExchangeFrames;
 

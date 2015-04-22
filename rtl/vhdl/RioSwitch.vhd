@@ -93,6 +93,7 @@ entity RioSwitch is
     linkInitialized_i : in Array1(SWITCH_PORTS-1 downto 0);
     outputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
     inputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
+    portDisable_o : out Array1(SWITCH_PORTS-1 downto 0);
 
     localAckIdWrite_o : out Array1(SWITCH_PORTS-1 downto 0);
     clrOutstandingAckId_o : out Array1(SWITCH_PORTS-1 downto 0);
@@ -204,6 +205,7 @@ architecture RioSwitchImpl of RioSwitch is
       linkInitialized_i : in Array1(SWITCH_PORTS-1 downto 0);
       outputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
       inputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
+      portDisable_o : out Array1(SWITCH_PORTS-1 downto 0);
       localAckIdWrite_o : out Array1(SWITCH_PORTS-1 downto 0);
       clrOutstandingAckId_o : out Array1(SWITCH_PORTS-1 downto 0);
       inboundAckId_o : out Array5(SWITCH_PORTS-1 downto 0);
@@ -389,6 +391,7 @@ begin
       portLinkTimeout_o=>portLinkTimeout_o,
       linkInitialized_i=>linkInitialized_i,
       outputPortEnable_o=>outputPortEnable_o, inputPortEnable_o=>inputPortEnable_o,
+      portDisable_o=>portDisable_o,
       localAckIdWrite_o=>localAckIdWrite_o, clrOutstandingAckId_o=>clrOutstandingAckId_o, 
       inboundAckId_o=>inboundAckId_o, outstandingAckId_o=>outstandingAckId_o, 
       outboundAckId_o=>outboundAckId_o, inboundAckId_i=>inboundAckId_i, 
@@ -886,6 +889,7 @@ entity SwitchPortMaintenance is
     linkInitialized_i : in Array1(SWITCH_PORTS-1 downto 0);
     outputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
     inputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
+    portDisable_o : out Array1(SWITCH_PORTS-1 downto 0);
     localAckIdWrite_o : out Array1(SWITCH_PORTS-1 downto 0);
     clrOutstandingAckId_o : out Array1(SWITCH_PORTS-1 downto 0);
     inboundAckId_o : out Array5(SWITCH_PORTS-1 downto 0);
@@ -1190,6 +1194,7 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
   signal portLinkTimeout : std_logic_vector(23 downto 0);
   signal outputPortEnable : Array1(SWITCH_PORTS-1 downto 0);
   signal inputPortEnable : Array1(SWITCH_PORTS-1 downto 0);
+  signal portDisable : Array1(SWITCH_PORTS-1 downto 0);
   
   constant LogicalTransportLayerErrorDetectCSR : std_logic_vector(31 downto 0) := (others=>'0');
   
@@ -1590,6 +1595,7 @@ begin
   portLinkTimeout_o  <= portLinkTimeout;
   outputPortEnable_o <= outputPortEnable;
   inputPortEnable_o  <=  inputPortEnable;
+  portDisable_o <= portDisable;
 
   configStb_o <= '1' when ((configStb = '1') and (configAdr(23 downto 16) /= x"00")) else '0';
   configStbInternal <= '1' when ((configStb = '1') and (configAdr(23 downto 16) = x"00")) else '0';
@@ -1623,6 +1629,7 @@ begin
       -- REMARK: These should be set to zero when a port gets initialized...
       outputPortEnable <= (others => '0');
       inputPortEnable <= (others => '0');
+      portDisable <= (others => '0');
 
       localAckIdWrite_o <= (others => '0');
       
@@ -1751,7 +1758,7 @@ begin
 
                 -- Max_destId.
                 -- Support 2048 addresses.
-                configDataReadInternal(15 downto 0) <= x"0800";
+                configDataReadInternal(15 downto 0) <= x"07ff";
                 
               when x"000068" =>
                 -----------------------------------------------------------------
@@ -2157,7 +2164,10 @@ begin
                     configDataReadInternal(26 downto 24) <= (others=>'0');
 
                     -- Port disable.
-                    configDataReadInternal(23) <= '0';
+                    if (configWe = '1') then
+                      portDisable(portIndex) <= configDataWrite(23);
+                    end if;
+                    configDataReadInternal(23) <= portDisable(portIndex);
                     
                     -- Output Port Enable.
                     if (configWe = '1') then
