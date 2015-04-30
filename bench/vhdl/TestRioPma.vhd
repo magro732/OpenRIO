@@ -71,13 +71,13 @@ architecture TestRioPmaImpl of TestRioPma is
       realign_i : in std_logic;
       aligned_o : out std_logic;
       
-      outboundData_i : in std_logic_vector(0 to 9);
+      outboundCodegroup_i : in std_logic_vector(0 to 9);
       outboundRead_o : out std_logic;
       inboundWrite_o : out std_logic;
-      inboundData_o : out std_logic_vector(0 to 9);
+      inboundCodegroup_o : out std_logic_vector(0 to 9);
 
-      in_i : in std_logic;
-      out_o : out std_logic);
+      serial_i : in std_logic;
+      serial_o : out std_logic);
   end component;
   
   signal clkFast, clkSlow : std_logic;
@@ -110,10 +110,10 @@ begin
   begin
     clkFast <= '0';
     wait for 4 ns;
-    wait for 850 ps;
+    wait for 90 ps;
     clkFast <= '1';
     wait for 4 ns;
-    wait for 850 ps;
+    wait for 90 ps;
   end process;
  
   process
@@ -174,9 +174,9 @@ begin
       clk=>clkFast,
       areset_n=>areset_n,
       realign_i=>realign, aligned_o=>alignedFast,
-      outboundData_i=>outboundDataFast, outboundRead_o=>outboundReadFast,
-      inboundWrite_o=>inboundWriteFast, inboundData_o=>inboundDataFast,
-      in_i=>inputFast, out_o=>outputFast);
+      outboundCodegroup_i=>outboundDataFast, outboundRead_o=>outboundReadFast,
+      inboundWrite_o=>inboundWriteFast, inboundCodegroup_o=>inboundDataFast,
+      serial_i=>inputFast, serial_o=>outputFast);
   
   -----------------------------------------------------------------------------
   -- Testing a slower clock.
@@ -185,10 +185,10 @@ begin
   begin
     clkSlow <= '0';
     wait for 5 ns;
-    wait for 150 ps;
+    wait for 10 ps;
     clkSlow <= '1';
     wait for 5 ns;
-    wait for 150 ps;
+    wait for 10 ps;
   end process;
   
   process
@@ -236,9 +236,9 @@ begin
       clk=>clkSlow,
       areset_n=>areset_n,
       realign_i=>realign, aligned_o=>alignedSlow,
-      outboundData_i=>outboundDataSlow, outboundRead_o=>outboundReadSlow,
-      inboundWrite_o=>inboundWriteSlow, inboundData_o=>inboundDataSlow,
-      in_i=>inputSlow, out_o=>outputSlow);
+      outboundCodegroup_i=>outboundDataSlow, outboundRead_o=>outboundReadSlow,
+      inboundWrite_o=>inboundWriteSlow, inboundCodegroup_o=>inboundDataSlow,
+      serial_i=>inputSlow, serial_o=>outputSlow);
   
 end architecture;
     

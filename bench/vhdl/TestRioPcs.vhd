@@ -519,7 +519,6 @@ end architecture;
 
 
 
--- REMARK: This is a copy from TestRioSerial, convert it to be able to use it here..
 -------------------------------------------------------------------------------
 -- 
 -------------------------------------------------------------------------------
@@ -529,6 +528,7 @@ use ieee.numeric_std.all;
 library std;
 use std.textio.all;
 use work.rio_common.all;
+-- REMARK: Compile TestRioSerial.vhd first to resolve the TestRioSerialPackage.
 use work.TestRioSerialPackage.all;
 use work.TestPortPackage.all;
 

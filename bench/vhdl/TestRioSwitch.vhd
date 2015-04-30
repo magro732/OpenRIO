@@ -1252,7 +1252,7 @@ begin
     randomPayload.length := 5;
     CreateRandomPayload(randomPayload.data, seed1, seed2);
     RouteFrame(sourcePortIndex=>0, destinationPortIndex=>1,
-               destinationId=>x"0000", sourceId=>x"ffff", payload=>randomPayload);
+               destinationId=>x"0004", sourceId=>x"ffff", payload=>randomPayload);
 
     -- Frame on port 1 to port 2.
     randomPayload1.length := 6;

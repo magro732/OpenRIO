@@ -1870,6 +1870,16 @@ begin
       report "Unexpected readWindowEmpty." severity error;
 
     ---------------------------------------------------------------------------
+    -- Test completed.
+    ---------------------------------------------------------------------------
+    
+    TestEnd;
+
+    -- REMARK: The tests below are for reading out a frame before it is
+    -- complete. It is currently not used in the other code and is therefor not
+    -- required to work. Add it later if the need arises...
+
+    ---------------------------------------------------------------------------
     TestSpec("-----------------------------------------------------------------");
     TestSpec("TG_RioFrameBuffer");
     TestSpec("-----------------------------------------------------------------");
@@ -2155,11 +2165,6 @@ begin
     assert (outboundReadFrameAborted = '0')
       report "Unexpected readFrameAborted." severity error;
 
-    ---------------------------------------------------------------------------
-    -- Test completed.
-    ---------------------------------------------------------------------------
-    
-    TestEnd;
   end process;
 
   -----------------------------------------------------------------------------
