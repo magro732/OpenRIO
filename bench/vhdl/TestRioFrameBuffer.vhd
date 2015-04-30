@@ -6,7 +6,7 @@
 -- http://www.opencores.org/cores/rio/
 -- 
 -- Description
--- Contains automatic simulation test code to verify a RioPacketBufferWindow
+-- Contains automatic simulation test code to verify a RioFrameBufferWindow
 -- implementation.
 -- 
 -- To Do:
@@ -45,7 +45,7 @@
 -------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
--- TestRioPacketBuffer.
+-- TestRioFrameBuffer.
 -------------------------------------------------------------------------------
 
 library ieee;
@@ -59,18 +59,24 @@ use work.TestPortPackage.all;
 
 
 -------------------------------------------------------------------------------
--- Entity for TestRioPacketBuffer.
+-- Entity for TestRioFrameBuffer.
 -------------------------------------------------------------------------------
-entity TestRioPacketBuffer is
+entity TestRioFrameBuffer is
 end entity;
 
 
 -------------------------------------------------------------------------------
--- Architecture for TestRioPacketBuffer.
+-- Architecture for TestRioFrameBuffer.
 -------------------------------------------------------------------------------
-architecture TestRioPacketBufferImpl of TestRioPacketBuffer is
+architecture TestRioFrameBufferImpl of TestRioFrameBuffer is
   
-  component RioPacketBufferWindow is
+  component RioFrameBufferWindow is
+    generic(
+      SIZE_ADDRESS_WIDTH : natural := 6;
+      CONTENT_ADDRESS_WIDTH : natural := 8;
+      CONTENT_WIDTH : natural := 32;
+      MAX_PACKET_SIZE : natural := 69;
+      READ_CONTENT_END_DATA_VALID : boolean);
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -368,9 +374,9 @@ begin
 
     ---------------------------------------------------------------------------
     TestSpec("-----------------------------------------------------------------");
-    TestSpec("TG_RioPacketBuffer");
+    TestSpec("TG_RioFrameBuffer");
     TestSpec("-----------------------------------------------------------------");
-    TestSpec("TG_RioPacketBuffer-TC1");
+    TestSpec("TG_RioFrameBuffer-TC1");
     TestSpec("Description: Test normal operation without using the window. Only");
     TestSpec("             full frames are tested.");
     TestSpec("Requirement: XXXXX");
@@ -379,7 +385,7 @@ begin
     TestSpec("Action: Complete a small frame and read it.");
     TestSpec("Result: The read frame should be equal to the one written.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC1-Step1");
+    TestCaseStart("TG_RioFrameBuffer-TC1-Step1");
     ---------------------------------------------------------------------------
     -- REMARK: Update testcases for inbound and outbound...
 
@@ -429,7 +435,7 @@ begin
     TestSpec("Action: Write a rio maximum size frame and read it.");
     TestSpec("Result: The read frame should be equal to the one written.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC1-Step2");
+    TestCaseStart("TG_RioFrameBuffer-TC1-Step2");
     ---------------------------------------------------------------------------
 
     for i in 0 to 68 loop
@@ -478,7 +484,7 @@ begin
     TestSpec("        the memory.");
     TestSpec("Result: The frame buffer should accept 63 frames.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC1-Step3");
+    TestCaseStart("TG_RioFrameBuffer-TC1-Step3");
     ---------------------------------------------------------------------------
 
     ---------------------------------------------------------------------------
@@ -570,7 +576,7 @@ begin
     TestSpec("Action: Fill the memory to its limit.");
     TestSpec("Result: The frame buffer should accept 255-69 words.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC1-Step4");
+    TestCaseStart("TG_RioFrameBuffer-TC1-Step4");
     ---------------------------------------------------------------------------
 
     for i in 0 to 186 loop
@@ -612,7 +618,7 @@ begin
 
     ---------------------------------------------------------------------------
     TestSpec("-----------------------------------------------------------------");
-    TestSpec("TG_RioPacketBuffer-TC2");
+    TestSpec("TG_RioFrameBuffer-TC2");
     TestSpec("Description: Test operation when using the window.");
     TestSpec("Requirement: XXXXX");
     TestSpec("-----------------------------------------------------------------");
@@ -621,7 +627,7 @@ begin
     TestSpec("Result: The window empty flag and the read frame empty flag should");
     TestSpec("        be updated and it should be possible to read the frame again.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC2-Step1");
+    TestCaseStart("TG_RioFrameBuffer-TC2-Step1");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -717,7 +723,7 @@ begin
     TestSpec("Action: Add two frames and test the window accesses.");
     TestSpec("Result: .");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC2-Step2");
+    TestCaseStart("TG_RioFrameBuffer-TC2-Step2");
     ---------------------------------------------------------------------------
 
     ---------------------------------------------------------------------------
@@ -958,7 +964,7 @@ begin
     TestSpec("Action: Add maximum number of frames and test the window accesses.");
     TestSpec("Result: The buffer should be full and not accept more frames.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC2-Step3");
+    TestCaseStart("TG_RioFrameBuffer-TC2-Step3");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1138,7 +1144,7 @@ begin
     TestSpec("Action: Add maximum number of words and test the window accesses.");
     TestSpec("Result: The content memory should be full.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC2-Step4");
+    TestCaseStart("TG_RioFrameBuffer-TC2-Step4");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1346,7 +1352,7 @@ begin
     TestSpec("Action: Add maximum number of words -1 and test the window accesses.");
     TestSpec("Result: The content memory should not accept more frames.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC2-Step5");
+    TestCaseStart("TG_RioFrameBuffer-TC2-Step5");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1468,7 +1474,7 @@ begin
     TestSpec("Result: The readContentEnd flag should not be changed when frames");
     TestSpec("        are removed.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC2-Step6");
+    TestCaseStart("TG_RioFrameBuffer-TC2-Step6");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1606,9 +1612,9 @@ begin
     
     ---------------------------------------------------------------------------
     TestSpec("-----------------------------------------------------------------");
-    TestSpec("TG_RioPacketBuffer");
+    TestSpec("TG_RioFrameBuffer");
     TestSpec("-----------------------------------------------------------------");
-    TestSpec("TG_RioPacketBuffer-TC3");
+    TestSpec("TG_RioFrameBuffer-TC3");
     TestSpec("Description: Test operation when restarting and aborting frames.");
     TestSpec("Requirement: XXXXX");
     TestSpec("-----------------------------------------------------------------");
@@ -1616,7 +1622,7 @@ begin
     TestSpec("Action: Write one frame and abort it.");
     TestSpec("Result: The aborted frame should be discarded.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC3-Step1");
+    TestCaseStart("TG_RioFrameBuffer-TC3-Step1");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1651,7 +1657,7 @@ begin
     TestSpec("Result: The first frame should remain and the aborted should be ");
     TestSpec("        discarded.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC3-Step2");
+    TestCaseStart("TG_RioFrameBuffer-TC3-Step2");
     ---------------------------------------------------------------------------
 
     for i in 0 to 3 loop
@@ -1782,7 +1788,7 @@ begin
     TestSpec("Action: Write one full frame then read one that is restarted.");
     TestSpec("Result: The content of the first frame should be read twice. ");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC3-Step3");
+    TestCaseStart("TG_RioFrameBuffer-TC3-Step3");
     ---------------------------------------------------------------------------
 
     for i in 0 to 3 loop
@@ -1865,9 +1871,9 @@ begin
 
     ---------------------------------------------------------------------------
     TestSpec("-----------------------------------------------------------------");
-    TestSpec("TG_RioPacketBuffer");
+    TestSpec("TG_RioFrameBuffer");
     TestSpec("-----------------------------------------------------------------");
-    TestSpec("TG_RioPacketBuffer-TC4");
+    TestSpec("TG_RioFrameBuffer-TC4");
     TestSpec("Description: Test operation when partial frames are read.");
     TestSpec("Requirement: XXXXX");
     TestSpec("-----------------------------------------------------------------");
@@ -1875,7 +1881,7 @@ begin
     TestSpec("Action: Write a one word frame and read it before it is completed.");
     TestSpec("Result: Empty signals should reflect the status of the frame.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC4-Step1");
+    TestCaseStart("TG_RioFrameBuffer-TC4-Step1");
     ---------------------------------------------------------------------------
 
     assert (outboundWriteFrameFull = '0')
@@ -1945,7 +1951,7 @@ begin
     TestSpec("        notification should be reset when the frame has been ");
     TestSpec("        restarted.");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC4-Step2");
+    TestCaseStart("TG_RioFrameBuffer-TC4-Step2");
     ---------------------------------------------------------------------------
 
     SetOutboundWriteContent(std_logic_vector(to_unsigned(1, 32)));
@@ -2062,7 +2068,7 @@ begin
     TestSpec("Action: Write one complete frame then abort a second.");
     TestSpec("Result: The reader should not notice the aborted frame. ");
     ---------------------------------------------------------------------------
-    TestCaseStart("TG_RioPacketBuffer-TC4-Step3");
+    TestCaseStart("TG_RioFrameBuffer-TC4-Step3");
     ---------------------------------------------------------------------------
 
     SetOutboundWriteContent(std_logic_vector(to_unsigned(1, 32)));
@@ -2160,7 +2166,8 @@ begin
   -- Instantiate the testobject.
   -----------------------------------------------------------------------------
 
-  TestPacketBuffer: RioPacketBufferWindow
+  TestPacketBuffer: RioFrameBufferWindow
+    generic map(READ_CONTENT_END_DATA_VALID=>true)
     port map(
       clk=>clk, areset_n=>areset_n, 
       inboundWriteFrameFull_o=>inboundWriteFrameFull,

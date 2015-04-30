@@ -250,9 +250,7 @@ begin
       writeFrame_o=>writeFrame, writeFrameAbort_o=>writeFrameAbort, 
       writeContent_o=>writeContent, writeContentData_o=>writeContentData, 
       readFrameEmpty_i=>readFrameEmpty, 
-      readFrame_o=>readFrame, readFrameRestart_o=>readFrameRestart, 
-      readFrameAborted_i=>readFrameAborted,
-      readContentEmpty_i=>readContentEmpty,
+      readFrame_o=>readFrame, 
       readContent_o=>readContent, readContentEnd_i=>readContentEnd, 
       readContentData_i=>readContentData,
       portLinkTimeout_o=>portLinkTimeout,
@@ -1281,20 +1279,24 @@ begin
     writeFrameFull <= (others=>'0');
    
     wait for 10 us;             
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_RioSwitch-TC4");
-    PrintS("Description: Test Hot Swap (error reporting) Event mechanisms.");
-    PrintS("Requirement: XXXXX");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Send maintenance write packets to prepare Error Reporting events.");
-    PrintS("Result: The switch should Acknowledge writes.");
+
+    TestEnd;
+    
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC4-Step1");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_RioSwitch-TC4");
+    TestSpec("Description: Test Hot Swap (error reporting) Event mechanisms.");
+    TestSpec("Requirement: XXXXX");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Send maintenance write packets to prepare Error Reporting events.");
+    TestSpec("Result: The switch should Acknowledge writes.");
+    ---------------------------------------------------------------------------
+    TestCaseStart("TG_RioSwitch-TC4-Step1");
     ---------------------------------------------------------------------------
     --
     lpsAddr:=16#0100#; --Base address of the LP_serial Block, within configuration space.
-    embAddr:=16#0200#; --Base address of the Error Management Block, within configuration space.
+    embAddr:=16#2100#; --Base address of the Error Management Block, within configuration space.
     --
     vPrint("Check that 'Assembly Informaiton CAR' point to LP-Serial EF-block.");
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -1346,12 +1348,12 @@ begin
                   tid=>x"f3", address=>x"000078", data=>(others=>'0')); --set defult route to port 0
     ExchangeFrames;
 
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 2:");
-    PrintS("Action: Loop through all ports and ..");
-    PrintS("   A)    ..set LinkInitialized<='0' to initiate a HotSwap event, then");
-    PrintS("   B)    ..set LinkInitialized<='1' to initiate a HotSwap event.     ");
-    PrintS("Result: The switch should generate a Port-Write for each event.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 2:");
+    TestSpec("Action: Loop through all ports and ..");
+    TestSpec("   A)    ..set LinkInitialized<='0' to initiate a HotSwap event, then");
+    TestSpec("   B)    ..set LinkInitialized<='1' to initiate a HotSwap event.     ");
+    TestSpec("Result: The switch should generate a Port-Write for each event.");
     
     for i in 0 to PORTS-1 loop             
        --activate events for link OK->NOK, and NOK->OK, but not the discard timer event
@@ -1381,7 +1383,7 @@ begin
 
     for i in 0 to PORTS-1 loop             
        ---------------------------------------------------------------------------
-       PrintR("TG_RioSwitch-TC4-Step2A:PORT" & integer'image(i));
+       TestCaseStart("TG_RioSwitch-TC4-Step2A:PORT" & integer'image(i));
        ---------------------------------------------------------------------------
        --setup expected response for linkOKtoUninit event:    
        PortNerrorDetectCSR<=x"4000_0000"; -- the Link_Ok_To_Uninit bit
@@ -1422,7 +1424,7 @@ begin
        ExchangeFrames;
        
        ---------------------------------------------------------------------------
-       PrintR("TG_RioSwitch-TC4-Step2B:PORT" & integer'image(i));
+       TestCaseStart("TG_RioSwitch-TC4-Step2B:PORT" & integer'image(i));
        ---------------------------------------------------------------------------
        PortNerrorDetectCSR<=x"1000_0000"; -- the Link_Uninit_To_Ok bit
        wait for 0 ns;
@@ -1462,20 +1464,20 @@ begin
        
     end loop;
 
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 3:");
-    PrintS("Action: For all ports at the same time..");
-    PrintS("   A)    ..set LinkInitialized<='0',    ");
-    PrintS("   B)    ..clear port-write Pending and wait for timeout, ");
-    PrintS("   C)    ..set LinkInitialized<='1'                       ");
-    PrintS("   D)    ..do Not clear port-write Pending                ");
-    PrintS("Result: A)  The switch should generate a Port-Write for each port.   ");
-    PrintS("        B)  The switch should Not generate a Port-Write for each port");
-    PrintS("        C)  The switch should generate a Port-Write for each port.   ");
-    PrintS("        D)  The switch should generate a Port-Write for each port,   ");
-    PrintS("            after timeout.   ");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 3:");
+    TestSpec("Action: For all ports at the same time..");
+    TestSpec("   A)    ..set LinkInitialized<='0',    ");
+    TestSpec("   B)    ..clear port-write Pending and wait for timeout, ");
+    TestSpec("   C)    ..set LinkInitialized<='1'                       ");
+    TestSpec("   D)    ..do Not clear port-write Pending                ");
+    TestSpec("Result: A)  The switch should generate a Port-Write for each port.   ");
+    TestSpec("        B)  The switch should Not generate a Port-Write for each port");
+    TestSpec("        C)  The switch should generate a Port-Write for each port.   ");
+    TestSpec("        D)  The switch should generate a Port-Write for each port,   ");
+    TestSpec("            after timeout.   ");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC4-Step3A");
+    TestCaseStart("TG_RioSwitch-TC4-Step3A");
     ---------------------------------------------------------------------------
     --setup expected response for linkOKtoUninit event:    
     PortNerrorDetectCSR<=x"4000_0000"; -- the Link_Ok_To_Uninit bit
@@ -1506,7 +1508,7 @@ begin
     ExchangeFrames;
     
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC4-Step3B");
+    TestCaseStart("TG_RioSwitch-TC4-Step3B");
     ---------------------------------------------------------------------------
     for i in 0 to PORTS-1 loop
        --clear error detect register
@@ -1529,7 +1531,7 @@ begin
     wait until rising_edge(clk);
     
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC4-Step3C");
+    TestCaseStart("TG_RioSwitch-TC4-Step3C");
     ---------------------------------------------------------------------------
     for i in 0 to PORTS-1 loop
        PortNerrorDetectCSR <= x"1000_0000"; -- the Link_Uninit_To_Ok bit
@@ -1560,7 +1562,7 @@ begin
     ExchangeFrames;
     
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC4-Step3D");
+    TestCaseStart("TG_RioSwitch-TC4-Step3D");
     ---------------------------------------------------------------------------
     --now, do not clear the pending bit, thus expect a retransmission of the frames once the timeout has expired
     vPrint("Waiting for Port-Write-Pending-Ack-Timeout to expire, then a re-transmission.");
@@ -1602,13 +1604,13 @@ begin
     end loop;
 
     
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 4:");
-    PrintS("Action: Send for each port, a Maintenance Port-Write packet,");
-    PrintS("        trough the switch via default route. (Test route-through)");
-    PrintS("Result: The switch should route the packet and decrement Hop-count.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 4:");
+    TestSpec("Action: Send for each port, a Maintenance Port-Write packet,");
+    TestSpec("        trough the switch via default route. (Test route-through)");
+    TestSpec("Result: The switch should route the packet and decrement Hop-count.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC4-Step4");
+    TestCaseStart("TG_RioSwitch-TC4-Step4");
     ---------------------------------------------------------------------------
     expectedDestPort<=PORTS-1;
     wait for 0 ns;
@@ -1650,20 +1652,20 @@ begin
        
     end loop;
         
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 5:");
-    PrintS("Action: Set PortWriteTransmissionDisable='1' and Loop through all ports and ..");
-    PrintS("   A)    ..set LinkInitialized<='0' to initiate a HotSwap event, then");
-    PrintS("   B)    ..set LinkInitialized<='1' to initiate a HotSwap event.     ");
-    PrintS("   C)    ..Set PortWriteTransmissionDisable='0'.  ");
---  PrintS("   D)    ..set LinkInitialized<='0' to initiate a HotSwap event, then");
---  PrintS("   E)    ..set LinkInitialized<='1' to initiate a HotSwap event.     ");
-    PrintS("Result:  For each event..");
-    PrintS("   A)    The switch should Not generate a Port-Write for each port.");
-    PrintS("   B)    The switch should Not generate a Port-Write for each port.");
-    PrintS("   C)    The switch should Not generate a Port-Write for each port.");
---  PrintS("   D)    The switch should generate a Port-Write for each port.");
---  PrintS("   E)    The switch should generate a Port-Write for each port.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 5:");
+    TestSpec("Action: Set PortWriteTransmissionDisable='1' and Loop through all ports and ..");
+    TestSpec("   A)    ..set LinkInitialized<='0' to initiate a HotSwap event, then");
+    TestSpec("   B)    ..set LinkInitialized<='1' to initiate a HotSwap event.     ");
+    TestSpec("   C)    ..Set PortWriteTransmissionDisable='0'.  ");
+--  TestSpec("   D)    ..set LinkInitialized<='0' to initiate a HotSwap event, then");
+--  TestSpec("   E)    ..set LinkInitialized<='1' to initiate a HotSwap event.     ");
+    TestSpec("Result:  For each event..");
+    TestSpec("   A)    The switch should Not generate a Port-Write for each port.");
+    TestSpec("   B)    The switch should Not generate a Port-Write for each port.");
+    TestSpec("   C)    The switch should Not generate a Port-Write for each port.");
+--  TestSpec("   D)    The switch should generate a Port-Write for each port.");
+--  TestSpec("   E)    The switch should generate a Port-Write for each port.");
     
     vPrint("WriteConfig reg. 'Port Write Transmission Control CSR' (PortWriteTransmissionDisable<='1')");
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -1698,7 +1700,7 @@ begin
 
     for i in 0 to PORTS-1 loop             
        ---------------------------------------------------------------------------
-       PrintR("TG_RioSwitch-TC4-Step5A:PORT" & integer'image(i));
+       TestCaseStart("TG_RioSwitch-TC4-Step5A:PORT" & integer'image(i));
        ---------------------------------------------------------------------------
        
     --- When 'port-Write Diabled' Enabled, no response is expected.
@@ -1709,7 +1711,7 @@ begin
        wait until rising_edge(clk);
        
        ---------------------------------------------------------------------------
-       PrintR("TG_RioSwitch-TC4-Step5B:PORT" & integer'image(i));
+       TestCaseStart("TG_RioSwitch-TC4-Step5B:PORT" & integer'image(i));
        ---------------------------------------------------------------------------
        
     --- When 'port-Write Diabled' Enabled, no response is expected.
@@ -1722,7 +1724,7 @@ begin
     end loop;
     --
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC4-Step5C");
+    TestCaseStart("TG_RioSwitch-TC4-Step5C");
     ---------------------------------------------------------------------------
     vPrint("WriteConfig reg. 'Port Write Transmission Control CSR' (PortWriteTransmissionDisable<='0')");
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
@@ -1732,14 +1734,14 @@ begin
     wait for 80 us;
     wait until rising_edge(clk);
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 6:");
-    PrintS("Action: For each port; Set LinkUninitTimeout, activate event on  ");
-    PrintS("        LinkUninitDiscardTimer, deassert linkInitialized, (wait).");
-    PrintS("Result: After timeout, linkUninitPacketDiscardActive should be   ");
-    PrintS("        set, and a port-write event should be generated.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 6:");
+    TestSpec("Action: For each port; Set LinkUninitTimeout, activate event on  ");
+    TestSpec("        LinkUninitDiscardTimer, deassert linkInitialized, (wait).");
+    TestSpec("Result: After timeout, linkUninitPacketDiscardActive should be   ");
+    TestSpec("        set, and a port-write event should be generated.");
     ---------------------------------------------------------------------------
-    PrintR("TG_RioSwitch-TC4-Step6");
+    TestCaseStart("TG_RioSwitch-TC4-Step6");
     ---------------------------------------------------------------------------
     linkInitialized <= (others=>'1');
     
