@@ -1462,7 +1462,7 @@ void RIOPACKET_getNread(RioPacket_t *packet, uint16_t *destId, uint16_t *srcId, 
   uint16_t size = 0;
 
 
-  rdsize = WRSIZE_GET(packet->payload);
+  rdsize = RDSIZE_GET(packet->payload);
   wdptr = WDPTR_GET(packet->payload);
   rdsizeToOffset(rdsize, wdptr, &offset, &size);
 
@@ -2120,125 +2120,132 @@ uint32_t RIOPACKET_getReadPacketSize(uint32_t address, uint32_t size)
   uint32_t returnValue;
 
 
-  switch(address%8)
+  if(size > 0)
   {
-    case 0:
-      if(size >= 256)
-      {
-        returnValue = 256;
-      }
-      else if(size >= 224)
-      {
-        returnValue = 224;
-      }
-      else if(size >= 192)
-      {
-        returnValue = 192;
-      }
-      else if(size >= 160)
-      {
-        returnValue = 160;
-      }
-      else if(size >= 128)
-      {
-        returnValue = 128;
-      }
-      else if(size >= 96)
-      {
-        returnValue = 96;
-      }
-      else if(size >= 64)
-      {
-        returnValue = 64;
-      }
-      else if(size >= 32)
-      {
-        returnValue = 32;
-      }
-      else if(size >= 16)
-      {
-        returnValue = 16;
-      }
-      else if(size >= 8)
-      {
-        returnValue = 8;
-      }
-      else 
-      {
-        returnValue = size;
-      }
-      break;
-    case 1:
-      if(size >= 7)
-      {
-        returnValue = 7;
-      }
-      else
-      {
+    switch(address%8)
+    {
+      case 0:
+        if(size >= 256)
+        {
+          returnValue = 256;
+        }
+        else if(size >= 224)
+        {
+          returnValue = 224;
+        }
+        else if(size >= 192)
+        {
+          returnValue = 192;
+        }
+        else if(size >= 160)
+        {
+          returnValue = 160;
+        }
+        else if(size >= 128)
+        {
+          returnValue = 128;
+        }
+        else if(size >= 96)
+        {
+          returnValue = 96;
+        }
+        else if(size >= 64)
+        {
+          returnValue = 64;
+        }
+        else if(size >= 32)
+        {
+          returnValue = 32;
+        }
+        else if(size >= 16)
+        {
+          returnValue = 16;
+        }
+        else if(size >= 8)
+        {
+          returnValue = 8;
+        }
+        else 
+        {
+          returnValue = size;
+        }
+        break;
+      case 1:
+        if(size >= 7)
+        {
+          returnValue = 7;
+        }
+        else
+        {
+          returnValue = 1;
+        }
+        break;
+      case 2:
+        if(size >= 6)
+        {
+          returnValue = 6;
+        }
+        else if(size >= 2)
+        {
+          returnValue = 2;
+        }
+        else
+        {
+          returnValue = 1;
+        }
+        break;
+      case 3:
+        if(size >= 5)
+        {
+          returnValue = 5;
+        }
+        else
+        {
+          returnValue = 1;
+        }
+        break;
+      case 4:
+        if(size >= 4)
+        {
+          returnValue = 4;
+        }
+        else if(size >= 2)
+        {
+          returnValue = 2;
+        }
+        else
+        {
+          returnValue = 1;
+        }
+        break;
+      case 5:
+        if(size >= 3)
+        {
+          returnValue = 3;
+        }
+        else
+        {
+          returnValue = 1;
+        }
+        break;
+      case 6:
+        if(size >= 2)
+        {
+          returnValue = 2;
+        }
+        else
+        {
+          returnValue = 1;
+        }
+        break;
+      default:
         returnValue = 1;
-      }
-      break;
-    case 2:
-      if(size >= 6)
-      {
-        returnValue = 6;
-      }
-      else if(size >= 2)
-      {
-        returnValue = 2;
-      }
-      else
-      {
-        returnValue = 1;
-      }
-      break;
-    case 3:
-      if(size >= 5)
-      {
-        returnValue = 5;
-      }
-      else
-      {
-        returnValue = 1;
-      }
-      break;
-    case 4:
-      if(size >= 4)
-      {
-        returnValue = 4;
-      }
-      else if(size >= 2)
-      {
-        returnValue = 2;
-      }
-      else
-      {
-        returnValue = 1;
-      }
-      break;
-    case 5:
-      if(size >= 3)
-      {
-        returnValue = 3;
-      }
-      else
-      {
-        returnValue = 1;
-      }
-      break;
-    case 6:
-      if(size >= 2)
-      {
-        returnValue = 2;
-      }
-      else
-      {
-        returnValue = 1;
-      }
-      break;
-    default:
-      returnValue = 1;
-      break;
+        break;
+    }
+  }
+  else
+  {
+    returnValue = 0;
   }
   
   return returnValue;
