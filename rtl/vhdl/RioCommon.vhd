@@ -57,6 +57,18 @@ use std.textio.all;
 -- RioCommon package description.
 -------------------------------------------------------------------------------
 package rio_common is
+
+  -----------------------------------------------------------------------------
+  -- Define if we are running in simulation or for synthesis
+  -- BE CAREFUL: post& route simulation is always running as synthesis
+  -----------------------------------------------------------------------------
+	constant in_simulation : BOOLEAN := false
+	-- synthesis translate_off
+	or true
+	-- synthesis translate_on
+	;
+
+	constant in_synthesis : boolean := not in_simulation;
   -----------------------------------------------------------------------------
   -- Commonly used types.
   -----------------------------------------------------------------------------
@@ -86,8 +98,37 @@ package rio_common is
   -----------------------------------------------------------------------------
   -- Commonly used constants.
   -----------------------------------------------------------------------------
-  
+  -- Sync constants 
+  constant Kmin      : std_logic_vector(7 downto 0) := "01111111";  -- 127 Part 6 p. 109 
+  constant Kmin_simu : std_logic_vector(7 downto 0) := "00001000";  -- should be 127 Part 6 p. 109
+  constant Vmin : std_logic_vector(10 downto 0) := "00000001000";  -- Part 6 p. 107, implementation dependant ASA FIXME
+  constant Imax : std_logic_vector(2 downto 0) := "111";  -- Part 6 p. 108, Imax is an integer and shall have a value of 3 or  greater 
+  constant Mmax : std_logic_vector(2 downto 0) := "010";  -- Part 6 p. 111, Mmax is an integer and shall have a value of 2 or greater 
+  constant Ione : std_logic_vector(7 downto 0) := (others => '0');  -- Part 6 p. 19, Icounter[n] >0 
+  constant SILENT_ENOUGH : std_logic_vector(4 downto 0):= "00000"; -- FIXME Part 6 p. 107, should be expressed according to the clock for 120us
+  -- Should allow assertion during 28 +/- 4 ms counter is increment each UCLK / 1024
+  -- It gives depending on the clock
+  -- Frequency  # Cycle     # Cycle hexa 
+  -- 25	Mhz	    683	        2AB
+  -- 50 Mhz		1367	    557
+  -- 75	Mhz 	2050	    802
+  -- 100 Mhz 	2734	    AAE
+  -- 125 Mhz	3417	    D59
+  -- 150 Mhz	4101	    1005
+  -- 175 Mhz	4785	    12B1
+  -- 200 Mhz	5468	    155C
+  -- 225 Mhz	6152	    1808
+  -- 250 Mhz	6835	    1ABdata3
+  -- 300 Mhz	8203	    200B
+  constant DISCOVERY_ENDS_SIMU : std_logic_vector(15 downto 0) := x"0001"; 
+  constant DISCOVERY_ENDS : std_logic_vector(15 downto 0) := x"0D59"; 
+ 
   -- Symbol types between the serial and the PCS layer.
+  constant SC : std_logic_vector(7 downto 0) := "00011100"; -- Part 6 p. 69 /K28.0/
+  constant PD : std_logic_vector(7 downto 0) := "01111100"; -- Part 6 p. 69 /K28.3/
+  constant SYMBOL_COLUMN_SYNC : std_logic_vector(7 downto 0)  :="10111100"; -- Part 6 p. 69 /K28.5/
+  constant SYMBOL_COLUMN_SKIP : std_logic_vector(7 downto 0)  :="11111101"; -- Part 6 p. 69 /K29.7/
+  constant SYMBOL_COLUMN_ALIGN : std_logic_vector(7 downto 0) :="11111011"; -- Part 6 p. 69 /K27.7/
   constant SYMBOL_IDLE : std_logic_vector(1 downto 0) := "00";
   constant SYMBOL_CONTROL : std_logic_vector(1 downto 0) := "01";
   constant SYMBOL_ERROR : std_logic_vector(1 downto 0) := "10";
@@ -120,7 +161,7 @@ package rio_common is
   constant FTYPE_MAINTENANCE_CLASS : std_logic_vector(3 downto 0) := "1000";
   constant FTYPE_RESPONSE_CLASS : std_logic_vector(3 downto 0) := "1101";
   constant FTYPE_DOORBELL_CLASS : std_logic_vector(3 downto 0) := "1010";
-  constant FTYPE_MESSAGE_CLASS : std_logic_vector(3 downto 0) := "1011";
+  constant FTYPE_MESSAGE_CLASS : std_logic_vector(3 downto 0) := "0010";
 
   -- TTYPE Constants
   constant TTYPE_MAINTENANCE_READ_REQUEST : std_logic_vector(3 downto 0) := "0000";
@@ -202,10 +243,19 @@ package rio_common is
     variable seed1 : inout positive;
     variable seed2 : inout positive);
   procedure CreateRandomPayload(
+    variable payload : out WordArray(0 to 67);
+    variable seed1 : inout positive;
+    variable seed2 : inout positive);
+  procedure CreateRandomPayload(
     variable payload : out DoublewordArray(0 to 31);
     variable seed1 : inout positive;
     variable seed2 : inout positive);
-
+    
+  procedure CreateIncreasingPayload(
+    variable payload : out DoublewordArray(0 to 31));
+  procedure CreateIncreasingPayload(
+    variable payload : out WordArray(0 to 67));
+    
   ---------------------------------------------------------------------------
   -- Create a generic RapidIO frame.
   ---------------------------------------------------------------------------
@@ -220,7 +270,20 @@ package rio_common is
     constant destId : in std_logic_vector(15 downto 0);
     constant payload : in RioPayload)
     return RioFrame;
-  
+
+  ---------------------------------------------------------------------------
+  -- Create a MESSAGE RapidIO frame.
+  ---------------------------------------------------------------------------    
+   function RioMessage(
+    constant msgLength : in std_logic_vector(3 downto 0);
+    constant letter : in std_logic_vector(1 downto 0);
+    constant mbox : in std_logic_vector(1 downto 0);
+    constant msgSeg : in std_logic_vector(3 downto 0);
+    constant ssize : in positive;
+    constant dataLength : in positive;
+    constant data : in WordArray(0 to 67))
+    return RioPayload ;
+    
   ---------------------------------------------------------------------------
   -- Create a NWRITE RapidIO frame.
   ---------------------------------------------------------------------------
@@ -431,7 +494,52 @@ package body rio_common is
       payload(i)(15 downto 8) := std_logic_vector(to_unsigned(int_rand, 8));
     end loop;
   end procedure;
+  
+  procedure CreateRandomPayload(
+    variable payload : out WordArray(0 to 67);
+    variable seed1 : inout positive;
+    variable seed2 : inout positive) is
+    variable rand: real;
+    variable int_rand: integer;
+    variable stim: std_logic_vector(7 downto 0);
+  begin
+    for i in payload'range loop
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(7 downto 0) := std_logic_vector(to_unsigned(int_rand, 8));
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(15 downto 8) := std_logic_vector(to_unsigned(int_rand, 8));
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(23 downto 16) := std_logic_vector(to_unsigned(int_rand, 8));
+      uniform(seed1, seed2, rand);
+      int_rand := integer(trunc(rand*256.0));
+      payload(i)(31 downto 24) := std_logic_vector(to_unsigned(int_rand, 8));
+      end loop;
+  end procedure;
+  
+procedure CreateIncreasingPayload(
+    variable payload : out DoublewordArray(0 to 31)) is
+  begin
+    for i in payload'range loop
+      payload(i)(15 downto 0) := std_logic_vector(to_unsigned(i*2 +1, 16));
+      payload(i)(31 downto 16) := "1111" & std_logic_vector(to_unsigned(i, 12));
+      payload(i)(47 downto 32) := std_logic_vector(to_unsigned(i*2, 16));
+      payload(i)(63 downto 48) := "1111" & std_logic_vector(to_unsigned(i, 12));     
+    end loop;
+  end procedure;  
+  
+procedure CreateIncreasingPayload(
+    variable payload : out WordArray(0 to 67)) is
+  begin
+    for i in payload'range loop
+      payload(i)(15 downto 0) := std_logic_vector(to_unsigned(i, 16));
+      payload(i)(31 downto 16) := "1111" & std_logic_vector(to_unsigned(i, 12));
+    end loop;
+  end procedure;   
 
+  
   procedure CreateRandomPayload(
     variable payload : out DoublewordArray(0 to 31);
     variable seed1 : inout positive;
@@ -483,37 +591,51 @@ package body rio_common is
     variable frame : RioFrame;
     variable result : HalfwordArray(0 to 137);
     variable crc : std_logic_vector(15 downto 0) := x"ffff";
+    variable headerSize : integer;
   begin
     -- Add the header and addresses.
     result(0) := ackId & "0" & vc & crf & prio & tt & ftype;
-    result(1) := destId;
-    result(2) := sourceId;
+
+    -- We are using 16 bits identifier
+    if tt = "01" then
+    	result(1) := destId;
+    	result(2) := sourceId;
+	headerSize := 3;
+
+    -- We are using 8 bits identifier
+    else
+    	result(1) := destId(7 downto 0) & sourceId (7 downto 0) ;
+	headerSize := 2;
+    end if;
+
 
     -- Update the calculated CRC with the header contents.
     crc := Crc16("00000" & result(0)(10 downto 0), crc);
     crc := Crc16(result(1), crc);
-    crc := Crc16(result(2), crc);
+    if tt = "01" then
+    	crc := Crc16(result(2), crc);
+    end if;
 
     -- Check if a single CRC should be added or two.
-    if (payload.length <= 37) then
+    if (payload.length <= (40 - headerSize) ) then
       -- Single CRC.
       for i in 0 to payload.length-1 loop
-        result(i+3) := payload.data(i);
+        result(i+headerSize) := payload.data(i);
         crc := Crc16(payload.data(i), crc);
       end loop;
-      result(payload.length+3) := crc;
+      result(payload.length+headerSize) := crc;
 
       -- Check if paddning is needed to make the payload even 32-bit.
-      if ((payload.length mod 2) = 1) then
-        result(payload.length+4) := x"0000";
-        frame.length := (payload.length+5) / 2;
+      if ( (payload.length mod 2) = 1) then
+        result(payload.length+headerSize+1) := x"0000";
+        frame.length := (payload.length+headerSize+2) / 2;
       else
-        frame.length := (payload.length+4) / 2;
+        frame.length := (payload.length+headerSize+1) / 2;
       end if;      
     else
       -- Double CRC.
-      for i in 0 to 36 loop
-        result(i+3) := payload.data(i);
+      for i in 0 to (39 - headerSize) loop
+        result(i+headerSize) := payload.data(i);
         crc := Crc16(payload.data(i), crc);
       end loop;
 
@@ -521,18 +643,18 @@ package body rio_common is
       result(40) := crc;
       crc := Crc16(crc, crc);
       
-      for i in 37 to payload.length-1 loop
-        result(i+4) := payload.data(i);
+      for i in (40 - headerSize) to payload.length-1 loop
+        result(i+ headerSize + 1) := payload.data(i);
         crc := Crc16(payload.data(i), crc);
       end loop;
       result(payload.length+4) := crc;
 
       -- Check if paddning is needed to make the payload even 32-bit.
       if ((payload.length mod 2) = 0) then
-        result(payload.length+5) := x"0000";
-        frame.length := (payload.length+6) / 2;
+        result(payload.length+ 2 + headerSize ) := x"0000";
+        frame.length := (payload.length + 3 + headerSize) / 2;
       else
-        frame.length := (payload.length+5) / 2;
+        frame.length := (payload.length + 2 + headerSize) / 2;
       end if;      
     end if;
     
@@ -580,6 +702,66 @@ package body rio_common is
     return payload;
   end function;
   
+  
+  -----------------------------------------------------------------------------
+  -- 
+  -----------------------------------------------------------------------------
+  function RioMessage(
+    constant msgLength : in std_logic_vector(3 downto 0);
+    constant letter : in std_logic_vector(1 downto 0);
+    constant mbox : in std_logic_vector(1 downto 0);
+    constant msgSeg : in std_logic_vector(3 downto 0);
+    constant ssize : in positive;
+    constant dataLength : in positive;
+    constant data : in WordArray(0 to 67))
+    return RioPayload is
+    variable payload : RioPayload;
+  begin
+  
+    if msgSeg = msgLength then
+       assert dataLength <= ssize report "data length must be less than the advertised segment size" severity FAILURE;
+    else 
+        assert dataLength = ssize report "Segment size must match data length except for the last segement" severity FAILURE;
+    end if;
+    
+    payload.data(0)(15 downto 12) :=  msgLength;
+    
+    case ssize is 
+        when 8 =>
+            payload.data(0)(11 downto 8) := "1001";
+        when 16 =>
+            payload.data(0)(11 downto 8) := "1010";
+            
+        when 32 =>
+            payload.data(0)(11 downto 8) := "1011";
+            
+        when 64 =>
+            payload.data(0)(11 downto 8) := "1100";
+            
+        when 128 =>
+            payload.data(0)(11 downto 8) := "1101";
+            
+        when 256 =>
+            payload.data(0)(11 downto 8) := "1110";
+        when others =>
+            report "Invalid Size" severity failure;
+    end case;
+            
+            
+
+    payload.data(0)(7  downto 6) :=  letter;
+    payload.data(0)(5  downto 4) :=  mbox;
+    payload.data(0)(3  downto 0) :=  msgSeg;
+  
+    for i in 0 to dataLength/2-1 loop
+      payload.data(1+2*i)(15 downto 0) := data(i)(31 downto 16);
+      payload.data(2+2*i)(15 downto 0) := data(i)(15 downto  0);
+    end loop;
+
+    payload.length := 1 + dataLength/2;
+    
+    return payload;
+  end function;
   -----------------------------------------------------------------------------
   -- 
   -----------------------------------------------------------------------------
@@ -718,8 +900,10 @@ package body rio_common is
     --Write to spec file
     file_open(fStatus, specFile, "testspec.txt", append_mode);
     write(specLine, string'(str));
+    report specLine.all severity note;
     writeline (specFile, specLine);
     file_close(specFile);
+	
   end PrintS;
 
   ---------------------------------------------------------------------------
@@ -1074,65 +1258,5 @@ end architecture;
 
 
 
--------------------------------------------------------------------------------
--- RioFifo1
--- Simple fifo which is one entry deep.
--------------------------------------------------------------------------------
-library ieee;
-use ieee.std_logic_1164.all;
 
 
--------------------------------------------------------------------------------
--- Entity for RioFifo1.
--------------------------------------------------------------------------------
-entity RioFifo1 is
-  generic(
-    WIDTH : natural);
-  port(
-    clk : in std_logic;
-    areset_n : in std_logic;
-
-    empty_o : out std_logic;
-    read_i : in std_logic;
-    data_o : out std_logic_vector(WIDTH-1 downto 0);
-
-    full_o : out std_logic;
-    write_i : in std_logic;
-    data_i : in std_logic_vector(WIDTH-1 downto 0));
-end entity;
-       
-
--------------------------------------------------------------------------------
--- Architecture for RioFifo1.
--------------------------------------------------------------------------------
-architecture RioFifo1Impl of RioFifo1 is
-  signal empty : std_logic;
-  signal full : std_logic;
-begin
-
-  empty_o <= empty;
-  full_o <= full;
-  
-  process(areset_n, clk)
-  begin
-    if (areset_n = '0') then
-      empty <= '1';
-      full <= '0';
-      data_o <= (others => '0');
-    elsif (clk'event and clk = '1') then
-      if (empty = '1') then
-        if (write_i = '1') then
-          empty <= '0';
-          full <= '1';
-          data_o <= data_i;
-        end if;
-      else
-        if (read_i = '1') then
-          empty <= '1';
-          full <= '0';
-        end if;
-      end if;
-    end if;
-  end process;
-  
-end architecture;

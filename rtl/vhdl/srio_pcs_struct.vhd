@@ -2868,8 +2868,7 @@ entity serdes_wrapper_v0 is
 		-- RXP                 : in  std_logic_vector(N-1 downto 0);
 		RXN                 : in  std_logic_vector(0 to N-1);
 		RXP                 : in  std_logic_vector(0 to N-1);
-		TXINHIBIT_02        : in  std_logic;
-		TXINHIBIT_others    : in  std_logic;
+		TXINHIBIT           : in  std_logic_vector(0 to N-1);
 		ENCHANSYNC          : in  std_logic;
 		TXDATA              : in  std_logic_vector(N*16-1 downto 0);
 		TXCHARISK           : in  std_logic_vector(N*2-1 downto 0);
@@ -2933,8 +2932,7 @@ begin
       RXP2            => RXP(2),
       RXP3            => RXP(3),
 	  
-      TXINHIBIT_02    => TXINHIBIT_02,
-      TXINHIBIT_13    => TXINHIBIT_others,
+      TXINHIBIT    => TXINHIBIT,
 	  
       ENCHANSYNC      => ENCHANSYNC,
 	  
