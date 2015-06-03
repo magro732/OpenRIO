@@ -54,7 +54,7 @@ use work.rio_common.all;
 
 entity ccs_timer is
   generic (
-    TCQ         : time      := 100 ps
+    TCQ                 : time      := 100 ps
   );
   port ( 
     rst_n               : in  std_logic;
@@ -68,7 +68,19 @@ end ccs_timer;
 architecture RTL of ccs_timer is
 --------------------------------------------------------------------------------------
 signal   ccs_counter            : std_logic_vector(11 downto 0) := (others => '0');
-constant CCS_INTERVAL           : std_logic_vector(11 downto 0) := x"7FF";  -- = 4096 chars
+constant CCS_INTERVAL_SIMU      : std_logic_vector(11 downto 0) := x"FFF";  
+constant CCS_INTERVAL           : std_logic_vector(11 downto 0) := x"7FF";  
+
+function GetCCS_INTERVAL(in_simulation : boolean) return std_logic_vector is
+begin
+
+    if in_simulation = true then
+        return CCS_INTERVAL_SIMU;
+    else 
+        return CCS_INTERVAL;
+    end if;
+
+end function;
 
 --------------------------------------------------------------------------------------
 begin
@@ -77,11 +89,11 @@ begin
 process(rst_n, UCLK)
     begin    
     if rst_n = '0'  then    
-        ccs_counter     <= CCS_INTERVAL; 
+        ccs_counter     <= GetCCS_INTERVAL(in_simulation); 
         send_ccs        <= '0';
     elsif rising_edge(UCLK) then 
         if ccs_timer_rst = '0' then  
-            if ccs_counter = CCS_INTERVAL then
+            if ccs_counter = GetCCS_INTERVAL(in_simulation) then
                 send_ccs    <= '1';
             else
                 send_ccs    <= '0';
@@ -426,6 +438,7 @@ entity pcs_rx_controller is
     -- Interface to the RioSerial
     inboundRead_i           : in  std_logic;
     inboundEmpty_o          : out std_logic;
+    inboundValid_o          : out std_logic;
     inboundSymbol_o         : out std_logic_vector(33 downto 0);    
     --
     -- Interface to the GTX transceivers
@@ -474,7 +487,26 @@ signal RXCHARISK_l          : std_logic_vector(3  downto 0) := (others => '0');
 signal RXCHARISvalid_u      : std_logic_vector(3  downto 0) := (others => '0');
 signal RXCHARISvalid_l      : std_logic_vector(3  downto 0) := (others => '0');
 
-signal inboundValid           : std_logic:= '0';
+signal RXDATA_wo_cntrl_u    : std_logic_vector(31 downto 0) := (others => '0'); 
+signal RXDATA_wo_cntrl_l    : std_logic_vector(31 downto 0) := (others => '0');
+
+signal RXDATA_wo_cntrl_u_q0    : std_logic_vector(31 downto 0) := (others => '0'); 
+signal RXDATA_wo_cntrl_l_q0    : std_logic_vector(31 downto 0) := (others => '0');
+signal RXDATA_wo_cntrl_u_q1    : std_logic_vector(31 downto 0) := (others => '0'); 
+signal RXDATA_wo_cntrl_l_q1    : std_logic_vector(31 downto 0) := (others => '0');
+
+signal upper_symbol_valid_q0     : std_logic:= '0'; 
+signal lower_symbol_valid_q0     : std_logic:= '0';   
+ 
+signal upper_symbol_valid_q1     : std_logic:= '0'; 
+signal lower_symbol_valid_q1     : std_logic:= '0';  
+  
+signal upper_symbol_type_q0    : std_logic_vector(1  downto 0) := (others => '0');
+signal lower_symbol_type_q0    : std_logic_vector(1  downto 0) := (others => '0');  
+signal upper_symbol_type_q1    : std_logic_vector(1  downto 0) := (others => '0');
+signal lower_symbol_type_q1    : std_logic_vector(1  downto 0) := (others => '0'); 
+
+
 signal rx_fifo_wr_en          : std_logic:= '0';
 signal rx_fifo_wr_en_q        : std_logic:= '0';
 signal rx_fifo_full           : std_logic:= '0';
@@ -511,6 +543,8 @@ signal RXCHARISK_sr_done      : std_logic_vector(7  downto 0) := (others => '0')
 signal RXCHARISvalid_sr_done  : std_logic_vector(7  downto 0) := (others => '0');   
 
 signal RXDATA_sr              : std_logic_vector(71 downto 0) := (others => '0'); 
+attribute mark_debug : string;
+attribute mark_debug of RXDATA_sr: signal is "true";
 signal RXCHARISK_sr           : std_logic_vector(8  downto 0) := (others => '0');
 signal RXCHARISvalid_sr       : std_logic_vector(8  downto 0) := (others => '0');   
 
@@ -557,6 +591,10 @@ signal started_once           : std_logic:= '0';
 signal word_switch            : std_logic:= '0';
 signal shift_cntr             : std_logic_vector(1  downto 0) := (others => '0');
 
+signal RXDATA_i_q0                :  std_logic_vector(63 downto 0);  -- N = 4
+signal RXCHARISK_i_q0             :  std_logic_vector(7 downto 0);
+signal RXCHARISvalid_i_q0         :  std_logic_vector(7 downto 0);
+signal div4_counter         :  std_logic_vector(1 downto 0);
 
 ----------------------------------------------------------------------------------
 begin  
@@ -568,11 +606,12 @@ rx_boundary_fifo : pcs_rx_boudary_32b_out_64b_in   -- FWFT FIFO
     rd_clk         => rio_clk,
     rd_en          => inboundRead_i,
     dout           => inboundSymbol_o,
-    valid          => inboundValid,
+    valid          => inboundValid_o,
     empty          => inboundEmpty_o,
     almost_empty   => rx_fifo_almost_empty,
     
-    wr_clk         => UCLK_or_DV4,
+    -- ASA wr_clk         => UCLK_or_DV4,
+    wr_clk         => UCLK,
     wr_en          => rx_fifo_wr_en_q,      -- rx_fifo_wr_en,        -- rx_fifo_wr_en_q,         --
     din            => rx_fifo_data_in_q,    -- rx_fifo_data_in,      -- rx_fifo_data_in_q,       --
     full           => rx_fifo_full,         -- rx_fifo_full    
@@ -580,13 +619,34 @@ rx_boundary_fifo : pcs_rx_boudary_32b_out_64b_in   -- FWFT FIFO
   ); 
 
 -- Pipelining RX write
-process(UCLK_or_DV4)  
-    begin  
-    if rising_edge(UCLK_or_DV4) then            
-        rx_fifo_wr_en_q   <= rx_fifo_wr_en; 
-        rx_fifo_data_in_q <= rx_fifo_data_in;        
-    end if;
-end process;  
+-- ASA process(UCLK_or_DV4)  
+    -- ASA begin  
+    -- ASA if rising_edge(UCLK_or_DV4) then            
+        -- ASA rx_fifo_wr_en_q   <= rx_fifo_wr_en; 
+        -- ASA rx_fifo_data_in_q <= rx_fifo_data_in;        
+    -- ASA end if;
+-- ASA end process;  
+
+  process(rst_n, UCLK)  
+  begin  
+
+      if rst_n = '0' then
+          div4_counter <= (others => '0');
+
+      elsif rising_edge(UCLK) then            
+            div4_counter <= div4_counter + '1';
+
+            -- Do a write one cycle out of four
+            if div4_counter = "01" then 
+                rx_fifo_wr_en_q   <= rx_fifo_wr_en; 
+                rx_fifo_data_in_q <= rx_fifo_data_in;        
+            else
+                rx_fifo_wr_en_q   <= '0';
+            end if;
+
+      end if;
+  end process;  
+
   
   
 -- rx_fifo_data_swapped <= rx_fifo_data_in(33 downto 32) 
@@ -599,7 +659,7 @@ mode_0_lane_sel  <= mode_0_lane_sel_i;
 port_state <= port_initalized & mode_sel & mode_0_lane_sel;
   
 -- RX management / FIFO write process  
-process(rst_n, UCLK)  -- _x2
+process(rst_n, UCLK)  -- _x2 -- ASA
     begin      
     if rst_n = '0'  then                
     
@@ -612,7 +672,8 @@ process(rst_n, UCLK)  -- _x2
         -- RXCHARISvalid_sr <= (others => '0');
         shift_cntr       <= (others => '0');
         
-    elsif rising_edge(UCLK) then   
+    elsif rising_edge(UCLK) then   -- ASA
+
         -- Alternative If-Else Statement 
         if port_initalized = '0' then   -- Port has not been initialized yet
             rx_fifo_wr_en   <= '0';
@@ -620,45 +681,22 @@ process(rst_n, UCLK)  -- _x2
         else                            -- Port has been initialized            
             -- if mode_sel = '1' then      -- x4 mode is active
                 if upper_symbol_valid = '1' and lower_symbol_valid = '1' then
-                    rx_fifo_data_in <= upper_symbol_type & RXDATA_u & lower_symbol_type & RXDATA_l;                        
+                    rx_fifo_data_in <= upper_symbol_type & RXDATA_wo_cntrl_u & lower_symbol_type & RXDATA_wo_cntrl_l;                   
                     rx_fifo_wr_en   <= not(rx_fifo_almost_full);
                 elsif upper_symbol_valid = '1' then
-                    rx_fifo_data_in <= upper_symbol_type & RXDATA_u & SYMBOL_IDLE & x"00000000";                        
+                    rx_fifo_data_in <= upper_symbol_type & RXDATA_wo_cntrl_u & SYMBOL_IDLE & x"00000000";                        
                     rx_fifo_wr_en   <= not(rx_fifo_almost_full);       
                 elsif lower_symbol_valid = '1' then
-                    rx_fifo_data_in <= SYMBOL_IDLE & x"00000000" & lower_symbol_type & RXDATA_l;                        
+                     -- ASmbi
+                    rx_fifo_data_in <= SYMBOL_IDLE & x"00000000" & lower_symbol_type & RXDATA_wo_cntrl_l;                        
                     rx_fifo_wr_en   <= not(rx_fifo_almost_full);
                 else                  
                     rx_fifo_wr_en   <= '0';                    
                 end if;  
-            -- else -- x1 fallback mode is active    
-            --     if upper_symbol_valid = '1' and lower_symbol_valid = '1' then
-            --         rx_fifo_data_in <= upper_symbol_type & RXDATA_u & lower_symbol_type & RXDATA_l;                        
-            --         rx_fifo_wr_en   <= not(rx_fifo_full);
-            --     elsif upper_symbol_valid = '1' then
-            --         rx_fifo_data_in <= upper_symbol_type & RXDATA_u & SYMBOL_IDLE & RXDATA_l;                        
-            --         rx_fifo_wr_en   <= not(rx_fifo_full);       
-            --     elsif lower_symbol_valid = '1' then
-            --         rx_fifo_data_in <= SYMBOL_IDLE & RXDATA_u & lower_symbol_type & RXDATA_l;                        
-            --         rx_fifo_wr_en   <= not(rx_fifo_full);
-            --     else                  
-            --         rx_fifo_wr_en   <= '0';                    
-            --     end if;                  
-            -- end if;        
         end if;
     end if;
 end process;  
 -------------------------------------------------------------------------------------------------------------------------------------------------------
-
--- -- Pipelining RX stream
--- process(UCLK)  
---     begin  
---     if rising_edge(UCLK) then   
---         RXDATA_swap         <= RXDATA_i(15 downto 0)   & RXDATA_i(31 downto 16)  & RXDATA_i(47 downto 32)  & RXDATA_i(63 downto 48);
---         RXCHARISK_swap      <= RXCHARISK_i(1 downto 0) & RXCHARISK_i(3 downto 2) & RXCHARISK_i(5 downto 4) & RXCHARISK_i(7 downto 6);
---         RXCHARISvalid_swap  <= RXCHARISvalid_i(1 downto 0) & RXCHARISvalid_i(3 downto 2) & RXCHARISvalid_i(5 downto 4) & RXCHARISvalid_i(7 downto 6);
---     end if;
--- end process;  
 
 -- Pipelining RX stream
 process(UCLK)  
@@ -669,21 +707,35 @@ process(UCLK)
         RXCHARISK_swap      <= RXCHARISK_i(1 downto 0) & RXCHARISK_i(3 downto 2) & RXCHARISK_i(5 downto 4) & RXCHARISK_i(7 downto 6);
         RXCHARISvalid_swap  <= RXCHARISvalid_i(1 downto 0) & RXCHARISvalid_i(3 downto 2) & RXCHARISvalid_i(5 downto 4) & RXCHARISvalid_i(7 downto 6);        
         
-        -- if mode_sel = '1' then      -- x4 mode is active               
-        
-        -- else                        -- x1 fallback mode is active  
-        --     
-        --     RXDATA_swap         <= RXDATA_sr_done        ;
-        --     RXCHARISK_swap      <= RXCHARISK_sr_done     ;
-        --     RXCHARISvalid_swap  <= RXCHARISvalid_sr_done ;
-        --     
-        -- end if;  
     end if;
 end process;  
+
+
+
+-- This sequence allows to simulate a comma lock of the MGT on the other location (i.e. either in the odd or even)
 ---                      Lane 0 active                                                  Lane 2 active
-RXDATA_R_lane         <= RXDATA_i(15 downto 0)          when mode_0_lane_sel = '0' else RXDATA_i(47 downto 32)       ;  
-RXCHARISK_R_lane      <= RXCHARISK_i(1 downto 0)        when mode_0_lane_sel = '0' else RXCHARISK_i(5 downto 4)      ;
-RXCHARISvalid_R_lane  <= RXCHARISvalid_i(1 downto 0)    when mode_0_lane_sel = '0' else RXCHARISvalid_i(5 downto 4)  ; 
+-- RXDATA_R_lane         <= RXDATA_i(15 downto 0)          when mode_0_lane_sel = '0' else RXDATA_i(47 downto 32)       ;  
+-- RXCHARISK_R_lane      <= RXCHARISK_i(1 downto 0)        when mode_0_lane_sel = '0' else RXCHARISK_i(5 downto 4)      ;
+-- RXCHARISvalid_R_lane  <= RXCHARISvalid_i(1 downto 0)    when mode_0_lane_sel = '0' else RXCHARISvalid_i(5 downto 4)  ; 
+
+--RXDATA_R_lane         <= RXDATA_i(7 downto 0) & RXDATA_i(15 downto 8)       when mode_0_lane_sel = '0' else RXDATA_i(39 downto 32) & RXDATA_i(47 downto 40)       ;  
+--RXCHARISK_R_lane      <= RXCHARISK_i(0)       & RXCHARISK_i(1)              when mode_0_lane_sel = '0' else RXCHARISK_i(4)  & RXCHARISK_i(5) ;
+--RXCHARISvalid_R_lane  <= RXCHARISvalid_i( 0 ) & RXCHARISvalid_i(1)          when mode_0_lane_sel = '0' else RXCHARISvalid_i(4) & RXCHARISvalid_i(5)  ; 
+-- End of test sequence
+
+process(UCLK)  
+begin
+    if rising_edge(UCLK) then   
+        RXDATA_i_q0         <= RXDATA_i;
+        RXCHARISK_i_q0      <= RXCHARISK_i;
+        RXCHARISvalid_i_q0  <= RXCHARISvalid_i;
+
+        RXDATA_R_lane         <= RXDATA_i_q0(15 downto 8) & RXDATA_i(7 downto 0)       ;
+        RXCHARISK_R_lane      <= RXCHARISK_i_q0(1)       & RXCHARISK_i(0)              ;
+        RXCHARISvalid_R_lane  <= RXCHARISvalid_i_q0( 1 ) & RXCHARISvalid_i(0)          ;
+    end if;
+end process;
+
 
 -- RXDATA shifting process for x1 mode
 process(UCLK)  -- _x2  rst_n, 
@@ -721,13 +773,17 @@ process(UCLK)  -- _x2  rst_n,
             
         else               
             done_cntr <= done_cntr + rx_done;            
+            -- If the first byte is valid, do we have a standard char, or if it's a K-char, then it has to be SC or PD
             if RXCHARISvalid_R_lane(0) = '1' and (RXCHARISK_R_lane(0) = '0' or (RXCHARISK_R_lane(0) = '1' and (RXDATA_R_lane(7 downto 0) = SC or RXDATA_R_lane(7 downto 0) = PD))) then
+
+                -- If the second byte is valid, do we have a standard char, or if it's a K-char, then it has to be SC or PD
                 if RXCHARISvalid_R_lane(1) = '1' and (RXCHARISK_R_lane(1) = '0' or (RXCHARISK_R_lane(1) = '1' and (RXDATA_R_lane(15 downto 8) = SC or RXDATA_R_lane(15 downto 8) = PD))) then
                 --- [VVVV] It may appear anytime
-                    valid_byte_cntr    <= valid_byte_cntr + "10";                    
-                    RXDATA_sr          <= RXDATA_sr(55 downto 0)   & RXDATA_R_lane(15 downto 0);
-                    RXCHARISK_sr       <= RXCHARISK_sr(6 downto 0) & RXCHARISK_R_lane(1 downto 0);       
-                    RXCHARISvalid_sr   <= RXCHARISvalid_sr(6 downto 0) & RXCHARISvalid_R_lane(1 downto 0);  
+                    valid_byte_cntr    <= valid_byte_cntr + "10";  -- 2 more bytes store                    
+                    RXDATA_sr          <= RXDATA_sr(55 downto 0)   & RXDATA_R_lane(15 downto 0);    -- Concatenate the 2 bytes as the lower byte 
+                    RXCHARISK_sr       <= RXCHARISK_sr(6 downto 0) & RXCHARISK_R_lane(1 downto 0);  -- Concatenate if they are K-char     
+                    RXCHARISvalid_sr   <= RXCHARISvalid_sr(6 downto 0) & RXCHARISvalid_R_lane(1 downto 0);  -- Contenate if the bytes are valid
+                    -- If we have 6 char, then 2 more make the word comlete
                     if valid_byte_cntr = "110" then
                         irregular_stream        <= '0';
                         rx_done                 <= '1';
@@ -735,6 +791,7 @@ process(UCLK)  -- _x2  rst_n,
                         RXDATA_sr_done          <= RXDATA_sr(47 downto 0)   & RXDATA_R_lane(15 downto 0);
                         RXCHARISK_sr_done       <= RXCHARISK_sr(5 downto 0) & RXCHARISK_R_lane(1 downto 0);       
                         RXCHARISvalid_sr_done   <= RXCHARISvalid_sr(5 downto 0) & RXCHARISvalid_R_lane(1 downto 0);                    
+                    -- We have 7 byte, adding 2 breaks the stream
                     elsif valid_byte_cntr = "111" then
                         irregular_stream        <= '1';
                         rx_done                 <= '1';
@@ -747,10 +804,39 @@ process(UCLK)  -- _x2  rst_n,
                         RXCHARISK_sr_done       <= (others => '1');
                         RXCHARISvalid_sr_done   <= (others => '0');
                     end if;         
+                -- Second byte is not expected one (either invalid or wrong K-char)
                 else
+
+                    -- By default we discard the data present after 4 cycles.
+                    -- It may be overriden below, if a new data has to be presented
+                    -- FIXME: it should be done in all cases !!!!!!
+                    if done_cntr = "11" then         
+                        rx_done                 <= '0';           
+                        RXCHARISK_sr_done       <= (others => '1');
+                        RXCHARISvalid_sr_done   <= (others => '0');
+                    end if; 
                 --- [__VV] : It can appear only in the beginning                
                     if valid_byte_cntr = "100" then
                         valid_byte_cntr    <= valid_byte_cntr + '1';    
+
+                    -- We have the end of a valid word inside the buffer, but the second one is padding idle
+                    --- time to flush it
+                    elsif valid_byte_cntr = "111" then
+
+                        RXDATA_sr_done           <= RXDATA_sr(55 downto 0) & x"00";
+                        RXCHARISK_sr_done        <= RXCHARISK_sr(6 downto 0) & '0';
+                        RXCHARISvalid_sr_done    <=  RXCHARISvalid_sr(6 downto 0) & '0';
+
+                        -- We add the valid char inside the buffer
+                        RXDATA_sr          <= RXDATA_sr(63 downto 0)   & RXDATA_R_lane(7 downto 0);
+                        RXCHARISK_sr       <= RXCHARISK_sr(7 downto 0) & RXCHARISK_R_lane(0);       
+                        RXCHARISvalid_sr   <= RXCHARISvalid_sr(7 downto 0) & RXCHARISvalid_R_lane(0);  
+                        valid_byte_cntr          <= "001";
+
+                            -- The receiving is done and we need to maintain the word at least 4 cycles
+                        done_cntr               <= (others => '0');
+                        rx_done                 <= '1';                 
+
                     else -- either it is an irregular start or something went wrong
                         valid_byte_cntr    <= "001";
                         irregular_stream   <= '1';
@@ -758,20 +844,15 @@ process(UCLK)  -- _x2  rst_n,
                     RXDATA_sr          <= RXDATA_sr(63 downto 0)   & RXDATA_R_lane(7 downto 0);
                     RXCHARISK_sr       <= RXCHARISK_sr(7 downto 0) & RXCHARISK_R_lane(0);       
                     RXCHARISvalid_sr   <= RXCHARISvalid_sr(7 downto 0) & RXCHARISvalid_R_lane(0);  
-                    if done_cntr = "11" then         
-                        rx_done                 <= '0';           
-                        RXCHARISK_sr_done       <= (others => '1');
-                        RXCHARISvalid_sr_done   <= (others => '0');
-                    end if; 
                 end if;
             else
                 if RXCHARISvalid_R_lane(1) = '1' and (RXCHARISK_R_lane(1) = '0' or (RXCHARISK_R_lane(1) = '1' and (RXDATA_R_lane(15 downto 8) = SC or RXDATA_R_lane(15 downto 8) = PD))) then
                 --- [VV__] : It can appear only in the end               
-                    RXDATA_sr          <= RXDATA_sr(63 downto 0)   & RXDATA_R_lane(15 downto 8);
-                    RXCHARISK_sr       <= RXCHARISK_sr(7 downto 0) & RXCHARISK_R_lane(1);       
-                    RXCHARISvalid_sr   <= RXCHARISvalid_sr(7 downto 0) & RXCHARISvalid_R_lane(1);   
+                    RXDATA_sr          <= RXDATA_sr(55 downto 0)   & RXDATA_R_lane(15 downto 8) & x"00";
+                    RXCHARISK_sr       <= RXCHARISK_sr(6 downto 0) & RXCHARISK_R_lane(1) & '1';       
+                    RXCHARISvalid_sr   <= RXCHARISvalid_sr(6 downto 0) & RXCHARISvalid_R_lane(1) & '0';   
                     if valid_byte_cntr = "011" then
-                        valid_byte_cntr    <= valid_byte_cntr + '1';        
+                        valid_byte_cntr    <= valid_byte_cntr + "10";        
                         irregular_stream   <= '0'; -- irregularity has been compensated for the first symbol
                         if done_cntr = "11" then         
                             rx_done                 <= '0';           
@@ -779,7 +860,7 @@ process(UCLK)  -- _x2  rst_n,
                             RXCHARISvalid_sr_done   <= (others => '0');
                         end if;                     
                     elsif valid_byte_cntr = "111" then -- 2 symbols (2x32b) are done
-                        valid_byte_cntr         <= (others => '0');
+                        valid_byte_cntr         <= "001"; -- We have inside the buffer, the invalid K-Symbol, keep it to maintain alignment
                         irregular_stream        <= '0'; -- irregularity has been compensated for the second symbol
                         rx_done                 <= '1';
                         done_cntr               <= (others => '0');
@@ -795,17 +876,97 @@ process(UCLK)  -- _x2  rst_n,
                             RXCHARISvalid_sr_done   <= (others => '0');
                         end if; 
                     end if; 
+
+                -- Here we are in the case where the 2 character on line 0 and 1 is not either a standard char, or SC/PD
                 else
                 --- [____]
-                    if valid_byte_cntr /= "100" then  -- No IDLE allowed, unless between two symbols: Something went wrong probably
-                        valid_byte_cntr    <= "000";
-                        irregular_stream   <= '0';
-                    end if;
-                    if done_cntr = "11" then         
-                        rx_done                 <= '0';           
-                        RXCHARISK_sr_done       <= (others => '1');
-                        RXCHARISvalid_sr_done   <= (others => '0');
-                    end if;            
+                    -- FIXME:
+                    -- If we are on 6 chacter then to have an idle, it means the previous has to be idle
+                    --  if it's not the case, there is an error
+                        --RXDATA_sr_done          <= RXDATA_sr(31 downto 0) & x"0000_0000";
+                        --RXCHARISK_sr_done       <= RXCHARISK_sr(3 downto 0) & "0000";
+                        --RXCHARISvalid_sr_done   <= RXCHARISvalid_sr(3 downto 0) & "0000";
+                        --valid_byte_cntr    <= "000";
+                        --irregular_stream   <= '0';
+                        --done_cntr               <= "11";
+                        --rx_done                 <= '1';
+                        --RXDATA_sr          <= RXDATA_sr(55 downto 0) & x"0000";
+                        --RXCHARISK_sr       <= RXCHARISK_sr(6 downto 0) & "00";
+                        --RXCHARISvalid_sr   <= RXCHARISvalid_sr(6 downto 0) & "00";
+                        --valid_byte_cntr    <= valid_byte_cntr + "10";  -- 2 more bytes store                    
+
+                        -- If we have 4 bytes stored in the shift buffer, and the next 2 chars are invalid
+                        -- we replace it by 0
+                        if valid_byte_cntr = "100" then
+                            RXDATA_sr          <= RXDATA_sr(55 downto 0)   & x"0000";
+                            RXCHARISK_sr       <= RXCHARISK_sr(6 downto 0) & "00";
+                            RXCHARISvalid_sr   <= RXCHARISvalid_sr(6 downto 0) & "00";
+
+                            -- 2 more bytes stored, eventhough they are invalid
+                            valid_byte_cntr         <= valid_byte_cntr + "10";
+
+                            -- We don't have a word yet.
+                            rx_done                 <= '0';                 
+
+                            -- ASA RXDATA_sr_done     <= x"0000_0000" & RXDATA_sr(31 downto 0);
+                            -- ASA RXCHARISK_sr_done               <= "0000" & RXCHARISK_sr(3 downto 0);
+                            -- ASA RXCHARISvalid_sr_done           <= "0000" & RXCHARISvalid_sr(3 downto 0); 
+                            -- ASA valid_byte_cntr         <= (others => '0');
+
+                            -- The receiving is done and we need to maintain the word at least 4 cycles
+                            -- ASA done_cntr               <= (others => '0');
+                            -- ASA rx_done                 <= '1';                 
+
+                       -- 6 Bytes store, the next one, are invalid, just push them
+                       elsif valid_byte_cntr = "110" then
+
+                           RXDATA_sr_done           <= RXDATA_sr(47 downto 0) & x"0000";
+                           RXCHARISK_sr_done        <= RXCHARISK_sr(5 downto 0) & "00";
+                           RXCHARISvalid_sr_done    <=  RXCHARISvalid_sr(5 downto 0) & "00";
+                           valid_byte_cntr          <= (others => '0');
+
+                            -- The receiving is done and we need to maintain the word at least 4 cycles
+                            done_cntr               <= (others => '0');
+                            rx_done                 <= '1';                 
+
+                        -- 5 bytes stored, the next one are invalid, we have five byte inside the buffer, we need to wait to have fill it with dummy character
+                            -- to stay synchronous
+                       elsif valid_byte_cntr = "101" then
+
+                           RXDATA_sr          <= RXDATA_sr(55 downto 0)   & x"0000";
+                           RXCHARISK_sr       <= RXCHARISK_sr(6 downto 0) & "00";
+                           RXCHARISvalid_sr   <= RXCHARISvalid_sr(6 downto 0) & "00";
+                           valid_byte_cntr         <= valid_byte_cntr + "10";
+
+                        -- 7 bytes in the buffer, and next ones are invalid, complete the buffer
+                        -- with one, and push it, drop the second invalid character, we will have to resume from here
+                       elsif valid_byte_cntr = "111" then
+
+                           RXDATA_sr_done           <= RXDATA_sr(55 downto 0) & x"00";
+                           RXCHARISK_sr_done        <= RXCHARISK_sr(6 downto 0) & '0';
+                           RXCHARISvalid_sr_done    <=  RXCHARISvalid_sr(6 downto 0) & '0';
+                           valid_byte_cntr          <= (others => '0');
+
+                            -- The receiving is done and we need to maintain the word at least 4 cycles
+                            done_cntr               <= (others => '0');
+                            rx_done                 <= '1';                 
+                            irregular_stream        <= '0';
+
+
+                        else
+                            valid_byte_cntr         <= (others => '0');
+                            irregular_stream        <= '0';
+
+                            -- If the word has been presented during 4 cycles we invalid it from the bus
+                            --  if during this cycle  we have not updated it
+                            if done_cntr = "11" then   
+                                rx_done                 <= '0';                 
+                                RXCHARISK_sr_done       <= (others => '1');
+                                RXCHARISvalid_sr_done   <= (others => '0');
+                            end if;
+                        end if;
+
+
                 end if;
             end if;    
         end if;    
@@ -832,16 +993,21 @@ RXCHARISvalid_l    <= RXCHARISvalid_swap(6) & RXCHARISvalid_swap(4) & RXCHARISva
 -- RXCHARISvalid_u    <= RXCHARISvalid_swap(7) & RXCHARISvalid_swap(5) & RXCHARISvalid_swap(3) & RXCHARISvalid_swap(1);
 -- RXCHARISvalid_l    <= RXCHARISvalid_swap(6) & RXCHARISvalid_swap(4) & RXCHARISvalid_swap(2) & RXCHARISvalid_swap(0);
 
-upper_symbol_type  <= SYMBOL_IDLE       when RXCHARISK_u = "1111" and RXCHARISvalid_u = "1111" else  
+upper_symbol_type_q0  <= SYMBOL_IDLE       when RXCHARISK_u = "1111" and RXCHARISvalid_u = "1111" else  
                       SYMBOL_CONTROL    when RXCHARISK_u = "1000" and RXCHARISvalid_u = "1111" and (RXDATA_u(31 downto 24) = SC or RXDATA_u(31 downto 24) = PD) else    
                       SYMBOL_DATA       when RXCHARISK_u = "0000" and RXCHARISvalid_u = "1111" else    
                       SYMBOL_ERROR;
 
-lower_symbol_type  <= SYMBOL_IDLE       when RXCHARISK_l = "1111" and RXCHARISvalid_l = "1111" else  
+lower_symbol_type_q0  <= SYMBOL_IDLE       when RXCHARISK_l = "1111" and RXCHARISvalid_l = "1111" else  
                       SYMBOL_CONTROL    when RXCHARISK_l = "1000" and RXCHARISvalid_l = "1111" and (RXDATA_l(31 downto 24) = SC or RXDATA_l(31 downto 24) = PD) else    
                       SYMBOL_DATA       when RXCHARISK_l = "0000" and RXCHARISvalid_l = "1111" else    
                       SYMBOL_ERROR;
-                      
+
+-- Remove K-char from the message control
+RXDATA_wo_cntrl_u_q0 <=   RXDATA_u(23 downto 0)  & "00000000" when upper_symbol_type_q0 = SYMBOL_CONTROL else  RXDATA_u;
+RXDATA_wo_cntrl_l_q0 <=   RXDATA_l(23 downto 0)  & "00000000" when lower_symbol_type_q0 = SYMBOL_CONTROL else  RXDATA_l;   
+
+      
 -- 
 upper_symbol_not_idle   <= '0' when upper_symbol_type = SYMBOL_IDLE  else '1';                   
 lower_symbol_not_idle   <= '0' when lower_symbol_type = SYMBOL_IDLE  else '1'; 
@@ -851,6 +1017,42 @@ lower_symbol_not_error  <= '0' when lower_symbol_type = SYMBOL_ERROR else '1';
 upper_symbol_valid      <= upper_symbol_not_idle and upper_symbol_not_error;
 lower_symbol_valid      <= lower_symbol_not_idle and lower_symbol_not_error;
 
+process(UCLK)
+begin
+    if rising_edge(UCLK) then
+    
+        -- swap upper for lower
+        if mode_sel = '1' then 
+
+            RXDATA_wo_cntrl_l_q1    <= RXDATA_wo_cntrl_u_q0 ;
+            RXDATA_wo_cntrl_l       <= RXDATA_wo_cntrl_l_q1 ;
+        
+            lower_symbol_type_q1    <= upper_symbol_type_q0;
+            lower_symbol_type       <= lower_symbol_type_q1;
+
+            -- swap lower for upper
+            RXDATA_wo_cntrl_u       <= RXDATA_wo_cntrl_l_q0 ;
+            upper_symbol_type       <= lower_symbol_type_q0;
+
+         else
+
+           -- RXDATA_wo_cntrl_l_q1    <= RXDATA_wo_cntrl_l_q0 ;
+            --RXDATA_wo_cntrl_l       <= RXDATA_wo_cntrl_l_q1 ;
+        
+            --lower_symbol_type_q1    <= lower_symbol_type_q0;
+            --lower_symbol_type       <= lower_symbol_type_q1;
+
+
+            RXDATA_wo_cntrl_l       <= RXDATA_wo_cntrl_l_q0 ;
+            lower_symbol_type       <= lower_symbol_type_q0;
+
+            RXDATA_wo_cntrl_u       <= RXDATA_wo_cntrl_u_q0 ;
+            upper_symbol_type       <= upper_symbol_type_q0;
+         end if;
+        
+        
+    end if;
+end process;
 
 end RTL;
 ---------------------------------------------------------------------------------------
@@ -910,7 +1112,8 @@ use work.rio_common.all;
 
 entity pcs_tx_controller is
   generic (
-    TCQ         : time      := 100 ps
+    TCQ         : time      := 100 ps;
+    N           : integer   := 4 
   );
   port ( 
     rst_n                   : in  std_logic;
@@ -929,6 +1132,7 @@ entity pcs_tx_controller is
     -- outboundSymbol_i        : in  std_logic_vector(33 downto 0);
     --
     -- Interface to the GTX transceivers
+    RXCLKSTABLE      : in    std_logic_vector (3 downto 0);
     TXDATA_o                : out std_logic_vector(63 downto 0);  -- N = 4
     TXCHARISK_o             : out std_logic_vector(7 downto 0);
     --
@@ -1053,6 +1257,11 @@ signal fifo_wr_evenly_q       : std_logic:= '0';
 -- signal send_K_q             : std_logic:= '0';
 -- signal send_A_q             : std_logic:= '0';
 -- signal send_R_q             : std_logic:= '0';
+
+-- Generate the Symbol column for lane synchronisation
+signal K_column : std_logic_vector(N*8 -1 downto 0):= (others => '0');
+signal R_column : std_logic_vector(N*8 -1 downto 0):= (others => '0');
+signal A_column : std_logic_vector(N*8 -1 downto 0):= (others => '0');
 ----------------------------------------------------------------------------------
 begin
 -- 
@@ -1060,16 +1269,33 @@ rst                  <= not(rst_n);
 
 outboundSymbolType  <= outboundSymbol_i(33 downto 32);
 -- Filtering the ERROR symbol out
-outboundSymbol      <= outboundSymbol_i when (outboundSymbolType = SYMBOL_DATA or outboundSymbolType = SYMBOL_CONTROL) else 
-                       SYMBOL_IDLE & outboundSymbol_i(31 downto 0);    
-
+-- when there is no data to be written we replace it by an IDLE to avoid data duplication
+outboundSymbol      <= outboundSymbol_i when (outboundSymbolType = SYMBOL_DATA or outboundSymbolType = SYMBOL_CONTROL) and outboundWrite_i= '1' else 
+                       SYMBOL_IDLE & outboundSymbol_i(31 downto 0); 
 fifo_wr_selective   <= outboundWrite_i when (outboundSymbolType = SYMBOL_DATA or outboundSymbolType = SYMBOL_CONTROL) else '0';
 
 fifo_wr_always_even <= fifo_wr_selective or (fifo_wr_selective_q and fifo_wr_odd_or_even);
 
 outboundSymbolisData <= '1' when outboundSymbolType = SYMBOL_DATA else '0';
 
+-- Write to the fifo if
+--  * fifo_wr_selective: we ask a FIFO write (obvious)
+--  * fifo_wr_selective_q and fifo_wr_odd_or_even: we just did a write and we ask to write both odd or even word, 
+--      if it's not a data ( not(outboundSymbolisData_q) )
+-- ASA: I don't understand why we have to maintain the signal if we are sending a SYMBOL_CONTROL => it makes
+--  the symbol appearing twice, as SYMBOL_IDLE is sent by lower layer. It could be interesting, to force
+--  the FIFO to have some have if only half of the word is written.
 fifo_wr_evenly  <= fifo_wr_selective or (fifo_wr_selective_q and fifo_wr_odd_or_even and not(outboundSymbolisData_q));
+
+
+-- Generate the Symbol column for lane synchronisation
+GEN_COLUMNS:
+for lane_x in N downto 1 generate
+   K_column( lane_x*8-1 downto lane_x*8-1 -7) <= SYMBOL_COLUMN_SYNC;
+   R_column( lane_x*8-1 downto lane_x*8-1 -7) <= SYMBOL_COLUMN_SKIP;
+   A_column( lane_x*8-1 downto lane_x*8-1 -7) <= SYMBOL_COLUMN_ALIGN;
+   
+end generate GEN_COLUMNS;
 
 -- Writing to the FIFO
 process(rio_clk)
@@ -1091,6 +1317,8 @@ end process;
 send_K <= send_K_i;  
 send_A <= send_A_i;         
 send_R <= send_R_i;  
+
+
 
 -- idle_char_type  <= send_K & send_A & send_R;
 idle_char_type_0  <= send_K(0) & send_A(0) & send_R(0);
@@ -1169,6 +1397,7 @@ tx_boundary_fifo : pcs_tx_boudary_32b_in_64b_out   -- FWFT FIFO
 -- FIFO read / TX output process
 process(rst_n, UCLK) -- UCLK_x2
     begin    
+    
     if rst_n = '0'  then         
     
         ccs_timer_rst_o  <= '0'; 
@@ -1200,23 +1429,27 @@ process(rst_n, UCLK) -- UCLK_x2
             end if;
         else  -- Transmitting the IDLE sequence or the CONTROL/DATA symbols 
             
-            read_switch  <= read_switch + '1'; 
-            if read_switch = "00" then
-                case symbol_read is
-                    when '0' => 
-                        symbol_read         <= not(symbol_empty); -- and not(send_ccs) and not(send_ccs_q); -- after TCQ; 
-                        do_not_interrupt    <= not(symbol_empty);               
-                    when '1' => 
-                        symbol_read         <= not(symbol_almost_empty); -- after TCQ; -- and not(send_ccs) and not(send_ccs_q);        
-                        do_not_interrupt    <= not(symbol_almost_empty);                       
-                    when others => 
-                        symbol_read         <= '0'; -- after TCQ;
-                        do_not_interrupt    <= '0'; 
-                end case;  
+            -- If a CCS is pending, and just before, we say we may be interrupted, then
+            -- we let the CCS pass before us
+            if send_ccs_i = '1' and do_not_interrupt = '0' then
+                symbol_read         <= '0';
+                do_not_interrupt    <= '0';
+            else 
+                -- If there is pending data, we retrieve it from the FIFO
+                symbol_read <= not(symbol_empty);
+                
+                -- We prefer not being interrupted, either if we have still pending data
+                --  or if there is a symbol ready to be transmitted
+                do_not_interrupt    <= not(symbol_empty) or symbol_valid;
             end if;
             
-            ccs_timer_rst_o <= '0';                                   
-            if symbol_read = '1' then -- two symbols have been read, at least one of them is non-idle, they should be forwarded in 1 or 4 cycles
+            
+            -- If we have a valid symbol to transmit, we must not be 
+            --  interrupted by the CCS
+            --do_not_interrupt <= symbol_valid;
+            
+            ccs_timer_rst_o <= '0';  
+            if symbol_valid = '1' then -- two symbols have been read, at least one of them is non-idle, they should be forwarded in 1 or 4 cycles
                 case mode_sel_i is
                     when '1' => -- Lane stripping (x4 mode: rd_clk = UCLK)     
                         case symbol_type_u is                
@@ -1224,7 +1457,7 @@ process(rst_n, UCLK) -- UCLK_x2
                                 TXDATA_u      <= symbol_u(31 downto 24) & symbol_u(23 downto 16) & symbol_u(15 downto 8) & symbol_u(7 downto 0);
                                 TXCHARISK_u   <= (others => '0');                                 
                             when SYMBOL_CONTROL => 
-                                TXDATA_u      <= symbol_u(31 downto 24) & symbol_u(23 downto 16) & symbol_u(15 downto 8) & symbol_u(7 downto 0);
+                                TXDATA_u      <= PD & symbol_u(31 downto 24) & symbol_u(23 downto 16) & symbol_u(15 downto 8);
                                 TXCHARISK_u   <= "1000";                                        
                             when SYMBOL_IDLE =>     
                                 TXDATA_u      <= TXDATA_u_idle;
@@ -1239,7 +1472,7 @@ process(rst_n, UCLK) -- UCLK_x2
                                 TXDATA_l      <= symbol_l(31 downto 24) & symbol_l(23 downto 16) & symbol_l(15 downto 8) & symbol_l(7 downto 0);
                                 TXCHARISK_l   <= (others => '0');                                 
                             when SYMBOL_CONTROL => 
-                                TXDATA_l      <= symbol_l(31 downto 24) & symbol_l(23 downto 16) & symbol_l(15 downto 8) & symbol_l(7 downto 0);
+                                TXDATA_l      <= PD & symbol_l(31 downto 24) & symbol_l(23 downto 16) & symbol_l(15 downto 8) ;
                                 TXCHARISK_l   <= "1000";                                        
                             when SYMBOL_IDLE =>     
                                 TXDATA_l      <= TXDATA_l_idle;
@@ -1262,26 +1495,59 @@ process(rst_n, UCLK) -- UCLK_x2
                                 case cycle_switch(0) is
                                     when '0' => --   00 
                                         if symbol_type_u /= SYMBOL_IDLE then 
-                                            TXDATA_u        <= symbol_u(31 downto 24) & symbol_u(31 downto 24) & symbol_u(31 downto 24) & symbol_u(31 downto 24);
+                                            
                                             if symbol_type_u = SYMBOL_DATA then 
-                                                TXCHARISK_u     <= (others => '0');
+
+                                                TXDATA_u                <= (others => '0');
+                                                TXDATA_u(31 downto 24)    <= symbol_u(31 downto 24);
+                                                TXCHARISK_u             <= (others => '0');
+
+                                            	TXDATA_l                <= (others => '0'); 
+                                            	TXDATA_l(31 downto 24)    <=  symbol_u(23 downto 16);
+                                            	TXCHARISK_l             <= (others => '0');  
+
                                             else -- if symbol_type_u = SYMBOL_CONTROL then 
-                                                TXCHARISK_u     <= (others => '1');
+
+                                                TXDATA_u                <= (others => '0');
+                                                TXDATA_u(31 downto 24)    <= PD ;
+                                                TXCHARISK_u    	        <= "1000";
+
+                                            	TXDATA_l                <= (others => '0'); 
+                                            	TXDATA_l(31 downto 24)    <= symbol_u(31 downto 24) ;
+                                            	TXCHARISK_l    	        <= (others => '0');  
+
                                             end if;
-                                            TXDATA_l        <= symbol_u(23 downto 16) & symbol_u(23 downto 16) & symbol_u(23 downto 16) & symbol_u(23 downto 16);
-                                            TXCHARISK_l     <= (others => '0');  
                                         else -- if symbol_type_u = SYMBOL_IDLE then                                         
+
                                             TXDATA_u      <= TXDATA_u_idle;
                                             TXCHARISK_u   <= (others => '1');  
                                             TXDATA_l      <= TXDATA_l_idle;
                                             TXCHARISK_l   <= (others => '1');                                            
+
                                         end if;                                        
                                     when '1' => --   01  
                                         if symbol_type_u /= SYMBOL_IDLE then 
-                                            TXDATA_u        <= symbol_u(15 downto 8) & symbol_u(15 downto 8) & symbol_u(15 downto 8) & symbol_u(15 downto 8);
-                                            TXCHARISK_u     <= (others => '0'); -- This is the second part: does not matter control or data
-                                            TXDATA_l        <= symbol_u(7 downto 0) & symbol_u(7 downto 0) & symbol_u(7 downto 0) & symbol_u(7 downto 0);
-                                            TXCHARISK_l     <= (others => '0');  
+							                if symbol_type_u = SYMBOL_DATA then		
+
+                                                TXDATA_u                <= (others => '0');
+                                                TXDATA_u(31 downto 24)    <= symbol_u(15 downto 8);
+                                                TXCHARISK_u             <= (others => '0'); -- This is the second part: does not matter control or data
+
+                                            	TXDATA_l                <= (others => '0'); 
+                                                TXDATA_l(31 downto 24)    <= symbol_u(7 downto 0);
+                                                TXCHARISK_l             <= (others => '0');  
+
+                                             else -- if symbol_type_u = SYMBOL_CONTROL then 
+
+                                                TXDATA_u                <= (others => '0');
+                                                TXDATA_u(31 downto 24)    <= symbol_u(23 downto 16);
+                                                TXCHARISK_u             <= (others => '0'); 
+
+                                            	TXDATA_l                <= (others => '0'); 
+                                                TXDATA_l(31 downto 24)    <= symbol_u(15 downto 8) ;
+                                                TXCHARISK_l             <= (others => '0');  
+                                             end if;
+
                                         else -- if symbol_type_u = SYMBOL_IDLE then                                         
                                             TXDATA_u      <= TXDATA_u_idle;
                                             TXCHARISK_u   <= (others => '1');  
@@ -1295,32 +1561,65 @@ process(rst_n, UCLK) -- UCLK_x2
                                 case cycle_switch(0) is
                                     when '0' =>
                                         if symbol_type_l /= SYMBOL_IDLE then 
-                                            TXDATA_u        <= symbol_l(31 downto 24) & symbol_l(31 downto 24) & symbol_l(31 downto 24) & symbol_l(31 downto 24);
                                             if symbol_type_l = SYMBOL_DATA then 
-                                                TXCHARISK_u     <= (others => '0');
+                                                TXDATA_u                <= (others => '0');
+                                                TXDATA_u(31 downto 24)    <= symbol_l(31 downto 24);
+                                                TXCHARISK_u             <= (others => '0');
+
+                                            	TXDATA_l                <= (others => '0'); 
+                                                TXDATA_l(31 downto 24)    <= symbol_l(23 downto 16);
+                                                TXCHARISK_l             <= (others => '0');  
+
                                             else -- if symbol_type_l = SYMBOL_CONTROL then 
-                                                TXCHARISK_u     <= (others => '1');
+                                                TXDATA_u                <= (others => '0');
+                                                TXDATA_u(31 downto 24)    <= PD ;
+                                                TXCHARISK_u    	        <= "1000";
+
+                                            	TXDATA_l                <= (others => '0'); 
+                                                TXDATA_l(31 downto 24)    <= symbol_l(31 downto 24);
+                                                TXCHARISK_l    	        <= (others => '0');  
                                             end if;
-                                            TXDATA_l        <= symbol_l(23 downto 16) & symbol_l(23 downto 16) & symbol_l(23 downto 16) & symbol_l(23 downto 16);
-                                            TXCHARISK_l     <= (others => '0');  
+
                                         else -- if symbol_type_l = SYMBOL_IDLE then                                         
+
                                             TXDATA_u      <= TXDATA_u_idle;
                                             TXCHARISK_u   <= (others => '1');  
                                             TXDATA_l      <= TXDATA_l_idle;
                                             TXCHARISK_l   <= (others => '1');                                            
+
                                         end if;                                        
+
+
                                     when '1' =>
                                         if symbol_type_l /= SYMBOL_IDLE then 
-                                            TXDATA_u        <= symbol_l(15 downto 8) & symbol_l(15 downto 8) & symbol_l(15 downto 8) & symbol_l(15 downto 8);
-                                            TXCHARISK_u     <= (others => '0'); -- This is the second part: does not matter control or data
-                                            TXDATA_l        <= symbol_l(7 downto 0) & symbol_l(7 downto 0) & symbol_l(7 downto 0) & symbol_l(7 downto 0);
-                                            TXCHARISK_l     <= (others => '0');  
-                                        else -- if symbol_type_l = SYMBOL_IDLE then                                         
+							                if symbol_type_l = SYMBOL_DATA then		
+
+                                                TXDATA_u                <= (others => '0');
+                                                TXDATA_u(31 downto 24)    <= symbol_l(15 downto 8);
+                                                TXCHARISK_u             <= (others => '0'); -- This is the second part: does not matter control or data
+
+                                            	TXDATA_l                <= (others => '0'); 
+                                                TXDATA_l(31 downto 24)    <= symbol_l(7 downto 0) ;
+                                                TXCHARISK_l             <= (others => '0');  
+
+                                             else -- if symbol_type_l = SYMBOL_CONTROL then 
+
+                                                TXDATA_u                <= (others => '0');
+                                                TXDATA_u(31 downto 24)    <= symbol_l(23 downto 16);
+                                                TXCHARISK_u             <= (others => '0'); 
+
+                                            	TXDATA_l                <= (others => '0'); 
+                                                TXDATA_l(31 downto 24)    <= symbol_l(15 downto 8);
+                                                TXCHARISK_l             <= (others => '0');  
+
+                                             end if;
+                                        else -- if symbol_type_u = SYMBOL_IDLE then                                         
                                             TXDATA_u      <= TXDATA_u_idle;
                                             TXCHARISK_u   <= (others => '1');  
                                             TXDATA_l      <= TXDATA_l_idle;
                                             TXCHARISK_l   <= (others => '1');                                            
                                         end if;                                        
+
                                     when others =>   
                                     -- dummy
                                 end case;                                                                  
@@ -1387,9 +1686,20 @@ process(UCLK)
     if rising_edge(UCLK) then     
         ------------------
         -- MUST BE SWAPPED
-        TXDATA_o    <=   TXDATA_u( 7 downto  0) & TXDATA_l( 7 downto  0) & TXDATA_u(15 downto  8) & TXDATA_l(15 downto  8)
-                       & TXDATA_u(23 downto 16) & TXDATA_l(23 downto 16) & TXDATA_u(31 downto 24) & TXDATA_l(31 downto 24);   
-        TXCHARISK_o <= TXCHARISK_u(0) & TXCHARISK_l(0) & TXCHARISK_u(1) & TXCHARISK_l(1) & TXCHARISK_u(2) & TXCHARISK_l(2) & TXCHARISK_u(3) & TXCHARISK_l(3);
+        --TXDATA_o    <=   TXDATA_u( 7 downto  0) & TXDATA_l( 7 downto  0) & TXDATA_u(15 downto  8) & TXDATA_l(15 downto  8)
+                       --& TXDATA_u(23 downto 16) & TXDATA_l(23 downto 16) & TXDATA_u(31 downto 24) & TXDATA_l(31 downto 24);   
+        --TXCHARISK_o <= TXCHARISK_u(0) & TXCHARISK_l(0) & TXCHARISK_u(1) & TXCHARISK_l(1) & TXCHARISK_u(2) & TXCHARISK_l(2) & TXCHARISK_u(3) & TXCHARISK_l(3);
+        if  RXCLKSTABLE = "0000" then
+            TXDATA_o    <=   (others => '0');
+            TXCHARISK_o <=  (others => '0'); 
+        else
+            --TXDATA_o    <= TXDATA_u( 7 downto  0) & TXDATA_l( 7 downto  0) & TXDATA_u(15 downto  8) & TXDATA_l(15 downto  8)
+                         --& TXDATA_u(23 downto 16) & TXDATA_l(23 downto 16) & TXDATA_u(31 downto 24) & TXDATA_l(31 downto 24) ;   
+            --TXCHARISK_o <= TXCHARISK_u(0) & TXCHARISK_l(0) & TXCHARISK_u(1) & TXCHARISK_l(1) & TXCHARISK_u(2) & TXCHARISK_l(2) & TXCHARISK_u(3) & TXCHARISK_l(3);
+            TXDATA_o    <= TXDATA_l( 7 downto  0) & TXDATA_u( 7 downto  0) & TXDATA_l(15 downto  8) & TXDATA_u(15 downto  8)
+                         & TXDATA_l(23 downto 16) & TXDATA_u(23 downto 16) & TXDATA_l(31 downto 24) & TXDATA_u(31 downto 24) ;   
+            TXCHARISK_o <= TXCHARISK_l(0) & TXCHARISK_u(0) & TXCHARISK_l(1) & TXCHARISK_u(1) & TXCHARISK_l(2) & TXCHARISK_u(2) & TXCHARISK_l(3) & TXCHARISK_u(3);
+        end if;
         ------------------
     end if;
 end process; 
@@ -1463,14 +1773,14 @@ use work.rio_common.all;
 
 entity port_init_fsms is
   generic (
-    TCQ         : time      := 100 ps
+    TCQ         : time      := 100 ps;
+    N           : integer   := 4
   );
   port ( 
     rst_n               : in  std_logic;
     UCLK_x2             : in  std_logic;
     UCLK                : in  std_logic;
     UCLK_DV4            : in  std_logic; 
-    UCLK_DV_1024        : in  std_logic;   
     
     force_reinit        : in  std_logic:='0';   -- force retraining
     mode_sel            : out std_logic;        -- 0: x1 fallback mode / 1: xN Mode
@@ -1496,6 +1806,7 @@ entity port_init_fsms is
     RXNOTINTABLE        : in  std_logic_vector(N*2-1 downto 0);
     RXBUFERR            : in  std_logic;
     RXBUFRST            : out std_logic;
+    RXCLKSTABLE         : in  std_logic_vector(N-1 downto 0);
     CHBONDDONE          : in  std_logic_vector(N-1 downto 0)
   );
 end port_init_fsms;
@@ -1505,8 +1816,15 @@ architecture rtl of port_init_fsms is
 -- Lane_Synchronization State Machine 
 type lane_sync_states is (NO_SYNC, NO_SYNC_1, NO_SYNC_2, NO_SYNC_2a, NO_SYNC_2b, NO_SYNC_3, SYNC, SYNCa, SYNCb, SYNC_1, SYNC_2, SYNC_2a, SYNC_2b, SYNC_3, SYNC_4);
 type lane_sync_states_array is array (N-1 downto 0) of lane_sync_states;
+type Kcounter_array_type is array (N-1 downto 0) of std_logic_vector(7 downto 0) ; -- FIXME: what are the value min/max for the synchro
+type Vcounter_array_type is array (N-1 downto 0) of std_logic_vector(7 downto 0) ; -- FIXME: what are the value min/max for the synchro
+type Icounter_array_type is array (N-1 downto 0) of std_logic_vector(7 downto 0) ; -- FIXME: what are the value min/max for the synchro
+subtype  Mcounter_type is std_logic_vector(7 downto 0) ; -- FIXME: what are the value min/max for the synchro
 
 signal lane_sync_state_n : lane_sync_states_array           := (others => NO_SYNC);
+attribute mark_debug : string;
+attribute mark_debug of lane_sync_state_n: signal is "true";
+
 signal lane_sync_n       : std_logic_vector(N-1 downto 0)   := (others => '0');
 signal Kcounter_n        : Kcounter_array_type              := (others => (others => '0'));
 signal Vcounter_n        : Vcounter_array_type              := (others => (others => '0'));
@@ -1553,13 +1871,14 @@ signal silence_timer        : std_logic_vector(4 downto 0)   := (others => '0');
 
 signal disc_tmr_en          : std_logic := '0';
 signal disc_tmr_done        : std_logic := '0';
+
 signal disc_tmr             : std_logic_vector(15 downto 0)   := (others => '0'); 
 
 signal port_initalized_reg  : std_logic := '0';
 
 signal idle_selected        : std_logic := '1'; -- Only IDLE1 is to be used
 signal Nx_mode_enabled      : std_logic := '1'; -- Nx mode is to be always enabled
-signal force_1x_mode        : std_logic := '0'; -- don't force 1x mode
+signal force_1x_mode        : std_logic := '1'; -- don't force 1x mode ASA Change from 0
 signal force_laneR          : std_logic := '0'; -- don't care, when force_1x_mode = 0
 
 signal lane_ready_n         : std_logic_vector(N-1 downto 0)   := (others => '0');
@@ -1568,7 +1887,30 @@ signal N_lanes_ready        : std_logic := '0';
 
 signal rxbufrst_cntr        : std_logic_vector(2 downto 0)   := (others => '0');
 signal rxbuferr_reg         : std_logic := '0';
+
+signal pulse_1024DV         : std_logic := '0';
+signal UCLK_DV1024_counter : std_logic_vector(9 downto 0);
+signal UCLK_DV1024_counter_max : std_logic_vector(9 downto 0);
+
 -------------------------------------------------------------------------------------------------------------------------------------------
+function GetDISCOVERY_ENDS( in_simulation : boolean ) return std_logic_vector is
+begin
+    if in_simulation then
+        return DISCOVERY_ENDS_SIMU;
+    else
+        return DISCOVERY_ENDS;
+    end if;
+end function;
+
+function GetKmin( in_simulation : boolean ) return std_logic_vector is
+begin
+    if in_simulation then
+        return Kmin_simu;
+    else
+        return Kmin;
+    end if;
+end function;
+
 begin
 
 lane_sync <= lane_sync_n;
@@ -1666,7 +2008,7 @@ process(rst_n, UCLK)  -- (UCLK_x2) --
                 -- [ KKKK ]         -- Both /COMMA/  
                 elsif (RXCHARISCOMMA(i*2) = '1' and RXCHARISCOMMA(i*2+1) = '1') then    
                     -- (Kcounter[n] > 126) & (Vcounter[n] > Vmin-1) 
-                    if Kcounter_n(i) >= Kmin and Vcounter_n(i) >= Vmin then 
+                    if Kcounter_n(i) >= GetKmin(in_simulation) and Vcounter_n(i) >= Vmin then 
                         lane_sync_state_n(i) <= SYNC;                              
                     -- (Kcounter[n] < 127) | (Vcounter[n] < Vmin) 
                     else                                                
@@ -1676,7 +2018,7 @@ process(rst_n, UCLK)  -- (UCLK_x2) --
                 -- [ KKVV or VVKK ] -- One of both /COMMA/  
                 elsif (RXCHARISCOMMA(i*2) = '1' or RXCHARISCOMMA(i*2+1) = '1') then  
                     -- (Kcounter[n] > 126) & (Vcounter[n] > Vmin-1) 
-                    if Kcounter_n(i) >= Kmin and Vcounter_n(i) >= Vmin then 
+                    if Kcounter_n(i) >= GetKmin(in_simulation) and Vcounter_n(i) >= Vmin then 
                         lane_sync_state_n(i) <= SYNC;                              
                     -- (Kcounter[n] < 127) | (Vcounter[n] < Vmin) 
                     else                                                
@@ -1687,7 +2029,7 @@ process(rst_n, UCLK)  -- (UCLK_x2) --
                 -- [ VVVV ]         -- None of both /COMMA/, but both /VALID/  
                 else -- if RXCHARISCOMMA(i*2) = '0') and RXCHARISCOMMA(i*2+1) = '0') then    
                     -- (Kcounter[n] > 126) & (Vcounter[n] > Vmin-1) 
-                    if Kcounter_n(i) >= Kmin and Vcounter_n(i) >= Vmin then 
+                    if Kcounter_n(i) >= GetKmin(in_simulation) and Vcounter_n(i) >= Vmin then 
                         lane_sync_state_n(i) <= SYNC;                              
                     -- (Kcounter[n] < 127) | (Vcounter[n] < Vmin) 
                     else                                                
@@ -1703,7 +2045,7 @@ process(rst_n, UCLK)  -- (UCLK_x2) --
             --     -- /COMMA/  
             --     elsif (code_group_valid(i*2) = '1' and RXCHARISCOMMA(i*2) = '1') then --RXCHARISK(i*2) = '1' and RXDATA(i*16+7 downto i*16) = x"BC") then
             --         -- (Kcounter[n] > 126) & (Vcounter[n] > Vmin-1) 
-            --         if Kcounter_n(i) >= Kmin and Vcounter_n(i) >= Vmin then 
+            --         if Kcounter_n(i) >= GetKmin(in_simulation) and Vcounter_n(i) >= Vmin then 
             --             lane_sync_state_n(i) <= SYNCb;                              
             --         -- (Kcounter[n] < 127) | (Vcounter[n] < Vmin) 
             --         else                                  
@@ -1727,7 +2069,7 @@ process(rst_n, UCLK)  -- (UCLK_x2) --
             --     -- /COMMA/  
             --     elsif (code_group_valid(i*2+1) = '1' and RXCHARISCOMMA(i*2+1) = '1') then --RXCHARISK(i*2+1) = '1' and RXDATA(i*16+15 downto i*16+8) = x"BC") then
             --         -- (Kcounter[n] > 126) & (Vcounter[n] > Vmin-1) 
-            --         if Kcounter_n(i) >= Kmin and Vcounter_n(i) >= Vmin then 
+            --         if Kcounter_n(i) >= GetKmin(in_simulation) and Vcounter_n(i) >= Vmin then 
             --             lane_sync_state_n(i) <= SYNCa;                              
             --         -- (Kcounter[n] < 127) | (Vcounter[n] < Vmin) 
             --         else                                  
@@ -1799,7 +2141,7 @@ process(rst_n, UCLK)  -- (UCLK_x2) --
                         Icounter_n(i)   <= Icounter_n(i) - '1';
                         Vcounter_n(i)   <= (others => '0'); 
                         -- (Icounter[n] > 0) 
-                        if Icounter_n(i) > Ione then
+                        if Icounter_n(i) > Ione then -- ASA
                             -- do nothing
                             lane_sync_state_n(i) <= SYNC_2;  
                         -- (Icounter[n] = 0) 
@@ -1933,8 +2275,8 @@ align_error_upper     <= '1' when (RXCHARIS_A_upper /= N_lanes_all_low) and (RXC
 align_error_lower     <= '1' when (RXCHARIS_A_lower /= N_lanes_all_low) and (RXCHARIS_A_lower /= N_lanes_all_high) else '0'; 
 align_error           <= align_error_upper or align_error_lower; 
 GEN_CHAR_A_CHECKER: for i in 0 to N-1 generate    
-RXCHARIS_A_upper(i)    <=  '1' when (code_group_valid(i*2+1) = '1') and (RXCHARISK(i*2+1) = '1') and (RXDATA(i*16+15 downto i*16+8) = A_align) else '0';
-RXCHARIS_A_lower(i)    <=  '1' when (code_group_valid(i*2) = '1'  ) and (RXCHARISK(i*2) = '1'  ) and (RXDATA(i*16+7 downto i*16   ) = A_align) else '0';
+RXCHARIS_A_upper(i)    <=  '1' when (code_group_valid(i*2+1) = '1') and (RXCHARISK(i*2+1) = '1') and (RXDATA(i*16+15 downto i*16+8) = SYMBOL_COLUMN_ALIGN) else '0'; 
+RXCHARIS_A_lower(i)    <=  '1' when (code_group_valid(i*2) = '1'  ) and (RXCHARISK(i*2) = '1'  ) and (RXDATA(i*16+7 downto i*16   ) = SYMBOL_COLUMN_ALIGN) else '0'; 
 end generate GEN_CHAR_A_CHECKER;
 
 process(lane_alignment_reset, UCLK)
@@ -2045,7 +2387,7 @@ end process;
 -- Figure 4-18. 1x/Nx_Initialization State Machine for N = 4
 TXINHIBIT_02        <= not(lanes02_drvr_oe);
 TXINHIBIT_others    <= not(N_lanes_drvr_oe);
-rcvr_trained_n      <= CHBONDDONE; -- TBD
+rcvr_trained_n      <= RXCLKSTABLE; 
 lane_ready_n        <= lane_sync_n and rcvr_trained_n;
 -- lane_ready_n        <= lane_sync_n; -- and rcvr_trained_n;
 N_lanes_ready       <= '1' when N_lanes_aligned = '1' and lane_ready_n = N_lanes_all_high else '0';
@@ -2061,6 +2403,7 @@ N_lanes_ready       <= '1' when N_lanes_aligned = '1' and lane_ready_n = N_lanes
 mode_sel         <= Nx_mode_active;
 mode_0_lane_sel  <= receive_lane2;
 port_initalized  <= port_initalized_reg;
+
 
 process(rst_n, UCLK)
     begin    
@@ -2254,69 +2597,111 @@ end process;
 
 -- Silence Timer Process
 -- silence_timer_done: Asserted when silence_timer_en has been continuously asserted
--- for 120 +/- 40 µs and the state machine is in the SILENT state. The assertion of
+-- for 120 +/- 40 ???s and the state machine is in the SILENT state. The assertion of
 -- silence_timer_done causes silence_timer_en to be de-asserted. When the state
 -- machine is not in the SILENT state, silence_timer_done is de-asserted.
-process(rst_n, UCLK_DV_1024)
+process(rst_n, UCLK)
     begin    
     if rst_n = '0'  then        
         silence_timer_done  <= '0'; 
         silence_timer       <= (others => '0');         
-    elsif rising_edge(UCLK_DV_1024) then 
+    elsif rising_edge(UCLK) then 
     
-        case silence_timer_en is            
-            when '0' =>   
-                silence_timer       <= (others => '0');  
-                silence_timer_done  <= '0'; 
-            when '1' => 
-                if silence_timer = SILENT_ENOUGH then
-                    if mode_init_state = SILENT then
-                        silence_timer_done  <= '1'; 
+        if pulse_1024DV = '1' then 
+    
+            case silence_timer_en is            
+                when '0' =>   
+                    silence_timer       <= (others => '0');  
+                    silence_timer_done  <= '0'; 
+                when '1' => 
+                    if silence_timer = SILENT_ENOUGH then
+                        if mode_init_state = SILENT then
+                            silence_timer_done  <= '1'; 
+                        else
+                            silence_timer_done  <= '0'; 
+                        end if;
                     else
-                        silence_timer_done  <= '0'; 
+                        silence_timer   <= silence_timer + '1';
                     end if;
-                else
-                    silence_timer   <= silence_timer + '1';
-                end if;
-            when others =>
-                silence_timer   <= (others => '0');              
-        end case; 
+                when others =>
+                    silence_timer   <= (others => '0');              
+            end case; 
+        end if;
     end if;
 end process;
 
+-- 
+-- This process generate a pulse every 1024 UCLK tick
+-- Thus it generates a sub-sampled clock without having
+--  a cross-clock domain issue.
+--
+pulse1024_generator : process(UCLK, rst_n )
+begin
+        if rst_n = '0' then
+            pulse_1024DV <= '0';
+            UCLK_DV1024_counter <= (others => '0');
+
+            if in_simulation = true then
+                UCLK_DV1024_counter_max <= "0000010000";
+            else
+                UCLK_DV1024_counter_max <= "1111111111";
+            end if;
+
+        else
+            if rising_edge(UCLK) then
+        
+                if UCLK_DV1024_counter = UCLK_DV1024_counter_max then 
+                    pulse_1024DV <= '1';
+                    UCLK_DV1024_counter <= (others => '0');
+                    UCLK_DV1024_counter(0) <= '1';
+                else
+                    pulse_1024DV <= '0';
+                    UCLK_DV1024_counter <= std_logic_vector(unsigned(UCLK_DV1024_counter) + 1);
+                end if;
+            
+        end if;
+        
+    end if ;
+end process;
+
+
 -- Discovery Timer Process
--- disc_tmr_done: Asserted when disc_tmr_en has been continuously asserted for 28 +/- 4 ms
+-- disc_tmr_done: Asserted when disc_tmr_en_sync has been continuously asserted for 28 +/- 4 ms
 -- and the state machine is in the DISCOVERY or a RECOVERY state. The assertion of 
 -- disc_tmr_done causes disc_tmr_en to be de-asserted. When the state machine is in
 -- a state other than the DISCOVERY or a RECOVERY state, disc_tmr_done is de-asserted.
-process(rst_n, UCLK_DV_1024)
+process(rst_n, UCLK)
     begin    
     if rst_n = '0'  then        
         disc_tmr_done  <= '0'; 
-        disc_tmr       <= (others => '0');         
-    elsif rising_edge(UCLK_DV_1024) then 
-    
-        case disc_tmr_en is            
-            when '0' =>   
-                disc_tmr       <= (others => '0');  
-                disc_tmr_done  <= '0'; 
-            when '1' => 
-                if disc_tmr = DISCOVERY_ENDS then
-                    if mode_init_state = DISCOVERY or mode_init_state = x1_RECOVERY then
-                        disc_tmr_done  <= '1'; 
+        disc_tmr       <= (others => '0');    
+        
+    elsif rising_edge(UCLK) then 
+        if pulse_1024DV = '1' then
+            case disc_tmr_en is            
+                when '0' =>   
+                    disc_tmr       <= (others => '0');  
+                    disc_tmr_done  <= '0'; 
+                when '1' => 
+                    if disc_tmr = GetDISCOVERY_ENDS(in_simulation) then
+                        if mode_init_state = DISCOVERY or mode_init_state = x1_RECOVERY then
+                            disc_tmr_done  <= '1'; 
+                        else
+                            disc_tmr_done  <= '0'; 
+                        end if;
                     else
-                        disc_tmr_done  <= '0'; 
+                        disc_tmr   <= disc_tmr + '1';
                     end if;
-                else
-                    disc_tmr   <= disc_tmr + '1';
-                end if;
-            when others =>
-                disc_tmr   <= (others => '0');              
-        end case; 
+                when others =>
+                    disc_tmr   <= (others => '0');              
+            end case; 
+        end if;
     end if;
 end process;
 
-ENCHANSYNC <= '0';
+-- When we have detected we can only run in 1x mode, we have to stop the bonding other
+--  the elastic buffer will try to synchronize with garbage on the others lane
+ENCHANSYNC <= '0'; -- ASA FIXME N_lanes_drvr_oe; 
 
 end rtl;
 -------------------------------------------------------------------------------
@@ -2457,180 +2842,191 @@ use ieee.numeric_std.all;
 use work.rio_common.all;
 
 entity serdes_wrapper_v0 is
+  generic (
+         N           : integer   := 4
+  );
   port ( 
-         REFCLK              : in std_logic;
-         RXUSRCLK            : in std_logic;
-         RXUSRCLK2           : in std_logic;
-         TXUSRCLK            : in std_logic;
-         TXUSRCLK2           : in std_logic;
-         GTXRESET            : in std_logic;
-         RXBUFRST            : in std_logic;
-          
-         -- RXN                 : in  std_logic_vector(N-1 downto 0);
-         -- RXP                 : in  std_logic_vector(N-1 downto 0);
-         RXN                 : in  std_logic_vector(0 to N-1);
-         RXP                 : in  std_logic_vector(0 to N-1);
-         TXINHIBIT_02        : in  std_logic;
-         TXINHIBIT_others    : in  std_logic;
-         ENCHANSYNC          : in  std_logic;
-         TXDATA              : in  std_logic_vector(N*16-1 downto 0);
-         TXCHARISK           : in  std_logic_vector(N*2-1 downto 0);
-         -- TXN                 : out std_logic_vector(N-1 downto 0);
-         -- TXP                 : out std_logic_vector(N-1 downto 0);
-         TXN                 : out std_logic_vector(0 to N-1);
-         TXP                 : out std_logic_vector(0 to N-1);
-         PLLLKDET            : out std_logic;
-         RXDATA              : out std_logic_vector(N*16-1 downto 0);
-         RXCHARISK           : out std_logic_vector(N*2-1 downto 0);
-         RXCHARISCOMMA       : out std_logic_vector(N*2-1 downto 0);
-         RXBYTEISALIGNED     : out std_logic_vector(N-1 downto 0);
-         RXBYTEREALIGN       : out std_logic_vector(N-1 downto 0);
-         RXELECIDLE          : out std_logic_vector(N-1 downto 0);
-         RXDISPERR           : out std_logic_vector(N*2-1 downto 0);
-         RXNOTINTABLE        : out std_logic_vector(N*2-1 downto 0);
-         RXBUFERR            : out std_logic;
-         CHBONDDONE          : out std_logic_vector(N-1 downto 0)
+		SYSCLK_IN 					: out std_logic;
+		SYSCLK_IN_P                	: in   std_logic;
+		SYSCLK_IN_N                 : in   std_logic;
+
+		RXUSRCLK            : out std_logic;
+		RXUSRCLK2           : out std_logic;
+		TXUSRCLK            : out std_logic;
+		TXUSRCLK2           : out std_logic;
+		
+		CLK0_GTREFCLK_PAD_N 	: in std_logic;
+		CLK0_GTREFCLK_PAD_P 	: in std_logic;
+
+		CLK1_GTREFCLK_PAD_N 	: in std_logic;
+		CLK1_GTREFCLK_PAD_P 	: in std_logic;
+		
+		GTXRESET            : in std_logic;
+		RXBUFRST            : in std_logic;
+
+		-- RXN                 : in  std_logic_vector(N-1 downto 0);
+		-- RXP                 : in  std_logic_vector(N-1 downto 0);
+		RXN                 : in  std_logic_vector(0 to N-1);
+		RXP                 : in  std_logic_vector(0 to N-1);
+		TXINHIBIT_02        : in  std_logic;
+		TXINHIBIT_others    : in  std_logic;
+		ENCHANSYNC          : in  std_logic;
+		TXDATA              : in  std_logic_vector(N*16-1 downto 0);
+		TXCHARISK           : in  std_logic_vector(N*2-1 downto 0);
+		-- TXN                 : out std_logic_vector(N-1 downto 0);
+		-- TXP                 : out std_logic_vector(N-1 downto 0);
+		TXN                 : out std_logic_vector(0 to N-1);
+		TXP                 : out std_logic_vector(0 to N-1);
+		PLLLKDET            : out std_logic;
+		RXDATA              : out std_logic_vector(N*16-1 downto 0);
+		RXCHARISK           : out std_logic_vector(N*2-1 downto 0);
+		RXCHARISCOMMA       : out std_logic_vector(N*2-1 downto 0);
+		RXBYTEISALIGNED     : out std_logic_vector(N-1 downto 0);
+		RXBYTEREALIGN       : out std_logic_vector(N-1 downto 0);
+		RXELECIDLE          : out std_logic_vector(N-1 downto 0);
+		RXDISPERR           : out std_logic_vector(N*2-1 downto 0);
+		RXNOTINTABLE        : out std_logic_vector(N*2-1 downto 0);
+		RXBUFERR            : out std_logic;
+        
+		RXCLKSTABLE  		: out std_logic_vector (N-1 downto 0); 
+		CHBONDDONE 			: out std_logic_vector (N-1 downto 0);
+		
+		LOOPBACK0 			: IN std_logic_vector(2 downto 0); 
+		LOOPBACK1 			: IN std_logic_vector(2 downto 0);
+		LOOPBACK2 			: IN std_logic_vector(2 downto 0);
+		LOOPBACK3 			: IN std_logic_vector(2 downto 0)
   );
 end serdes_wrapper_v0;
 
 architecture struct of serdes_wrapper_v0 is
 
-	COMPONENT srio_gt_wrapper_v6_4x
-	PORT(
-		REFCLK : IN std_logic;
-		RXUSRCLK : IN std_logic;
-		RXUSRCLK2 : IN std_logic;
-		TXUSRCLK : IN std_logic;
-		TXUSRCLK2 : IN std_logic;
-		GTXRESET : IN std_logic;
-		RXBUFRST : IN std_logic;
-		RXN0 : IN std_logic;
-		RXN1 : IN std_logic;
-		RXN2 : IN std_logic;
-		RXN3 : IN std_logic;
-		RXP0 : IN std_logic;
-		RXP1 : IN std_logic;
-		RXP2 : IN std_logic;
-		RXP3 : IN std_logic;
-		TXINHIBIT_02 : IN std_logic;
-		TXINHIBIT_13 : IN std_logic;
-		ENCHANSYNC : IN std_logic;
-		TXDATA0 : IN std_logic_vector(15 downto 0);
-		TXDATA1 : IN std_logic_vector(15 downto 0);
-		TXDATA2 : IN std_logic_vector(15 downto 0);
-		TXDATA3 : IN std_logic_vector(15 downto 0);
-		TXCHARISK0 : IN std_logic_vector(1 downto 0);
-		TXCHARISK1 : IN std_logic_vector(1 downto 0);
-		TXCHARISK2 : IN std_logic_vector(1 downto 0);
-		TXCHARISK3 : IN std_logic_vector(1 downto 0);          
-		TXN0 : OUT std_logic;
-		TXN1 : OUT std_logic;
-		TXN2 : OUT std_logic;
-		TXN3 : OUT std_logic;
-		TXP0 : OUT std_logic;
-		TXP1 : OUT std_logic;
-		TXP2 : OUT std_logic;
-		TXP3 : OUT std_logic;
-		PLLLKDET : OUT std_logic;
-		RXDATA0 : OUT std_logic_vector(15 downto 0);
-		RXDATA1 : OUT std_logic_vector(15 downto 0);
-		RXDATA2 : OUT std_logic_vector(15 downto 0);
-		RXDATA3 : OUT std_logic_vector(15 downto 0);
-		RXCHARISK0 : OUT std_logic_vector(1 downto 0);
-		RXCHARISK1 : OUT std_logic_vector(1 downto 0);
-		RXCHARISK2 : OUT std_logic_vector(1 downto 0);
-		RXCHARISK3 : OUT std_logic_vector(1 downto 0);
-		RXCHARISCOMMA0 : OUT std_logic_vector(1 downto 0);
-		RXCHARISCOMMA1 : OUT std_logic_vector(1 downto 0);
-		RXCHARISCOMMA2 : OUT std_logic_vector(1 downto 0);
-		RXCHARISCOMMA3 : OUT std_logic_vector(1 downto 0);
-        RXBYTEISALIGNED: OUT  std_logic_vector(3 downto 0);
-        RXBYTEREALIGN  : OUT  std_logic_vector(3 downto 0);
-        RXELECIDLE     : OUT std_logic_vector(3 downto 0);
-		RXDISPERR0 : OUT std_logic_vector(1 downto 0);
-		RXDISPERR1 : OUT std_logic_vector(1 downto 0);
-		RXDISPERR2 : OUT std_logic_vector(1 downto 0);
-		RXDISPERR3 : OUT std_logic_vector(1 downto 0);
-		RXNOTINTABLE0 : OUT std_logic_vector(1 downto 0);
-		RXNOTINTABLE1 : OUT std_logic_vector(1 downto 0);
-		RXNOTINTABLE2 : OUT std_logic_vector(1 downto 0);
-		RXNOTINTABLE3 : OUT std_logic_vector(1 downto 0);
-		RXBUFERR : OUT std_logic;
-		CHBONDDONE0 : OUT std_logic;
-		CHBONDDONE1 : OUT std_logic;
-		CHBONDDONE2 : OUT std_logic;
-		CHBONDDONE3 : OUT std_logic
-		);
-	END COMPONENT;
+
+
 
 begin
+	srio_gt_wrapper_v6_4x_INST:  entity work.srio_gt_wrapper_v6_4x
+	port map (
+		SYSCLK_IN 					=> SYSCLK_IN,
+		SYSCLK_IN_P                	=>  SYSCLK_IN_P,
+		SYSCLK_IN_N                 =>  SYSCLK_IN_N,
+		                            
+      RXUSRCLK        => RXUSRCLK,
+      RXUSRCLK2       => RXUSRCLK2,
+      TXUSRCLK        => TXUSRCLK,
+      TXUSRCLK2       => TXUSRCLK2,
+	  
+      CLK0_GTREFCLK_PAD_N  => CLK0_GTREFCLK_PAD_N,
+      CLK0_GTREFCLK_PAD_P  => CLK0_GTREFCLK_PAD_P,
+	
+	  CLK1_GTREFCLK_PAD_N  => CLK1_GTREFCLK_PAD_N,
+	  CLK1_GTREFCLK_PAD_P  => CLK1_GTREFCLK_PAD_P,
 
-	Inst_srio_gt_wrapper_v6_4x: srio_gt_wrapper_v6_4x PORT MAP(
-		REFCLK              => REFCLK                       ,
-		RXUSRCLK            => RXUSRCLK                     ,
-		RXUSRCLK2           => RXUSRCLK2                    ,
-		TXUSRCLK            => TXUSRCLK                     ,
-		TXUSRCLK2           => TXUSRCLK2                    ,
-		GTXRESET            => GTXRESET                     ,
-		RXBUFRST            => RXBUFRST                     ,
-		RXN0                => RXN(0)                       ,
-		RXN1                => RXN(1)                       ,
-		RXN2                => RXN(2)                       ,
-		RXN3                => RXN(3)                       ,
-		RXP0                => RXP(0)                       ,
-		RXP1                => RXP(1)                       ,
-		RXP2                => RXP(2)                       ,
-		RXP3                => RXP(3)                       ,
-		TXINHIBIT_02        => TXINHIBIT_02                 ,
-		TXINHIBIT_13        => TXINHIBIT_others             ,
-		ENCHANSYNC          => ENCHANSYNC                   ,
-		TXDATA0             => TXDATA(15 downto 0)          ,
-		TXDATA1             => TXDATA(31 downto 16)         ,
-		TXDATA2             => TXDATA(47 downto 32)         ,
-		TXDATA3             => TXDATA(63 downto 48)         ,
-		TXCHARISK0          => TXCHARISK(1 downto 0)        ,
-		TXCHARISK1          => TXCHARISK(3 downto 2)        ,
-		TXCHARISK2          => TXCHARISK(5 downto 4)        ,
-		TXCHARISK3          => TXCHARISK(7 downto 6)        ,
-		TXN0                => TXN(0)                       ,
-		TXN1                => TXN(1)                       ,
-		TXN2                => TXN(2)                       ,
-		TXN3                => TXN(3)                       ,
-		TXP0                => TXP(0)                       ,
-		TXP1                => TXP(1)                       ,
-		TXP2                => TXP(2)                       ,
-		TXP3                => TXP(3)                       ,
-		PLLLKDET            => PLLLKDET                     ,
-		RXDATA0             => RXDATA(15 downto 0)          ,
-		RXDATA1             => RXDATA(31 downto 16)         ,
-		RXDATA2             => RXDATA(47 downto 32)         ,
-		RXDATA3             => RXDATA(63 downto 48)         ,
-		RXCHARISK0          => RXCHARISK(1 downto 0)        ,
-		RXCHARISK1          => RXCHARISK(3 downto 2)        ,
-		RXCHARISK2          => RXCHARISK(5 downto 4)        ,
-		RXCHARISK3          => RXCHARISK(7 downto 6)        ,
-		RXCHARISCOMMA0      => RXCHARISCOMMA(1 downto 0)    ,
-		RXCHARISCOMMA1      => RXCHARISCOMMA(3 downto 2)    ,
-		RXCHARISCOMMA2      => RXCHARISCOMMA(5 downto 4)    ,
-		RXCHARISCOMMA3      => RXCHARISCOMMA(7 downto 6)    ,        
-        RXBYTEISALIGNED     => RXBYTEISALIGNED              ,
-        RXBYTEREALIGN       => RXBYTEREALIGN                ,
-        RXELECIDLE          => RXELECIDLE                   ,
-		RXDISPERR0          => RXDISPERR(1 downto 0)        ,
-		RXDISPERR1          => RXDISPERR(3 downto 2)        ,
-		RXDISPERR2          => RXDISPERR(5 downto 4)        ,
-		RXDISPERR3          => RXDISPERR(7 downto 6)        ,
-		RXNOTINTABLE0       => RXNOTINTABLE(1 downto 0)     ,
-		RXNOTINTABLE1       => RXNOTINTABLE(3 downto 2)     ,
-		RXNOTINTABLE2       => RXNOTINTABLE(5 downto 4)     ,
-		RXNOTINTABLE3       => RXNOTINTABLE(7 downto 6)     ,
-		RXBUFERR            => RXBUFERR                     ,
-		CHBONDDONE0         => CHBONDDONE(0)                ,
-		CHBONDDONE1         => CHBONDDONE(1)                ,
-		CHBONDDONE2         => CHBONDDONE(2)                ,
-		CHBONDDONE3         => CHBONDDONE(3)      
-	);
+      GTXRESET        => GTXRESET,
+      RXBUFRST        => RXBUFRST,
+	  
+      RXN0            => RXN(0),
+      RXN1            => RXN(1),
+      RXN2            => RXN(2),
+      RXN3            => RXN(3),
+      RXP0            => RXP(0),
+      RXP1            => RXP(1),
+      RXP2            => RXP(2),
+      RXP3            => RXP(3),
+	  
+      TXINHIBIT_02    => TXINHIBIT_02,
+      TXINHIBIT_13    => TXINHIBIT_others,
+	  
+      ENCHANSYNC      => ENCHANSYNC,
+	  
+      TXDATA0         => TXDATA(15 downto 0)   , 
+      TXDATA1         => TXDATA(31 downto 16) ,  
+      TXDATA2         => TXDATA(47 downto 32) ,  
+      TXDATA3         => TXDATA(63 downto 48) ,  
+      TXCHARISK0      => TXCHARISK(1 downto 0) , 
+      TXCHARISK1      => TXCHARISK(3 downto 2) , 
+      TXCHARISK2      => TXCHARISK(5 downto 4) , 
+      TXCHARISK3      => TXCHARISK(7 downto 6) , 
+	  
+      TXN0            => TXN(0),
+      TXN1            => TXN(1),
+      TXN2            => TXN(2),
+      TXN3            => TXN(3),
+      TXP0            => TXP(0),
+      TXP1            => TXP(1),
+      TXP2            => TXP(2),
+      TXP3            => TXP(3),
+	  
+      PLLLKDET        => PLLLKDET,
+	  
+      RXDATA0         => RXDATA(15 downto 0)          ,
+      RXDATA1         => RXDATA(31 downto 16)         ,
+      --LOOPBACK RXDATA0         => RXDATA(31 downto 16)          ,
+      --LOOPBACK RXDATA1         => RXDATA(15 downto 0)         ,
+      RXDATA2         => RXDATA(47 downto 32)         ,
+      RXDATA3         => RXDATA(63 downto 48)         ,
+	  
+      RXDATA0VALID    => '1',	-- FIXME: do we have a criterion to say if the data is valid ?
+      RXDATA1VALID    => '1',	-- FIXME: do we have a criterion to say if the data is valid ?
+      RXDATA2VALID    => '1',	-- FIXME: do we have a criterion to say if the data is valid ?
+      RXDATA3VALID    => '1',	-- FIXME: do we have a criterion to say if the data is valid ?
+	  
+      RXCHARISK0      => RXCHARISK(1 downto 0)        ,
+      RXCHARISK1      => RXCHARISK(3 downto 2)        ,
+      --LOOPBACK RXCHARISK0      => RXCHARISK(3 downto 2)        ,
+      --LOOPBACK RXCHARISK1      => RXCHARISK(1 downto 0)        ,
+      RXCHARISK2      => RXCHARISK(5 downto 4)        ,
+      RXCHARISK3      => RXCHARISK(7 downto 6)        ,
+      --FIXEM RXCHARISCOMMA0  => RXCHARISCOMMA(1 downto 0)    ,
+      --FIXEM RXCHARISCOMMA1  => RXCHARISCOMMA(3 downto 2)    ,
+      RXCHARISCOMMA0  => RXCHARISCOMMA(1 downto 0)    ,
+      RXCHARISCOMMA1  => RXCHARISCOMMA(3 downto 2)    ,
+      RXCHARISCOMMA2  => RXCHARISCOMMA(5 downto 4)    ,
+      RXCHARISCOMMA3  => RXCHARISCOMMA(7 downto 6)    ,       
+      RXBYTEISALIGNED(0) => RXBYTEISALIGNED(0)              ,
+      RXBYTEISALIGNED(1) => RXBYTEISALIGNED(1)             ,
+      RXBYTEISALIGNED(2) => RXBYTEISALIGNED(2)              ,
+      RXBYTEISALIGNED(3) => RXBYTEISALIGNED(3)              ,
+      RXBYTEREALIGN(0)   => RXBYTEREALIGN(0)                ,
+      RXBYTEREALIGN(1)   => RXBYTEREALIGN(1)                ,
+      RXBYTEREALIGN(2)   => RXBYTEREALIGN(2)                ,
+      RXBYTEREALIGN(3)   => RXBYTEREALIGN(3)                ,
+      RXELECIDLE(0)      => RXELECIDLE(0)                   ,
+      RXELECIDLE(1)      => RXELECIDLE(1)                   ,
+      RXELECIDLE(2)      => RXELECIDLE(2)                   ,
+      RXELECIDLE(3)      => RXELECIDLE(3)                   ,
+	  
+      RXDISPERR0      => RXDISPERR(1 downto 0)        ,
+      RXDISPERR1      => RXDISPERR(3 downto 2)        ,
+      --LOOPBACK RXDISPERR0      => RXDISPERR(3 downto 2)        ,
+      --LOOPBACK RXDISPERR1      => RXDISPERR(1 downto 0)        ,
+      RXDISPERR2      => RXDISPERR(5 downto 4)        ,
+      RXDISPERR3      => RXDISPERR(7 downto 6)        ,
+      RXNOTINTABLE0   => RXNOTINTABLE(1 downto 0)     ,
+      RXNOTINTABLE1   => RXNOTINTABLE(3 downto 2)     ,
+       --LOOPBACK  RXNOTINTABLE0   => RXNOTINTABLE(3 downto 2)     ,
+      --LOOPBACK RXNOTINTABLE1   => RXNOTINTABLE(1 downto 0)     ,
+      RXNOTINTABLE2   => RXNOTINTABLE(5 downto 4)     ,
+      RXNOTINTABLE3   => RXNOTINTABLE(7 downto 6)     ,
+      RXBUFERR        => RXBUFERR,     
+      RXCLKSTABLE0    => RXCLKSTABLE(0),
+      RXCLKSTABLE1    => RXCLKSTABLE(1),
+       --LOOPBACK RXCLKSTABLE0    => RXCLKSTABLE(1),
+      --LOOPBACK RXCLKSTABLE1    => RXCLKSTABLE(0),
+      RXCLKSTABLE2    => RXCLKSTABLE(2),
+      RXCLKSTABLE3    => RXCLKSTABLE(3),
+      
+      CHBONDDONE0     => CHBONDDONE(0),
+      CHBONDDONE1     => CHBONDDONE(1),
+       --LOOPBACK CHBONDDONE0     => CHBONDDONE(1),
+      --LOOPBACK CHBONDDONE1     => CHBONDDONE(0),
+      CHBONDDONE2     => CHBONDDONE(2),
+      CHBONDDONE3     => CHBONDDONE(3),
+      LOOPBACK0       => LOOPBACK0,
+      LOOPBACK1       => LOOPBACK1,
+      LOOPBACK2       => LOOPBACK2,
+      LOOPBACK3       => LOOPBACK3);
 
+	
 end struct;
 -------------------------------------------------------------------------------
 -- 
@@ -2680,6 +3076,7 @@ use UNISIM.Vcomponents.ALL;
 
 entity srio_pcs_struct is
    port ( CHBONDDONE         : in    std_logic_vector (3 downto 0); 
+          RXCLKSTABLE  		 : in    std_logic_vector (3 downto 0); 
           force_reinit_i     : in    std_logic; 
           inboundRead_i      : in    std_logic; 
           outboundSymbol_i   : in    std_logic_vector (33 downto 0); 
@@ -2698,12 +3095,12 @@ entity srio_pcs_struct is
           RXNOTINTABLE       : in    std_logic_vector (7 downto 0); 
           UCLK               : in    std_logic; 
           UCLK_DV4           : in    std_logic; 
-          UCLK_DV1024        : in    std_logic; 
           UCLK_or_DV4        : in    std_logic; 
           UCLK_x2            : in    std_logic; 
           UCLK_x2_DV2        : in    std_logic; 
           ENCHANSYNC         : out   std_logic; 
           inboundEmpty_o     : out   std_logic; 
+          inboundvalid_o     : out   std_logic; 
           inboundSymbol_o    : out   std_logic_vector (33 downto 0); 
           lane_sync_o        : out   std_logic_vector (3 downto 0); 
           mode_sel_o         : out   std_logic; 
@@ -2751,7 +3148,6 @@ architecture BEHAVIORAL of srio_pcs_struct is
              UCLK_x2          : in    std_logic; 
              UCLK             : in    std_logic; 
              UCLK_DV4         : in    std_logic; 
-             UCLK_DV_1024     : in    std_logic; 
              force_reinit     : in    std_logic; 
              PLLLKDET         : in    std_logic; 
              RXBUFERR         : in    std_logic; 
@@ -2763,6 +3159,7 @@ architecture BEHAVIORAL of srio_pcs_struct is
              RXELECIDLE       : in    std_logic_vector (3 downto 0); 
              RXDISPERR        : in    std_logic_vector (7 downto 0); 
              RXNOTINTABLE     : in    std_logic_vector (7 downto 0); 
+             RXCLKSTABLE      : in    std_logic_vector (3 downto 0);
              CHBONDDONE       : in    std_logic_vector (3 downto 0); 
              mode_sel         : out   std_logic; 
              port_initalized  : out   std_logic; 
@@ -2789,6 +3186,7 @@ architecture BEHAVIORAL of srio_pcs_struct is
              RXCHARISK_i       : in    std_logic_vector (7 downto 0); 
              RXCHARISvalid_i   : in    std_logic_vector (7 downto 0); 
              inboundEmpty_o    : out   std_logic; 
+             inboundValid_o    : out   std_logic; 
              inboundSymbol_o   : out   std_logic_vector (33 downto 0); 
              UCLK_or_DV4       : in    std_logic);
    end component;
@@ -2813,17 +3211,40 @@ architecture BEHAVIORAL of srio_pcs_struct is
              send_R_i          : in    std_logic_vector (1 downto 0); 
              outboundFull_o    : out   std_logic; 
              ccs_timer_rst_o   : out   std_logic; 
+             RXCLKSTABLE      : in    std_logic_vector (3 downto 0);
              TXDATA_o          : out   std_logic_vector (63 downto 0); 
              TXCHARISK_o       : out   std_logic_vector (7 downto 0); 
              send_idle_o       : out   std_logic_vector (1 downto 0));
    end component;
-   
+
+    signal sreg : std_logic_vector(1 downto 0);  
+    attribute ASYNC_REG : string;
+    attribute ASYNC_REG of sreg : signal is "TRUE";
+    
 begin
    mode_sel_o <= mode_sel_o_DUMMY;
    mode_0_lane_sel_o <= mode_0_lane_sel_o_DUMMY;
-   port_initialized_o <= port_initialized_o_DUMMY;
+   -- Before clock synchronize port_initialized_o <= port_initialized_o_DUMMY;
+
+    
    TXINHIBIT_others <= TXINHIBIT_others_DUMMY;
    TXINHIBIT_02 <= TXINHIBIT_02_DUMMY;
+     
+    -- Here we have a cross-clocking because port_initialized_o will be used
+    --  by the main system clock, not the one from MGT.
+    --
+    --  ASYNC_REG="TRUE" - Specifies registers will be receiving asynchronous data
+    --                     input to allow for better timing simulation
+    --                     characteristics
+    -- clk, async_in are inputs and sync_out is an output
+    process (rio_clk)
+    begin
+       if rio_clk'event and rio_clk='1' then
+          port_initialized_o <= sreg(1);
+               sreg <= sreg(0) & port_initialized_o_DUMMY;
+       end if;
+    end process;
+
    ccs_timer_inst : ccs_timer
       port map (ccs_timer_rst=>ccs_timer_rst,
                 rst_n=>rst_n,
@@ -2840,6 +3261,7 @@ begin
    
    port_init_fsms_inst : port_init_fsms
       port map (CHBONDDONE(3 downto 0)=>CHBONDDONE(3 downto 0),
+                RXCLKSTABLE(3 downto 0)=>RXCLKSTABLE(3 downto 0),
                 force_reinit=>force_reinit_i,
                 PLLLKDET=>PLLLKDET,
                 rst_n=>rst_n,
@@ -2853,7 +3275,6 @@ begin
                 RXELECIDLE(3 downto 0)=>RXELECIDLE(3 downto 0),
                 RXNOTINTABLE(7 downto 0)=>RXNOTINTABLE(7 downto 0),
                 UCLK=>UCLK,
-                UCLK_DV_1024=>UCLK_DV1024,
                 UCLK_DV4=>UCLK_DV4,
                 UCLK_x2=>UCLK_x2,
                 ENCHANSYNC=>ENCHANSYNC,
@@ -2881,6 +3302,7 @@ begin
                 UCLK_x2=>UCLK_x2,
                 UCLK_x2_DV2=>UCLK_x2_DV2,
                 inboundEmpty_o=>inboundEmpty_o,
+                inboundValid_o=>inboundValid_o,
                 inboundSymbol_o(33 downto 0)=>inboundSymbol_o(33 downto 0));
    
    tx_controller_inst : pcs_tx_controller
@@ -2904,6 +3326,7 @@ begin
                 ccs_timer_rst_o=>ccs_timer_rst,
                 outboundFull_o=>outboundFull_o,
                 send_idle_o(1 downto 0)=>send_idle(1 downto 0),
+                RXCLKSTABLE      => RXCLKSTABLE,
                 TXCHARISK_o(7 downto 0)=>TXCAHRISK(7 downto 0),
                 TXDATA_o(63 downto 0)=>TXDATA(63 downto 0));
    
