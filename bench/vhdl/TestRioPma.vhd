@@ -110,10 +110,10 @@ begin
   begin
     clkFast <= '0';
     wait for 4 ns;
-    wait for 90 ps;
+    wait for 990 ps;
     clkFast <= '1';
     wait for 4 ns;
-    wait for 90 ps;
+    wait for 990 ps;
   end process;
  
   process
@@ -121,7 +121,7 @@ begin
     variable seed2: positive := 1;
     
     procedure send10b(constant tx : std_logic_vector(0 to 9);
-                      constant ber : real := 0.01) is
+                      constant ber : real := 0.0001) is
       variable rand: real;
       variable bitValue : std_logic;
     begin
