@@ -227,6 +227,26 @@ end entity;
 -------------------------------------------------------------------------------
 architecture RioSerialImpl of RioSerial is
 
+    COMPONENT RioFifo
+        PORT (
+                 clk : IN STD_LOGIC;
+                 rst : IN STD_LOGIC;
+                 din : IN STD_LOGIC_VECTOR(33 DOWNTO 0);
+                 wr_en : IN STD_LOGIC;
+                 rd_en : IN STD_LOGIC;
+                 dout : OUT STD_LOGIC_VECTOR(33 DOWNTO 0);
+                 full : OUT STD_LOGIC;
+                 almost_full : OUT STD_LOGIC;
+                 empty : OUT STD_LOGIC;
+                 valid : OUT STD_LOGIC
+             );
+    END COMPONENT;
+    ATTRIBUTE SYN_BLACK_BOX : BOOLEAN;
+    ATTRIBUTE SYN_BLACK_BOX OF RioFifo : COMPONENT IS TRUE;
+    ATTRIBUTE BLACK_BOX_PAD_PIN : STRING;
+    ATTRIBUTE BLACK_BOX_PAD_PIN OF RioFifo : COMPONENT IS "clk,rst,din[33:0],wr_en,rd_en,dout[33:0],full,almost_full,empty";
+
+
   component RioFifo1 is
     generic(
       WIDTH : natural);
@@ -304,6 +324,7 @@ architecture RioSerialImpl of RioSerial is
       portInitialized_i : in std_logic;
       rxEmpty_i : in std_logic;
       rxRead_o : out std_logic;
+      rxValid_i  : in std_logic;
       rxControl_i : in std_logic_vector(1 downto 0);
       rxData_i : in std_logic_vector(31 downto 0);
 
@@ -321,6 +342,7 @@ architecture RioSerialImpl of RioSerial is
       writeContent_o : out std_logic;
       writeContentData_o : out std_logic_vector(31 downto 0));
   end component;
+
 
   signal linkInitializedRx : std_logic;
   signal linkInitializedTx : std_logic;
@@ -349,8 +371,21 @@ architecture RioSerialImpl of RioSerial is
   signal inboundControl : std_logic_vector(1 downto 0);
   signal inboundData : std_logic_vector(31 downto 0);
   signal inboundSymbol : std_logic_vector(33 downto 0);
+  signal inboundSymbolValid : std_logic;
+
+  signal rst : std_logic;
+
+  attribute mark_debug : string;
+  attribute mark_debug of rxControlWrite: signal is "true";
+  attribute mark_debug of rxControlWriteSymbol: signal is "true";
+  attribute mark_debug of txControlRead: signal is "true";
+  attribute mark_debug of txControlReadSymbol: signal is "true";
 
 begin
+
+
+
+    rst <= not areset_n;
 
   linkInitialized_o <=
     '1' when ((linkInitializedRx = '1') and (linkInitializedTx = '1')) else '0';
@@ -411,6 +446,7 @@ begin
       inboundAckId_o=>inboundAckId_o, 
       portInitialized_i=>portInitialized_i,
       rxEmpty_i=>inboundEmpty, rxRead_o=>inboundRead,
+      rxValid_i=>inboundSymbolValid,
       rxControl_i=>inboundControl, rxData_i=>inboundData, 
       txControlWrite_o=>txControlWrite, txControlSymbol_o=>txControlWriteSymbol, 
       rxControlWrite_o=>rxControlWrite, rxControlSymbol_o=>rxControlWriteSymbol, 
@@ -434,13 +470,26 @@ begin
   
   inboundControl <= inboundSymbol(33 downto 32);
   inboundData <= inboundSymbol(31 downto 0);
-  InboundSymbolFifo: RioFifo1
-    generic map(WIDTH=>34)
-    port map(
-      clk=>clk, areset_n=>areset_n,
-      empty_o=>inboundEmpty, read_i=>inboundRead, data_o=>inboundSymbol,
-      full_o=>inboundSymbolFull_o, write_i=>inboundSymbolWrite_i, data_i=>inboundSymbol_i);
+  --InboundSymbolFifo: RioFifo1
+    --generic map(WIDTH=>34)
+    --port map(
+      --clk=>clk, areset_n=>areset_n,
+      --empty_o=>inboundEmpty, read_i=>inboundRead, data_o=>inboundSymbol,
+      --full_o=>inboundSymbolFull_o, write_i=>inboundSymbolWrite_i, data_i=>inboundSymbol_i);
         
+  InboundSymbolFifo: RioFifo
+    port map(
+      clk       => clk, 
+      rst       => rst,
+      empty     => inboundEmpty, 
+      rd_en     => inboundRead, 
+      dout      => inboundSymbol,
+      full      => inboundSymbolFull_o, 
+      wr_en     => inboundSymbolWrite_i, 
+      din       => inboundSymbol_i,
+      almost_full => open,
+      valid => inboundSymbolValid
+    );
 end architecture;
 
 
@@ -518,6 +567,20 @@ end entity;
 -- Architecture for RioTransmitter.
 -------------------------------------------------------------------------------
 architecture RioTransmitterImpl of RioTransmitter is
+
+    attribute mark_debug : string;
+
+    attribute mark_debug of txData_o: signal is "true";
+    attribute mark_debug of txControl_o: signal is "true";
+    attribute mark_debug of txWrite_o: signal is "true";
+    attribute mark_debug of txFull_i: signal is "true";
+    attribute mark_debug of txControlSymbol_i: signal is "true";
+    attribute mark_debug of readContentData_i: signal is "true";
+    attribute mark_debug of readContentEnd_i: signal is "true";
+    attribute mark_debug of readContent_o: signal is "true";
+    attribute mark_debug of readContentEmpty_i: signal is "true";
+    attribute mark_debug of readFrameEmpty_i: signal is "true";
+    attribute mark_debug of readFrame_o: signal is "true";
 
   constant NUMBER_STATUS_TRANSMIT : natural := 15;
   constant NUMBER_LINK_RESPONSE_RETRIES : natural := 2;
@@ -1582,6 +1645,7 @@ entity RioReceiver is
     -- Port input interface.
     portInitialized_i : in std_logic;
     rxEmpty_i : in std_logic;
+    rxValid_i : in std_logic;
     rxRead_o : out std_logic;
     rxControl_i : in std_logic_vector(1 downto 0);
     rxData_i : in std_logic_vector(31 downto 0);
@@ -1618,6 +1682,16 @@ end entity;
 -- 
 -------------------------------------------------------------------------------
 architecture RioReceiverImpl of RioReceiver is
+    attribute mark_debug : string;
+
+    attribute mark_debug of rxData_i: signal is "true";
+    attribute mark_debug of rxControl_i: signal is "true";
+    attribute mark_debug of writeFrameFull_i: signal is "true";
+    attribute mark_debug of writeFrame_o: signal is "true";
+    attribute mark_debug of writeFrameAbort_o: signal is "true";
+    attribute mark_debug of writeContent_o: signal is "true";
+    attribute mark_debug of writeContentData_o: signal is "true";
+
 
   component Crc5ITU is
     port(
@@ -1636,6 +1710,8 @@ architecture RioReceiverImpl of RioReceiver is
                      STATE_NORMAL,
                      STATE_INPUT_RETRY_STOPPED, STATE_INPUT_ERROR_STOPPED);
   signal state : StateType;
+  attribute mark_debug of state: signal is "true";
+
   
   signal statusCounter : natural range 0 to 8;
 
@@ -1657,6 +1733,8 @@ architecture RioReceiverImpl of RioReceiver is
   signal crc16Temp : std_logic_vector(15 downto 0);
   signal crc16Next : std_logic_vector(15 downto 0);
   
+    attribute mark_debug of crc16Temp: signal is "true";
+    attribute mark_debug of crc16Next: signal is "true";
   signal rxRead : std_logic;
   
 begin
@@ -1731,7 +1809,14 @@ begin
       crc16Current <= (others => '0');
       crc16Data <= (others => '0');
     elsif (clk'event and clk = '1') then
-      rxRead <= '0';
+
+        -- If there is some data, just read it
+        -- ASA
+        if rxEmpty_i = '0' then
+            rxRead <= '1';
+        else
+            rxRead <= '0';
+        end if;
       
       txControlWrite_o <= '0';
       rxControlWrite_o <= '0';
@@ -1762,10 +1847,10 @@ begin
               -- Port not initialized.
 
               -- Check if a new symbol is ready to be read.
-              if (rxRead = '0') and (rxEmpty_i = '0') then
+              if (rxValid_i = '1' ) then
                 -- New symbol ready.
                 -- Discard all received symbols in this state.
-                rxRead <= '1';
+                -- ASA rxRead <= '1';
               else
                 -- No new symbol ready to be read.
                 -- Dont do anything.
@@ -1792,7 +1877,8 @@ begin
               -- Port is initialized.
               
               -- Check if a new symbol is ready to be read.
-              if (rxRead = '0') and (rxEmpty_i = '0') then
+              if (rxValid_i = '1' ) then
+              -- ASA if (rxRead = '0') and (rxEmpty_i = '0') then
                 -- There is a new symbol to read.
 
                 -- Check the type of symbol.
@@ -1841,7 +1927,7 @@ begin
                 end if;
                 
                 -- Update to the next symbol.
-                rxRead <= '1';
+                -- ASA rxRead <= '1';
               else
                 -- No new symbol ready to be read.
                 -- Dont do anything.
@@ -1863,7 +1949,8 @@ begin
               -- The port and link is initialized.
               
               -- Check if a new symbol is ready to be read.
-              if (rxRead = '0') and (rxEmpty_i = '0') then
+              if (rxValid_i = '1' ) then
+              -- ASA if (rxRead = '0') and (rxEmpty_i = '0') then
                 -- There is a new symbol to read.
 
                 -- Check the type of symbol.
@@ -2142,7 +2229,7 @@ begin
                 end if;
 
                 -- Update to the next symbol.
-                rxRead <= '1';
+                -- ASA rxRead <= '1';
               else
                 -- No new symbol received.
                 -- Dont do anything.
@@ -2166,7 +2253,8 @@ begin
               -- The port and link is initialized.
               
               -- Check if a new symbol is ready to be read.
-              if (rxRead = '0') and (rxEmpty_i = '0') then
+              if (rxValid_i = '1' ) then
+              -- ASA if (rxRead = '0') and (rxEmpty_i = '0') then
                 -- There is a new symbol to read.
 
                 -- Check the type of symbol.
@@ -2254,7 +2342,7 @@ begin
                 end if;
 
                 -- Update to the next symbol.
-                rxRead <= '1';
+                -- ASA rxRead <= '1';
               else
                 -- No new symbol received.
                 -- Dont do anything.
@@ -2280,7 +2368,8 @@ begin
               -- The port and link is initialized.
               
               -- Check if a new symbol is ready to be read.
-              if (rxRead = '0') and (rxEmpty_i = '0') then
+              if (rxValid_i = '1' ) then
+              -- ASA if (rxRead = '0') and (rxEmpty_i = '0') then
                 -- There is a new symbol to read.
 
                 -- Check the type of symbol.
@@ -2347,7 +2436,7 @@ begin
                 end if;
 
                 -- Update to the next symbol.
-                rxRead <= '1';
+                -- ASA rxRead <= '1';
               else
                 -- No new symbol received.
                 -- Dont do anything.
@@ -2368,6 +2457,70 @@ begin
     end if;
   end process;
 
+end architecture;
+
+
+
+-------------------------------------------------------------------------------
+--
+---------------------------------------------------------------------------------
+library ieee;
+use ieee.std_logic_1164.all;
+
+
+-------------------------------------------------------------------------------
+-- 
+-------------------------------------------------------------------------------
+entity RioFifo1 is
+  generic(
+    WIDTH : natural);
+  port(
+    clk : in std_logic;
+    areset_n : in std_logic;
+
+    empty_o : out std_logic;
+    read_i : in std_logic;
+    data_o : out std_logic_vector(WIDTH-1 downto 0);
+
+    full_o : out std_logic;
+    write_i : in std_logic;
+    data_i : in std_logic_vector(WIDTH-1 downto 0));
+end entity;
+       
+
+-------------------------------------------------------------------------------
+-- 
+-------------------------------------------------------------------------------
+architecture RioFifo1Impl of RioFifo1 is
+  signal empty : std_logic;
+  signal full : std_logic;
+begin
+
+  empty_o <= empty;
+  full_o <= full;
+  
+  process(areset_n, clk)
+  begin
+    if (areset_n = '0') then
+      empty <= '1';
+      full <= '0';
+      data_o <= (others => '0');
+    elsif (clk'event and clk = '1') then
+      if (empty = '1') then
+        if (write_i = '1') then
+          empty <= '0';
+          full <= '1';
+          data_o <= data_i;
+        end if;
+      else
+        if (read_i = '1') then
+          empty <= '1';
+          full <= '0';
+        end if;
+      end if;
+    end if;
+  end process;
+  
 end architecture;
 
 

@@ -232,6 +232,7 @@ entity RioPacketBufferWindow is
     inboundReadContent_i : in std_logic;
     inboundReadContentEnd_o : out std_logic;
     inboundReadContentData_o : out std_logic_vector(CONTENT_WIDTH-1 downto 0);
+    inboundReadFrameSize_o : out std_logic_vector(CONTENT_ADDRESS_WIDTH-1 downto 0);
     
     outboundWriteFrameFull_o : out std_logic;
     outboundWriteFrame_i : in std_logic;
@@ -363,7 +364,7 @@ begin
       readFrameEmpty_o=>inboundReadFrameEmpty_o, 
       readFrame_i=>inboundReadFrame_i, readFrameRestart_i=>inboundReadFrameRestart_i, 
       readFrameAborted_o=>inboundReadFrameAborted_o,
-      readFrameSize_o=>open,
+      readFrameSize_o=>inboundReadFrameSize_o,
       readContentEmpty_o=>inboundReadContentEmpty_o,
       readContent_i=>inboundReadContent_i, readContentEnd_o=>inboundReadContentEnd_o, 
       readContentData_o=>inboundReadContentData_o);
@@ -576,6 +577,7 @@ begin
         memoryStart_p <= readFrameEnd_p;
         frontIndex <= frontIndexNext;
         memoryRead_p <= readFrameEnd_p;
+        readContentEnd_o <= '0'; -- ASA when reading a frame, there is no end
       end if;
       
     end if;
@@ -723,6 +725,10 @@ architecture PacketBufferContinousWindowImpl of PacketBufferContinousWindow is
 
   signal framePositionReadAddress : std_logic_vector(SIZE_ADDRESS_WIDTH-1 downto 0) := (others=>'0');
   signal framePositionReadData : std_logic_vector(CONTENT_ADDRESS_WIDTH-1 downto 0) := (others=>'0');
+  
+  -- Determine if the framePositionReadData is valid or not
+  signal framePositionReadDataValid : std_logic;
+    
 begin
 
   -----------------------------------------------------------------------------
@@ -814,7 +820,7 @@ begin
       if(readFrameRestart_i = '1') then
         memoryRead_p <= memoryStartWindow_p;
       elsif(readContent_i = '1') then
-        if(memoryRead_p = readFrameEnd_p) then
+        if(framePositionReadDataValid = '1' and memoryRead_p = readFrameEnd_p) then
           readContentEnd_o <= '1';
         else
           readContentEnd_o <= '0';
@@ -823,6 +829,7 @@ begin
       elsif(readFrame_i = '1') then
         memoryStart_p <= readFrameEnd_p;
         frontIndex <= frontIndexNext;
+        readContentEnd_o <= '0'; -- ASA when reading a frame, there is no end
       elsif(readWindowReset_i = '1') then
         memoryStartWindow_p <= memoryStart_p;
         windowIndex <= frontIndex;
@@ -846,6 +853,12 @@ begin
   framePositionReadAddress <= std_logic_vector(frontIndex) when (readFrame_i = '1') else
                               std_logic_vector(windowIndex);
   readFrameEnd_p <= unsigned(framePositionReadData);
+  
+  -- If the writing address match the read address, it means nothing has been
+  --    written inside the FIFO. Thus the address he framePositionReadData
+  -- is not valid ( i.e. we don't know it's end). If the user try
+  -- to pop the data while being written, we would be in an unknown state
+  framePositionReadDataValid <= '0' when std_logic_vector(backIndex) = framePositionReadAddress else '1';
 
   -- Memory to keep frame starting/ending positions in.
   FramePosition: MemorySimpleDualPortAsync
