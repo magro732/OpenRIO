@@ -51,7 +51,7 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 library std;
 use std.textio.all;
-use work.rio_common.all;
+use work.test_common.all;
 
 
 -------------------------------------------------------------------------------

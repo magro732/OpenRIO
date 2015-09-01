@@ -76,9 +76,6 @@ entity RioSwitch is
 
     readFrameEmpty_i : in Array1(SWITCH_PORTS-1 downto 0);
     readFrame_o : out Array1(SWITCH_PORTS-1 downto 0);
-    readFrameRestart_o : out Array1(SWITCH_PORTS-1 downto 0);
-    readFrameAborted_i : in Array1(SWITCH_PORTS-1 downto 0);
-    readContentEmpty_i : in Array1(SWITCH_PORTS-1 downto 0);
     readContent_o : out Array1(SWITCH_PORTS-1 downto 0);
     readContentEnd_i : in Array1(SWITCH_PORTS-1 downto 0);
     readContentData_i : in Array32(SWITCH_PORTS-1 downto 0);
@@ -243,9 +240,6 @@ architecture RioSwitchImpl of RioSwitch is
 
       readFrameEmpty_i : in std_logic;
       readFrame_o : out std_logic;
-      readFrameRestart_o : out std_logic;
-      readFrameAborted_i : in std_logic;
-      readContentEmpty_i : in std_logic;
       readContent_o : out std_logic;
       readContentEnd_i : in std_logic;
       readContentData_i : in std_logic_vector(31 downto 0);
@@ -331,9 +325,7 @@ begin
         lookupAddr_o=>masterLookupAddr(portIndex), 
         lookupData_i=>masterLookupData(portIndex), lookupAck_i=>masterLookupAck(portIndex),
         readFrameEmpty_i=>readFrameEmpty_i(portIndex), readFrame_o=>readFrame_o(portIndex), 
-        readFrameRestart_o=>readFrameRestart_o(portIndex),
-        readFrameAborted_i=>readFrameAborted_i(portIndex), 
-        readContentEmpty_i=>readContentEmpty_i(portIndex), readContent_o=>readContent_o(portIndex), 
+        readContent_o=>readContent_o(portIndex), 
         readContentEnd_i=>readContentEnd_i(portIndex), readContentData_i=>readContentData_i(portIndex), 
         writeFrameFull_i=>writeFrameFull_i(portIndex), writeFrame_o=>writeFrame_o(portIndex), 
         writeFrameAbort_o=>writeFrameAbort_o(portIndex), writeContent_o=>writeContent_o(portIndex), 
@@ -430,9 +422,6 @@ entity SwitchPort is
     -- Physical port frame buffer interface.
     readFrameEmpty_i : in std_logic;
     readFrame_o : out std_logic;
-    readFrameRestart_o : out std_logic;
-    readFrameAborted_i : in std_logic;
-    readContentEmpty_i : in std_logic;
     readContent_o : out std_logic;
     readContentEnd_i : in std_logic;
     readContentData_i : in std_logic_vector(31 downto 0);
@@ -450,7 +439,9 @@ end entity;
 architecture SwitchPortImpl of SwitchPort is
 
   type MasterStateType is (STATE_IDLE,
-                           STATE_WAIT_HEADER_0, STATE_READ_HEADER_0,
+                           STATE_ERROR,
+                           STATE_WAIT_HEADER_0,
+                           STATE_READ_HEADER_0,
                            STATE_READ_PORT_LOOKUP,
                            STATE_READ_TARGET_PORT,
                            STATE_WAIT_TARGET_PORT,
@@ -485,13 +476,10 @@ begin
       
       readContent_o <= '0';
       readFrame_o <= '0';
-      readFrameRestart_o <= '0';
     elsif (clk'event and clk = '1') then
       readContent_o <= '0';
       readFrame_o <= '0';
-      readFrameRestart_o <= '0';
 
-      -- REMARK: Add support for aborted frames...
       case masterState is
 
         when STATE_IDLE =>
@@ -565,15 +553,23 @@ begin
             else
               -- Unsupported tt-value, discard the frame.
               readFrame_o <= '1';
-              masterState <= STATE_IDLE;
+              masterState <= STATE_ERROR;
             end if;
           else
             -- End of frame.
             -- The frame is too short to contain a valid frame. Discard it.
             readFrame_o <= '1';
-            masterState <= STATE_IDLE;
+            masterState <= STATE_ERROR;
           end if;
 
+        when STATE_ERROR =>
+          ---------------------------------------------------------------------
+          -- Wait one tick for the packet buffer to update its outputs. Then
+          -- start waiting for a new packet.
+          ---------------------------------------------------------------------
+          
+          masterState <= STATE_IDLE;
+          
         when STATE_READ_PORT_LOOKUP =>
           ---------------------------------------------------------------------
           -- Wait for the address lookup to be complete.
@@ -994,11 +990,6 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
   -- Route table access signals.
   -----------------------------------------------------------------------------
 
-  signal address0 : std_logic_vector(7 downto 0);
-  signal address1 : std_logic_vector(7 downto 0);
-  signal address2 : std_logic_vector(7 downto 0);
-  signal address3 : std_logic_vector(7 downto 0);
-  
   signal lookupEnable : std_logic;
   signal lookupAddress : std_logic_vector(10 downto 0);
   signal lookupData : std_logic_vector(7 downto 0);
@@ -1817,8 +1808,10 @@ begin
     if (areset_n = '0') then
       lookupAck <= '0';
     elsif (clk'event and clk = '1') then
-      if ((lookupStb_i = '1') and (lookupAck = '0')) then
-        lookupAck <= '1';
+      if (lookupAck = '0') then
+        if (lookupStb_i = '1') then
+          lookupAck <= '1';
+        end if;
       else
         lookupAck <= '0';
       end if;
@@ -2340,7 +2333,7 @@ begin
   -----------------------------------------------------------------------------
   -- Interconnection.
   -----------------------------------------------------------------------------
-  stb_o <= stb_i(selectedMaster);
+  stb_o <= stb_i(selectedMaster) and activeCycle;
   addr_o <= addr_i(selectedMaster);
 
   Interconnect: for i in 0 to WIDTH-1 generate
@@ -2393,21 +2386,6 @@ end entity;
 -- 
 -------------------------------------------------------------------------------
 architecture SwitchPortInterconnectImpl of SwitchPortInterconnect is
-  --component ChipscopeIcon1 is
-  --  port (
-  --    CONTROL0 : inout STD_LOGIC_VECTOR ( 35 downto 0 )
-  --    );
-  --end component;
-  --component ChipscopeIlaWb is
-  --  port (
-  --    CLK : in STD_LOGIC := 'X';
-  --    TRIG0 : in STD_LOGIC_VECTOR ( 46 downto 0);
-  --    CONTROL : inout STD_LOGIC_VECTOR ( 35 downto 0 ) 
-  --    );
-  --end component;
-  --signal control : std_logic_vector(35 downto 0);
-  --signal trig : std_logic_vector(46 downto 0);
-  
   signal activeCycle : std_logic;
   signal selectedMaster : natural range 0 to WIDTH-1;
   signal selectedSlave : natural range 0 to WIDTH-1;
@@ -2419,7 +2397,7 @@ begin
   -----------------------------------------------------------------------------
   
   RoundRobinArbiter: process(areset_n, clk)
-    variable index : natural range 0 to WIDTH-1;
+    variable index : natural range 0 to WIDTH-1 := 0;
   begin
     if (areset_n = '0') then
       activeCycle <= '0';
@@ -2483,8 +2461,8 @@ begin
   -- Interconnection matrix.
   -----------------------------------------------------------------------------
   Interconnect: for i in 0 to WIDTH-1 generate
-    slaveCyc_o(i) <= masterCyc_i(selectedMaster) when (selectedSlave = i) else '0';
-    slaveStb_o(i) <= masterStb_i(selectedMaster) when (selectedSlave = i) else '0';
+    slaveCyc_o(i) <= masterCyc_i(selectedMaster) when ((activeCycle = '1') and (selectedSlave = i)) else '0';
+    slaveStb_o(i) <= masterStb_i(selectedMaster) when ((activeCycle = '1') and (selectedSlave = i)) else '0';
     slaveWe_o(i) <= masterWe_i(selectedMaster);
     slaveAddr_o(i) <= masterAddr_i(selectedMaster);
     slaveData_o(i) <= masterData_i(selectedMaster);
@@ -2492,19 +2470,4 @@ begin
     masterAck_o(i) <= slaveAck_i(selectedSlave) when (selectedMaster = i) else '0';
   end generate;
 
-  -----------------------------------------------------------------------------
-  -- Chipscope debugging probe.
-  -----------------------------------------------------------------------------
-  --trig <= masterCyc_i(selectedMaster) & masterStb_i(selectedMaster) &
-  --        masterWe_i(selectedMaster) &  masterAddr_i(selectedMaster) &
-  --        masterData_i(selectedMaster) & slaveData_i(selectedSlave) &
-  --        slaveAck_i(selectedSlave);
-  --ChipscopeIconInst: ChipscopeIcon1
-  --  port map(CONTROL0=>control);
-  --ChipscopeIlaInst: ChipscopeIlaWb
-  --  port map(CLK=>clk, TRIG0=>trig, CONTROL=>control);
-  
 end architecture;
-
-
-

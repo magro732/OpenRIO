@@ -315,6 +315,7 @@ begin
     areset_n <= '1';
     wait until clk'event and clk = '1';
     wait until clk'event and clk = '1';
+    report "Reseting done";
     
     ---------------------------------------------------------------------------
     PrintS("-----------------------------------------------------------------");

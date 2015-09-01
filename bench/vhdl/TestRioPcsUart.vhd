@@ -50,6 +50,7 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 library std;
 use std.textio.all;
+use work.test_common.all;
 use work.rio_common.all;
 
 
@@ -166,7 +167,7 @@ begin
         integer'image(to_integer(unsigned(outboundSymbolWriteData(33 downto 32))))
         severity error;
 
-      if (symbolType = SYMBOL_CONTROL) then
+      if (symbolType = SYMBOL_CONTROL_SC) or (symbolType = SYMBOL_CONTROL_PD) then
         assert symbolContent(31 downto 8) = inboundSymbolWriteData(31 downto 8)
           report "Missmatching symbol content:expected=" &
           integer'image(to_integer(unsigned(symbolContent(31 downto 8)))) &
@@ -305,7 +306,7 @@ begin
     PrintR("TG_RioPcsUart-TC2-Step2");
     ---------------------------------------------------------------------------
 
-    WriteSymbol(SYMBOL_CONTROL, x"123456" & "XXXXXXXX");
+    WriteSymbol(SYMBOL_CONTROL_SC, x"123456" & "XXXXXXXX");
     ReadOctet(x"12");
     ReadOctet(x"34");
     ReadOctet(x"56");
@@ -319,7 +320,7 @@ begin
     PrintR("TG_RioPcsUart-TC2-Step3");
     ---------------------------------------------------------------------------
 
-    WriteSymbol(SYMBOL_CONTROL, x"7d7d7d" & "XXXXXXXX");
+    WriteSymbol(SYMBOL_CONTROL_PD, x"7d7d7d" & "XXXXXXXX");
     ReadOctet(x"7d");
     ReadOctet(x"5d");
     ReadOctet(x"7d");
@@ -336,7 +337,7 @@ begin
     PrintR("TG_RioPcsUart-TC2-Step4");
     ---------------------------------------------------------------------------
 
-    WriteSymbol(SYMBOL_CONTROL, x"7e7e7e" & "XXXXXXXX");
+    WriteSymbol(SYMBOL_CONTROL_SC, x"7e7e7e" & "XXXXXXXX");
     ReadOctet(x"7d");
     ReadOctet(x"5e");
     ReadOctet(x"7d");
@@ -353,7 +354,7 @@ begin
     PrintR("TG_RioPcsUart-TC2-Step5");
     ---------------------------------------------------------------------------
 
-    WriteSymbol(SYMBOL_CONTROL, x"7d7f7e" & "XXXXXXXX");
+    WriteSymbol(SYMBOL_CONTROL_PD, x"7d7f7e" & "XXXXXXXX");
     ReadOctet(x"7d");
     ReadOctet(x"5d");
     ReadOctet(x"7f");
@@ -437,7 +438,7 @@ begin
 
     WriteSymbol(SYMBOL_IDLE);
     ReadOctet(x"7e");
-    WriteSymbol(SYMBOL_CONTROL, x"123456" & "XXXXXXXX");
+    WriteSymbol(SYMBOL_CONTROL_SC, x"123456" & "XXXXXXXX");
     ReadOctet(x"12");
     ReadOctet(x"34");
     ReadOctet(x"56");
@@ -447,7 +448,7 @@ begin
     ReadOctet(x"9a");
     ReadOctet(x"bc");
     ReadOctet(x"de");
-    WriteSymbol(SYMBOL_CONTROL, x"123456" & "XXXXXXXX");
+    WriteSymbol(SYMBOL_CONTROL_SC, x"123456" & "XXXXXXXX");
     ReadOctet(x"12");
     ReadOctet(x"34");
     ReadOctet(x"56");
@@ -517,7 +518,7 @@ begin
     WriteOctet(x"9a");
     WriteOctet(x"bc");
     WriteOctet(x"7e");
-    ReadSymbol(SYMBOL_CONTROL, x"789abc" & "XXXXXXXX");
+    ReadSymbol(SYMBOL_CONTROL_SC, x"789abc" & "XXXXXXXX");
 
     ---------------------------------------------------------------------------
     PrintS("Step :");
@@ -534,7 +535,7 @@ begin
     WriteOctet(x"7d");
     WriteOctet(x"5d");
     WriteOctet(x"7e");
-    ReadSymbol(SYMBOL_CONTROL, x"7d7d7d" & "XXXXXXXX");
+    ReadSymbol(SYMBOL_CONTROL_SC, x"7d7d7d" & "XXXXXXXX");
     
     ---------------------------------------------------------------------------
     PrintS("Step :");
@@ -551,7 +552,7 @@ begin
     WriteOctet(x"7d");
     WriteOctet(x"5e");
     WriteOctet(x"7e");
-    ReadSymbol(SYMBOL_CONTROL, x"7e7e7e" & "XXXXXXXX");
+    ReadSymbol(SYMBOL_CONTROL_SC, x"7e7e7e" & "XXXXXXXX");
     
     ---------------------------------------------------------------------------
     PrintS("Step :");
