@@ -5,3 +5,5 @@ The cores that were initially commited were aiming to use RapidIO in proprietary
 Since the initial releases an effort has started to write a fully compliant PCS layer.
 
 Currently this project contains VHDL IP-blocks to create stand-alone RapidIO-endpoints, RapidIO-switches and RapidIO-switches with local endpoints. These three configuration can be acheived by changing how the IP-blocks in the project are interconnected.
+
+Questions/comments can be sent to: magro732(at)hemmai.se
