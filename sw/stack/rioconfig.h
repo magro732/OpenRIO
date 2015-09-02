@@ -1,23 +1,12 @@
-/*******************************************************************************
- * 
- * RapidIO IP Library Core
- * 
- * This file is part of the RapidIO IP library project
- * http://www.opencores.org/cores/rio/
- * 
+/******************************************************************************
+ * No copyright for this file since it has to be changed.
+ ******************************************************************************/
+
+/******************************************************************************
  * Description:
  * This file contains the implementation dependent information needed to build 
  * the riostack. Replace declarations and definitions in this file to customize 
  * for your own compiler environment.
- *
- * No copyright for this file since it has to be changed.
- *
- * To Do:
- * -
- * 
- * Author(s): 
- * - Magnus Rosenius, magro732@opencores.org 
- * 
  *******************************************************************************/
 
 #ifndef __RIO_CONFIG
