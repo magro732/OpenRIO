@@ -368,7 +368,7 @@ void RIOPACKET_getMaintReadRequest(const RioPacket_t *packet,
 
 void RIOPACKET_setMaintReadResponse(RioPacket_t *packet,
                                     uint16_t dstId, uint16_t srcId, 
-                                    uint8_t tid, uint32_t data)
+                                    uint8_t tid, uint8_t status, uint32_t data)
 {
   uint32_t content;
   uint16_t crc = 0xffffu;
@@ -387,7 +387,7 @@ void RIOPACKET_setMaintReadResponse(RioPacket_t *packet,
   /* sourceId(15:0)|transaction(3:0)|status(3:0)|srcTID(7:0) */
   content = (uint32_t) srcId << 16;
   content |= (uint32_t) RIOPACKET_TRANSACTION_MAINT_READ_RESPONSE << 12;
-  content |= (uint32_t) RIOPACKET_RESPONSE_STATUS_DONE << 8; /*lint !e835 !e845 The constant is supposed to be zero. */
+  content |= ((uint32_t) (status & 0xf)) << 8;
   content |= (uint32_t) tid;
   crc = RIOPACKET_crc32(content, crc);
   packet->payload[1] = content;
@@ -419,17 +419,20 @@ void RIOPACKET_setMaintReadResponse(RioPacket_t *packet,
 
 void RIOPACKET_getMaintReadResponse(const RioPacket_t *packet,
                                     uint16_t *dstId, uint16_t *srcId,
-                                    uint8_t *tid, uint32_t *data)
+                                    uint8_t *tid, uint8_t *status,
+                                    uint32_t *data)
 {
   ASSERT(packet != NULL, "Invalid packet pointer");
   ASSERT(dstId != NULL, "Invalid dstId pointer");
   ASSERT(srcId != NULL, "Invalid srcId pointer");
   ASSERT(tid != NULL, "Invalid tid pointer");
+  ASSERT(status != NULL, "Invalid status pointer");
   ASSERT(data != NULL, "Invalid data pointer");
 
   *dstId = (uint16_t) DESTID_GET(packet->payload);
   *srcId = (uint16_t) SRCID_GET(packet->payload);
   *tid = (uint8_t) TID_GET(packet->payload);
+  *status = (uint8_t) STATUS_GET(packet->payload);
   *data = (uint32_t) DOUBLE_WORD_MSB_GET(packet->payload, 0u); /*lint !e835 !e845 The payload at index=0 should be fetched. */
   *data |= (uint32_t) DOUBLE_WORD_LSB_GET(packet->payload, 0u);  /*lint !e835 !e845 The payload at index=0 should be fetched. */
 }
@@ -514,7 +517,7 @@ void RIOPACKET_getMaintWriteRequest(const RioPacket_t *packet,
 
 void RIOPACKET_setMaintWriteResponse(RioPacket_t *packet,
                                      uint16_t dstId, uint16_t srcId, 
-                                     uint8_t tid)
+                                     uint8_t tid, uint8_t status)
 {
   uint32_t content;
   uint16_t crc = 0xffffu;
@@ -533,7 +536,7 @@ void RIOPACKET_setMaintWriteResponse(RioPacket_t *packet,
   /* sourceId(15:0)|transaction(3:0)|status(3:0)|srcTID(7:0) */
   content = ((uint32_t) srcId) << 16;
   content |= (uint32_t) RIOPACKET_TRANSACTION_MAINT_WRITE_RESPONSE << 12;
-  content |= (uint32_t) RIOPACKET_RESPONSE_STATUS_DONE << 8; /*lint !e835 !e845 The constant value is equal to zero. */
+  content |= ((uint32_t) (status & 0xf)) << 8;
   content |= (uint32_t) tid;
   crc = RIOPACKET_crc32(content, crc);
   packet->payload[1] = content;
@@ -555,16 +558,18 @@ void RIOPACKET_setMaintWriteResponse(RioPacket_t *packet,
 
 void RIOPACKET_getMaintWriteResponse(const RioPacket_t *packet,
                                      uint16_t *dstId, uint16_t *srcId, 
-                                     uint8_t *tid)
+                                     uint8_t *tid, uint8_t *status)
 {
   ASSERT(packet != NULL, "Invalid packet pointer");
   ASSERT(dstId != NULL, "Invalid dstId pointer");
   ASSERT(srcId != NULL, "Invalid srcId pointer");
   ASSERT(tid != NULL, "Invalid tid pointer");
+  ASSERT(status != NULL, "Invalid status pointer");
 
   *dstId = DESTID_GET(packet->payload);
   *srcId = SRCID_GET(packet->payload);
   *tid = TID_GET(packet->payload);
+  *status = STATUS_GET(packet->payload);
 }
 
 
@@ -2045,7 +2050,7 @@ static uint16_t rdsizeGet(const uint32_t address, const uint16_t size)
       wdptr = 0xffu;
       rdsize = 0xffu;
       break;
-
+
     case 24:
       /* Reading 192 bytes. */
       /* Only even double-word address are valid. */

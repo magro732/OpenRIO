@@ -386,14 +386,16 @@ void RIOPACKET_getMaintReadRequest(const RioPacket_t *packet,
  * \param[in] dstId The deviceId to use as destination in the packet.
  * \param[in] srcId The deviceId to use as source in the packet.
  * \param[in] tid The transaction identifier to set in the packet.
+ * \param[in] status The status to set in the packet.
  * \param[in] data The data to send in the packet.
  *
  * This function sets the content of a packet to a maintanance read response packet
- * containing a response to a request reading one word in configuration space.
+ * containing a response to a request reading one word in configuration space. 
+ * The status field can be used to indicate success or failure.
  */
 void RIOPACKET_setMaintReadResponse(RioPacket_t *packet,
                                     uint16_t dstId, uint16_t srcId,
-                                    uint8_t tid, uint32_t data);
+                                    uint8_t tid, uint8_t status, uint32_t data);
 
 
 /**
@@ -403,6 +405,7 @@ void RIOPACKET_setMaintReadResponse(RioPacket_t *packet,
  * \param[out] dstId The destination deviceId in this packet.
  * \param[out] srcId The source deviceId in this packet.
  * \param[out] tid The transaction identifier in the response.
+ * \param[out] status The status in the response.
  * \param[out] data The data in the response.
  *
  * This function returns the content of a packet as if it contained a maintenance 
@@ -415,7 +418,8 @@ void RIOPACKET_setMaintReadResponse(RioPacket_t *packet,
  */
 void RIOPACKET_getMaintReadResponse(const RioPacket_t *packet,
                                     uint16_t *dstId, uint16_t *srcId,
-                                    uint8_t *tid, uint32_t *data);
+                                    uint8_t *tid, uint8_t *status,
+                                    uint32_t *data);
 
 
 /**
@@ -468,13 +472,15 @@ void RIOPACKET_getMaintWriteRequest(const RioPacket_t *packet,
  * \param[in] dstId The deviceId to use as destination in the packet.
  * \param[in] srcId The deviceId to use as source in the packet.
  * \param[in] tid The transaction identifier to set in the packet.
+ * \param[in] status The status to set in the packet.
  *
  * This function sets the content of a packet to a maintanance write response packet
  * containing a response to a request writing one word in configuration space.
+ * The status field can be used to indicate success or failure.
  */
 void RIOPACKET_setMaintWriteResponse(RioPacket_t *packet,
                                      uint16_t dstId, uint16_t srcId, 
-                                     uint8_t tid);
+                                     uint8_t tid, uint8_t status);
 
 
 /**
@@ -484,6 +490,7 @@ void RIOPACKET_setMaintWriteResponse(RioPacket_t *packet,
  * \param[out] dstId The destination deviceId in this packet.
  * \param[out] srcId The source deviceId in this packet.
  * \param[out] tid The transaction identifier in the response.
+ * \param[out] status The status in the response.
  *
  * This function returns the content of a packet as if it contained a maintenance 
  * write response packet.
@@ -495,7 +502,7 @@ void RIOPACKET_setMaintWriteResponse(RioPacket_t *packet,
  */
 void RIOPACKET_getMaintWriteResponse(const RioPacket_t *packet,
                                      uint16_t *dstId, uint16_t *srcId, 
-                                     uint8_t *tid);
+                                     uint8_t *tid, uint8_t *status);
 
 
 /**

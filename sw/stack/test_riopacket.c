@@ -398,14 +398,15 @@ void allTests(void)
   TESTEXPR(tid, 0x41);
   TESTEXPR(address, 0x00fffffc);
 
-  RIOPACKET_setMaintReadResponse(&packet, 0x1234, 0x2345, 0x34, 0x4567);
-  RIOPACKET_getMaintReadResponse(&packet, &dstid, &srcid, &tid, &data);
+  RIOPACKET_setMaintReadResponse(&packet, 0x1234, 0x2345, 0x34, 0xde, 0x4567);
+  RIOPACKET_getMaintReadResponse(&packet, &dstid, &srcid, &tid, &status, &data);
 
   TESTEXPR(RIOPACKET_getTransaction(&packet), RIOPACKET_TRANSACTION_MAINT_READ_RESPONSE);
   TESTCOND(RIOPACKET_valid(&packet));
   TESTEXPR(dstid, 0x1234);
   TESTEXPR(srcid, 0x2345);
   TESTEXPR(tid, 0x34);
+  TESTEXPR(status, 0xde);
   TESTEXPR(data, 0x4567);
 
   RIOPACKET_setMaintWriteRequest(&packet, 0xc0de, 0xbabe, 0x13, 0x41, 0xffffffff, 0x12345678);
@@ -420,14 +421,15 @@ void allTests(void)
   TESTEXPR(address, 0x00fffffc);
   TESTEXPR(data, 0x12345678);
 
-  RIOPACKET_setMaintWriteResponse(&packet, 0x1234, 0x2345, 0x34);
-  RIOPACKET_getMaintWriteResponse(&packet, &dstid, &srcid, &tid);
+  RIOPACKET_setMaintWriteResponse(&packet, 0x1234, 0x2345, 0x34, 0xad);
+  RIOPACKET_getMaintWriteResponse(&packet, &dstid, &srcid, &tid, &status);
 
   TESTEXPR(RIOPACKET_getTransaction(&packet), RIOPACKET_TRANSACTION_MAINT_WRITE_RESPONSE);
   TESTCOND(RIOPACKET_valid(&packet));
   TESTEXPR(dstid, 0x1234);
   TESTEXPR(srcid, 0x2345);
   TESTEXPR(tid, 0x34);
+  TESTEXPR(status, 0xad);
 
   RIOPACKET_setMaintPortWrite(&packet, 0x1234, 0x2345, 0x34567890, 0x45678901, 0x56789012, 0x67, 0x78901234);
   RIOPACKET_getMaintPortWrite(&packet, &dstid, &srcid, &componentTag, &portErrorDetect, &implementationSpecific, &portId, &logicalTransportErrorDetect);
