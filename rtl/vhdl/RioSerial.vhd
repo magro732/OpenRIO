@@ -1,47 +1,33 @@
 -------------------------------------------------------------------------------
--- 
--- RapidIO IP Library Core
--- 
--- This file is part of the RapidIO IP library project
--- http://www.opencores.org/cores/rio/
--- 
--- Description
--- Containing the transmission channel independent parts of the LP-Serial
--- Physical Layer Specification (RapidIO 2.2, part 6).
--- 
--- To Do:
--- -
--- 
--- Author(s): 
--- - Magnus Rosenius, magro732@opencores.org 
--- 
--------------------------------------------------------------------------------
--- 
--- Copyright (C) 2013 Authors and OPENCORES.ORG 
--- 
--- This source file may be used and distributed without 
--- restriction provided that this copyright statement is not 
--- removed from the file and that any derivative work contains 
--- the original copyright notice and the associated disclaimer. 
--- 
--- This source file is free software; you can redistribute it 
--- and/or modify it under the terms of the GNU Lesser General 
--- Public License as published by the Free Software Foundation; 
--- either version 2.1 of the License, or (at your option) any 
--- later version. 
--- 
--- This source is distributed in the hope that it will be 
--- useful, but WITHOUT ANY WARRANTY; without even the implied 
--- warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
--- PURPOSE. See the GNU Lesser General Public License for more 
--- details. 
--- 
--- You should have received a copy of the GNU Lesser General 
--- Public License along with this source; if not, download it 
--- from http://www.opencores.org/lgpl.shtml 
--- 
+-- (C) Copyright 2013-2015 Authors and the Free Software Foundation.
+--
+-- This file is part of OpenRIO.
+--
+-- OpenRIO is free software: you can redistribute it and/or modify
+-- it under the terms of the GNU Lesser General Public License as published by
+-- the Free Software Foundation, either version 3 of the License, or
+-- (at your option) any later version.
+--
+-- OpenRIO is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-- GNU Lesser General Public License for more details.
+--
+-- You should have received a copy of the GNU General Lesser Public License
+-- along with OpenRIO.  If not, see <http://www.gnu.org/licenses/>.
 -------------------------------------------------------------------------------
 
+-------------------------------------------------------------------------------
+-- 
+-- Description
+-- This file containing an implementation of the transmission channel
+-- independent parts of the LP-Serial Physical Layer Specification
+-- (RapidIO 2.2, part 6).
+-- 
+-- Author(s): 
+-- - Magnus Rosenius, magro732@hemmai.se
+-- 
+-------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
 -- RioSerial
@@ -521,6 +507,7 @@ architecture RioTransmitterImpl of RioTransmitter is
 
   constant NUMBER_STATUS_TRANSMIT : natural := 15;
   constant NUMBER_LINK_RESPONSE_RETRIES : natural := 2;
+  constant NUMBER_PACKET_ERRORS_ALLOWED : natural := 3;
   
   component MemorySimpleDualPortAsync is
     generic(
@@ -552,6 +539,7 @@ architecture RioTransmitterImpl of RioTransmitter is
 
   signal statusReceivedCurrent, statusReceivedNext : std_logic;
   signal counterCurrent, counterNext : natural range 0 to 15;
+  signal packetErrorCurrent, packetErrorNext : natural range 0 to NUMBER_PACKET_ERRORS_ALLOWED;
   signal symbolsTransmittedCurrent, symbolsTransmittedNext : natural range 0 to 255;
   
   type FrameStateType is (FRAME_START, FRAME_CHECK, FRAME_ACKID, FRAME_BODY, FRAME_END);
@@ -664,6 +652,7 @@ begin
 
       statusReceivedCurrent <= '0';
       counterCurrent <= 0;
+      packetErrorCurrent <= 0;
       symbolsTransmittedCurrent <= 0;
       
       frameStateCurrent <= FRAME_START;
@@ -675,6 +664,7 @@ begin
 
       statusReceivedCurrent <= statusReceivedNext;
       counterCurrent <= counterNext;
+      packetErrorCurrent <= packetErrorNext;
       symbolsTransmittedCurrent <= symbolsTransmittedNext;
       
       frameStateCurrent <= frameStateNext;
@@ -688,12 +678,12 @@ begin
   -- Main outbound symbol handler, combinatorial part.
   -----------------------------------------------------------------------------
   process(stateCurrent,
-          statusReceivedCurrent, counterCurrent,
+          statusReceivedCurrent, counterCurrent, packetErrorCurrent,
           symbolsTransmittedCurrent,
           frameStateCurrent, ackIdCurrent, ackIdWindowCurrent, bufferStatusCurrent,
           txControlStype0, txControlParameter0, txControlParameter1,
           rxControlStype0, rxControlParameter0, rxControlParameter1,
-          portEnable_i,
+          portEnable_i, 
           localAckIdWrite_i, clrOutstandingAckId_i,
           outstandingAckId_i, outboundAckId_i,
           txFull_i,
@@ -708,6 +698,7 @@ begin
     stateNext <= stateCurrent;
     statusReceivedNext <= statusReceivedCurrent;
     counterNext <= counterCurrent;
+    packetErrorNext <= packetErrorCurrent;
     symbolsTransmittedNext <= symbolsTransmittedCurrent;
     
     frameStateNext <= frameStateCurrent;
@@ -869,6 +860,7 @@ begin
                 -- in the received control symbol.
                 ackIdNext <= unsigned(txControlParameter0);
                 bufferStatusNext <= txControlParameter1;
+                packetErrorNext <= 0;
               else
                 -- Did not receive a status control symbol.
                 -- Discard it.
@@ -971,6 +963,7 @@ begin
                     -- Update to a new buffer and increment the ackId.
                     readFrame_o <= '1';
                     ackIdNext <= ackIdCurrent + 1;
+                    packetErrorNext <= 0;
                   else
                     -- Unexpected packet-accepted or packet-accepted for
                     -- unexpected ackId.
@@ -1522,12 +1515,19 @@ begin
             -- Remove this frame. It has been received by the link-partner.
             readFrame_o <= '1';
             ackIdNext <= ackIdCurrent + 1;
+            packetErrorNext <= 0;
           else
             -- Keep this frame.
             -- Restart the window and the frame transmission.
             frameStateNext <= FRAME_START;
             readWindowReset_o <= '1';
             stateNext <= STATE_NORMAL;
+            if(packetErrorCurrent /= NUMBER_PACKET_ERRORS_ALLOWED) then
+              packetErrorNext <= packetErrorCurrent + 1;
+            else
+              packetErrorNext <= 0;
+              readFrame_o <= '1';
+            end if;
           end if;
 
         when STATE_FATAL_ERROR =>
@@ -1637,7 +1637,7 @@ architecture RioReceiverImpl of RioReceiver is
                      STATE_INPUT_RETRY_STOPPED, STATE_INPUT_ERROR_STOPPED);
   signal state : StateType;
   
-  signal statusCounter : natural range 0 to 8;
+  signal statusCounter : natural range 0 to 7;
 
   signal ackId : unsigned(4 downto 0);
   signal frameIndex : natural range 0 to 70;
