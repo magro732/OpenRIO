@@ -1,48 +1,34 @@
 -------------------------------------------------------------------------------
--- 
--- RapidIO IP Library Core
--- 
--- This file is part of the RapidIO IP library project
--- http://www.opencores.org/cores/rio/
--- 
+-- (C) Copyright 2013-2015 Authors and the Free Software Foundation.
+--
+-- This file is part of OpenRIO.
+--
+-- OpenRIO is free software: you can redistribute it and/or modify
+-- it under the terms of the GNU Lesser General Public License as published by
+-- the Free Software Foundation, either version 3 of the License, or
+-- (at your option) any later version.
+--
+-- OpenRIO is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-- GNU Lesser General Public License for more details.
+--
+-- You should have received a copy of the GNU General Lesser Public License
+-- along with OpenRIO. If not, see <http://www.gnu.org/licenses/>.
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
 -- Description
 -- Contains automatic simulation test code to verify a RioSwitch implementation.
--- Notice: Compile _This_file_ using VHDL'2008
 -- 
--- To Do:
+-- Backlog:
 -- - Test all sizes of packets that go through the maintenance port.
 -- - Make sure all testcases from the 1.0 branch is in here.
 -- 
 -- Author(s): 
--- - Magnus Rosenius, magro732@opencores.org 
--- 
+-- - Magnus Rosenius, magro732@hemmai.se
+-- - Anders Thornemo, anders.thornemo@se.transport.bombardier.com
 -------------------------------------------------------------------------------
--- 
--- Copyright (C) 2013 Authors and OPENCORES.ORG 
--- 
--- This source file may be used and distributed without 
--- restriction provided that this copyright statement is not 
--- removed from the file and that any derivative work contains 
--- the original copyright notice and the associated disclaimer. 
--- 
--- This source file is free software; you can redistribute it 
--- and/or modify it under the terms of the GNU Lesser General 
--- Public License as published by the Free Software Foundation; 
--- either version 2.1 of the License, or (at your option) any 
--- later version. 
--- 
--- This source is distributed in the hope that it will be 
--- useful, but WITHOUT ANY WARRANTY; without even the implied 
--- warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
--- PURPOSE. See the GNU Lesser General Public License for more 
--- details. 
--- 
--- You should have received a copy of the GNU Lesser General 
--- Public License along with this source; if not, download it 
--- from http://www.opencores.org/lgpl.shtml 
--- 
--------------------------------------------------------------------------------
-
 
 -------------------------------------------------------------------------------
 -- TestRioSwitch.
@@ -72,6 +58,7 @@ architecture TestRioSwitchImpl of TestRioSwitch is
   
   component RioSwitch is
     generic(
+      ENABLE_DISCARD_UNINITIALIZED_ROUTES : boolean := false;
       SWITCH_PORTS : natural range 3 to 255 := 4; 
       DEVICE_IDENTITY : std_logic_vector(15 downto 0);
       DEVICE_VENDOR_IDENTITY : std_logic_vector(15 downto 0);
@@ -79,7 +66,7 @@ architecture TestRioSwitchImpl of TestRioSwitch is
       ASSY_IDENTITY : std_logic_vector(15 downto 0);
       ASSY_VENDOR_IDENTITY : std_logic_vector(15 downto 0);
       ASSY_REV : std_logic_vector(15 downto 0);
-      portWriteTimeoutResetValue : std_logic_vector(15 downto 0) := x"FFFF");
+      PORT_WRITE_TIMEOUT_RESET_VALUE : std_logic_vector(15 downto 0) := x"FFFF");
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -102,6 +89,7 @@ architecture TestRioSwitchImpl of TestRioSwitch is
       outputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
       inputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
       portDisable_o : out Array1(SWITCH_PORTS-1 downto 0);    
+      linkUninitPacketDiscardActive_o : out Array1(SWITCH_PORTS-1 downto 0);
       
       localAckIdWrite_o : out Array1(SWITCH_PORTS-1 downto 0);
       clrOutstandingAckId_o : out Array1(SWITCH_PORTS-1 downto 0);
@@ -129,7 +117,6 @@ architecture TestRioSwitchImpl of TestRioSwitch is
   constant SWITCH_ASSY_REV : std_logic_vector(15 downto 0) := x"4455";
   
   constant verboseInfo : boolean := false;      --if True, print info in vPrint-strings (neat when debugging, set to false for regression tests)
---constant verboseInfo : boolean := true;       --if True, print info in vPrint-strings (neat when debugging, set to false for regression tests)
   
   constant tt_8bit  : std_logic_vector(1 downto 0) := b"00";
   constant tt_16bit : std_logic_vector(1 downto 0) := b"01";
@@ -190,6 +177,7 @@ architecture TestRioSwitchImpl of TestRioSwitch is
   signal outputPortEnable : Array1(PORTS-1 downto 0);
   signal inputPortEnable : Array1(PORTS-1 downto 0);
   signal portDisable : Array1(PORTS-1 downto 0);
+  signal linkUninitPacketDiscardActive : Array1(PORTS-1 downto 0);
       
   signal localAckIdWrite : Array1(PORTS-1 downto 0);
   signal clrOutstandingAckId : Array1(PORTS-1 downto 0);
@@ -236,6 +224,7 @@ begin
 
   TestSwitch: RioSwitch
     generic map(
+      ENABLE_DISCARD_UNINITIALIZED_ROUTES=>true,
       SWITCH_PORTS=>PORTS,
       DEVICE_IDENTITY=>SWITCH_IDENTITY,
       DEVICE_VENDOR_IDENTITY=>SWITCH_VENDOR_IDENTITY,
@@ -243,7 +232,7 @@ begin
       ASSY_IDENTITY=>SWITCH_ASSY_IDENTITY,
       ASSY_VENDOR_IDENTITY=>SWITCH_ASSY_VENDOR_IDENTITY,
       ASSY_REV=>SWITCH_ASSY_REV,
-      portWriteTimeoutResetValue=>x"0020")  -- x"0020": override default 100ms timeout -> 48.8 us
+      PORT_WRITE_TIMEOUT_RESET_VALUE=>x"0020")  -- x"0020": override default 100ms timeout -> 48.8 us
     port map(
       clk=>clk, areset_n=>areset_n, 
       writeFrameFull_i=>writeFrameFull,
@@ -257,6 +246,7 @@ begin
       linkInitialized_i=>linkInitialized,
       outputPortEnable_o=>outputPortEnable, inputPortEnable_o=>inputPortEnable,
       portDisable_o=>portDisable,
+      linkUninitPacketDiscardActive_o=>linkUninitPacketDiscardActive,
       localAckIdWrite_o=>localAckIdWrite, 
       clrOutstandingAckId_o=>clrOutstandingAckId, 
       inboundAckId_o=>inboundAckIdWrite, 
@@ -277,19 +267,20 @@ begin
     -- 
     ---------------------------------------------------------------------------
     procedure SendFrame(constant portIndex : natural range 0 to 7;
-                        constant frame : RioFrame) is
+                        constant frame : RioFrame;
+                        constant willAbort : boolean := false) is
     begin
       -- Crappy Modelsim cannot handle arrays of signals...
       case portIndex is
         when 0 =>
           TestPortPacketBufferWrite(inboundWrite0, inboundMessage0, inboundAck0,
-                                    frame, false);
+                                    frame, willAbort);
         when 1 =>
           TestPortPacketBufferWrite(inboundWrite1, inboundMessage1, inboundAck1,
-                                    frame, false);
+                                    frame, willAbort);
         when others =>
           TestPortPacketBufferWrite(inboundWrite2, inboundMessage2, inboundAck2,
-                                    frame, false);
+                                    frame, willAbort);
       end case;
     end procedure;
 
@@ -297,19 +288,20 @@ begin
     -- 
     ---------------------------------------------------------------------------
     procedure ReceiveFrame(constant portIndex : natural range 0 to 7;
-                           constant frame : RioFrame) is
+                           constant frame : RioFrame;
+                           constant willAbort : boolean := false) is
     begin
       -- Crappy Modelsim cannot handle arrays of signals...
       case portIndex is
         when 0 =>
           TestPortPacketBufferWrite(outboundWrite0, outboundMessage0, outboundAck0,
-                                    frame, false);
+                                    frame, willAbort);
         when 1 =>
           TestPortPacketBufferWrite(outboundWrite1, outboundMessage1, outboundAck1,
-                                    frame, false);
+                                    frame, willAbort);
         when others =>
           TestPortPacketBufferWrite(outboundWrite2, outboundMessage2, outboundAck2,
-                                    frame, false);
+                                    frame, willAbort);
       end case;
     end procedure;
 
@@ -319,14 +311,15 @@ begin
     procedure SendFrame(constant portIndex : natural range 0 to 7;
                         constant sourceId : std_logic_vector(15 downto 0);
                         constant destinationId : std_logic_vector(15 downto 0);
-                        constant payload : RioPayload) is
+                        constant payload : RioPayload;
+                        constant willAbort : boolean := false) is
       variable frame : RioFrame;
     begin
       frame := RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
                               tt=>"01", ftype=>"0000", 
                               sourceId=>sourceId, destId=>destinationId,
                               payload=>payload);
-      SendFrame(portIndex, frame);
+      SendFrame(portIndex, frame, willAbort);
     end procedure;
     
     ---------------------------------------------------------------------------
@@ -335,14 +328,15 @@ begin
     procedure ReceiveFrame(constant portIndex : natural range 0 to 7;
                            constant sourceId : std_logic_vector(15 downto 0);
                            constant destinationId : std_logic_vector(15 downto 0);
-                           constant payload : RioPayload) is
+                           constant payload : RioPayload;
+                           constant willAbort : boolean := false) is
       variable frame : RioFrame;
     begin
       frame := RioFrameCreate(ackId=>"00000", vc=>'0', crf=>'0', prio=>"00",
                               tt=>"01", ftype=>"0000", 
                               sourceId=>sourceId, destId=>destinationId,
                               payload=>payload);
-      ReceiveFrame(portIndex, frame);
+      ReceiveFrame(portIndex, frame, willAbort);
     end procedure;
 
     ---------------------------------------------------------------------------
@@ -973,15 +967,15 @@ begin
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"07", address=>x"000070", data=>x"00000000");
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"08", address=>x"000074", data=>x"00000001");
+                  tid=>x"08", address=>x"000074", data=>x"00000081");
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"09", address=>x"000074", data=>x"00000001");
+                 tid=>x"09", address=>x"000074", data=>x"00000081");
 
     -- Send a frame from a port and check if it is correctly routed.
     randomPayload.length := 3;
     CreateRandomPayload(randomPayload.data, seed1, seed2);
     RouteFrame(sourcePortIndex=>0, destinationPortIndex=>1,
-               sourceId=>x"ffff", destinationId=>x"0000", payload=>randomPayload);
+               destinationId=>x"0000", sourceId=>x"ffff", payload=>randomPayload);
 
     ExchangeFrames;
     
@@ -997,16 +991,16 @@ begin
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"0a", address=>x"000078", data=>x"00000000");
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"0b", address=>x"000078", data=>x"00000002");
+                  tid=>x"0b", address=>x"000078", data=>x"00000082");
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                 tid=>x"0c", address=>x"000078", data=>x"00000002");
+                 tid=>x"0c", address=>x"000078", data=>x"00000082");
     ExchangeFrames;
     
     -- Send a frame from a port and check if it is correctly routed.
     randomPayload.length := 4;
     CreateRandomPayload(randomPayload.data, seed1, seed2);
     RouteFrame(sourcePortIndex=>1, destinationPortIndex=>2,
-               sourceId=>x"0000", destinationId=>x"ffff", payload=>randomPayload);
+               sourceId=>x"0000", destinationId=>x"fffd", payload=>randomPayload);
     ExchangeFrames;
 
     ---------------------------------------------------------------------------
@@ -1214,11 +1208,19 @@ begin
     RouteSet(x"0001", x"00");
     RouteSet(x"0002", x"00");
     RouteSet(x"0003", x"00");
-    RouteSet(x"0004", x"01");
+    RouteSet(x"0004", x"81");
     RouteSet(x"0005", x"02");
     RouteSet(x"0006", x"02");
-    RouteSetDefault(x"02");
+    RouteSet(x"ffff", x"82");
+    ExchangeFrames;
     
+    -- Frame on port 2 to nowhere, the route has not been setup.
+    randomPayload.length := 4;
+    CreateRandomPayload(randomPayload.data, seed1, seed2);
+    SendFrame(portIndex=>2,
+              destinationId=>x"0000", sourceId=>x"0000", payload=>randomPayload,
+              willAbort=>true);
+
     -- Frame on port 0 to port 1.
     randomPayload.length := 3;
     CreateRandomPayload(randomPayload.data, seed1, seed2);
@@ -1227,12 +1229,12 @@ begin
     ReceiveFrame(portIndex=>1,
                  destinationId=>x"0004", sourceId=>x"ffff", payload=>randomPayload);
 
-    -- Frame on port 1 to port 6.
+    -- Frame on port 1 to port 2.
     randomPayload.length := 4;
     CreateRandomPayload(randomPayload.data, seed1, seed2);
     SendFrame(portIndex=>1,
               destinationId=>x"ffff", sourceId=>x"0000", payload=>randomPayload);
-    ReceiveFrame(portIndex=>6,
+    ReceiveFrame(portIndex=>2,
                  destinationId=>x"ffff", sourceId=>x"0000", payload=>randomPayload);
 
     ExchangeFrames;
@@ -1240,7 +1242,7 @@ begin
     ---------------------------------------------------------------------------
     TestSpec("-----------------------------------------------------------------");
     TestSpec("Step 2:");
-    TestSpec("Action: Send two packets to the same port with is full and one to");
+    TestSpec("Action: Send two packets to the same port which is full and one to");
     TestSpec("        another that is also full. Then receive the packets one at");
     TestSpec("        a time.");
     TestSpec("Result: The packet to the port that is ready should go though.");
@@ -1501,6 +1503,7 @@ begin
     --As it is not known which port will be sent first, depending on state of the tx test which use PortNindex,
     --we must wait for internal signal /testrioswitch/TestSwitch/MaintenancePort/PortNindex to reach a known state first. 
     --TestBench..ReceiveFrame expects port 0 to arrive first.
+    -- Notice: Compile using VHDL'2008
     wait until << signal .TestRioSwitch.TestSwitch.MaintenancePort.PortNindex : integer range 0 to PORTS >> = PORTS-1;
     vPrint("linkInit '0' on all ports");
     linkInitialized<=(others=>'0');
@@ -1555,6 +1558,7 @@ begin
     --As we do not know which port will be sent first, depending on state of the tx test which use PortNindex,
     --we must wait for internal signal /testrioswitch/TestSwitch/MaintenancePort/PortNindex to reach a known state first. 
     --TestBench..ReceiveFrame expects port 0 to arrive first.
+    -- Notice: Compile using VHDL'2008
     wait until << signal .TestRioSwitch.TestSwitch.MaintenancePort.PortNindex : integer range 0 to PORTS >> = PORTS-1;
     vPrint("linkInit '1' on all ports (3C)");
     linkInitialized<=(others=>'1');

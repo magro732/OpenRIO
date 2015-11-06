@@ -1,55 +1,47 @@
 -------------------------------------------------------------------------------
--- 
--- RapidIO IP Library Core
--- 
--- This file is part of the RapidIO IP library project
--- http://www.opencores.org/cores/rio/
--- 
+-- (C) Copyright 2013-2015 Authors and the Free Software Foundation.
+--
+-- This file is part of OpenRIO.
+--
+-- OpenRIO is free software: you can redistribute it and/or modify
+-- it under the terms of the GNU Lesser General Public License as published by
+-- the Free Software Foundation, either version 3 of the License, or
+-- (at your option) any later version.
+--
+-- OpenRIO is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-- GNU Lesser General Public License for more details.
+--
+-- You should have received a copy of the GNU General Lesser Public License
+-- along with OpenRIO. If not, see <http://www.gnu.org/licenses/>.
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
 -- Description
 -- Helper module for RioSwitch.
 -- 
--- To Do:
--- - 
+-- Backlog:
+-- 
 -- 
 -- Author(s): 
--- - Anders Thornemo
--- 
--------------------------------------------------------------------------------
--- 
--- Copyright (C) 2015 Authors and OPENCORES.ORG 
--- 
--- This source file may be used and distributed without 
--- restriction provided that this copyright statement is not 
--- removed from the file and that any derivative work contains 
--- the original copyright notice and the associated disclaimer. 
--- 
--- This source file is free software; you can redistribute it 
--- and/or modify it under the terms of the GNU Lesser General 
--- Public License as published by the Free Software Foundation; 
--- either version 2.1 of the License, or (at your option) any 
--- later version. 
--- 
--- This source is distributed in the hope that it will be 
--- useful, but WITHOUT ANY WARRANTY; without even the implied 
--- warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
--- PURPOSE. See the GNU Lesser General Public License for more 
--- details. 
--- 
--- You should have received a copy of the GNU Lesser General 
--- Public License along with this source; if not, download it 
--- from http://www.opencores.org/lgpl.shtml 
--- 
+-- - Anders Thornemo, anders.thornemo@se.transport.bombardier.com
 -------------------------------------------------------------------------------
 
+-------------------------------------------------------------------------------
+-- MaintenancePortManager
+-------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all; 
---
 use work.rio_common.all;
 
+-------------------------------------------------------------------------------
+-- Entity for MaintenancePortManager
+-------------------------------------------------------------------------------
 entity MaintenancePortManager is
   generic(SWITCH_PORTS : natural := 4;
-          portWriteTimeoutResetValue : std_logic_vector(15 downto 0):= x"FFFF"); -- x"FFFF" = 100 ms
+          PORT_WRITE_TIMEOUT_RESET_VALUE : std_logic_vector(15 downto 0):= x"FFFF"); -- x"FFFF" = 100 ms
   port(       clk   : in  std_logic;
               areset_n   : in  std_logic;
               -- 
@@ -144,6 +136,10 @@ entity MaintenancePortManager is
               );
 end entity;
 
+
+-------------------------------------------------------------------------------
+-- Architecture for MaintenancePortManager
+-------------------------------------------------------------------------------
 architecture rtl of MaintenancePortManager is
 
 --constant tt_Dev8               : std_logic_vector( 1 downto 0) := b"00";  --tt field definition for  8 bit address mode
@@ -210,7 +206,7 @@ begin
     if areset_n='0' then
       hotSwapEvent_sticky<=(others=>'0');
       PortNwritePending_D <= (others=>'0');
-      --
+    --
     elsif rising_edge(clk) then
       PortNwritePending_D <= PortNwritePending_i;
       --
@@ -223,20 +219,20 @@ begin
           hotSwapEvent_sticky(portIndex)<='0';
         end if;
       end loop;
-      --
+    --
     end if;
   end process;
   
 -- 
   hotSwapMessageSequencer:process(clk, areset_n)
-    -- check for pending hot swap events
+  -- check for pending hot swap events
   begin
     if areset_n='0' then
       hotSwapMessageSequencer_FSM <= test;
       hotSwapEventPending <= '0';
       PortNindex <= 0;
       portNwriteTimeoutWD <= (others=>'0');
-      --
+    --
     elsif rising_edge(clk) then
       case hotSwapMessageSequencer_FSM is
         when test   => if PortNindex>=SWITCH_PORTS or PortWriteTransmissionDisable_i='1' then
@@ -277,11 +273,11 @@ begin
   pwtogen:for i in 0 to SWITCH_PORTS-1 
   generate
     PWtimerN: Timer
-      generic map(timerWidth => portWriteTimeoutResetValue'length,
+      generic map(timerWidth => PORT_WRITE_TIMEOUT_RESET_VALUE'length,
                   repeatedPulse => false) --keep output high after expiration
       port map(clk_i => clk,
                reset_ni => areset_n,
-               resetValue_i => portWriteTimeoutResetValue, 
+               resetValue_i => PORT_WRITE_TIMEOUT_RESET_VALUE, 
                timerTick_i => Tick_1_5us_i,           --tick rate strobe input for this timer: x"FFFF" = 100ms --> 1.52590219 us/tick --> 655350 Hz
                wd_i => portNwriteTimeoutWD(i),  --watch dog input "from kicker" -ie. toggle this high whenever a packet is created
                expired_o => portNwriteTimeout(i));
@@ -363,12 +359,12 @@ begin
             --     if Dev8_or_16='1' then
             --use 16 bit addresses
             lookupAddr <= Dev16_deviceID_msb & Dev8_deviceID;
-            --lookupAddr <= x"0000" & Dev16_deviceID_msb & Dev8_deviceID;
-            --  else
-            --     --use 8 bit addresses
-            --     lookupAddr <= x"00" & Dev8_deviceID;
-            --   --lookupAddr <= x"000000" & Dev8_deviceID;
-            --  end if;
+          --lookupAddr <= x"0000" & Dev16_deviceID_msb & Dev8_deviceID;
+          --  else
+          --     --use 8 bit addresses
+          --     lookupAddr <= x"00" & Dev8_deviceID;
+          --   --lookupAddr <= x"000000" & Dev8_deviceID;
+          --  end if;
           else
             --"normal" access
             lookupAddr <= dstIdInbound_i(15 downto 0);
@@ -395,8 +391,8 @@ begin
             srcId_pwError <= (others=>'0'); --not defined or require reverse lookup..
             
           else
-            -- Wait until the address lookup is complete.
-            -- REMARK: Timeout here???
+          -- Wait until the address lookup is complete.
+          -- REMARK: Timeout here???
           end if;
           
         when STATE_WAIT_COMPLETE =>
@@ -414,9 +410,9 @@ begin
           end if;
           
         when others =>
-          ---------------------------------------------------------------------
-          -- 
-          ---------------------------------------------------------------------
+      ---------------------------------------------------------------------
+      -- 
+      ---------------------------------------------------------------------
       end case;
     end if;
   end process;

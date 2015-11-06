@@ -1,58 +1,67 @@
 -------------------------------------------------------------------------------
--- 
--- RapidIO IP Library Core
--- 
--- This file is part of the RapidIO IP library project
--- http://www.opencores.org/cores/rio/
--- 
+-- (C) Copyright 2013-2015 Authors and the Free Software Foundation.
+--
+-- This file is part of OpenRIO.
+--
+-- OpenRIO is free software: you can redistribute it and/or modify
+-- it under the terms of the GNU Lesser General Public License as published by
+-- the Free Software Foundation, either version 3 of the License, or
+-- (at your option) any later version.
+--
+-- OpenRIO is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-- GNU Lesser General Public License for more details.
+--
+-- You should have received a copy of the GNU General Lesser Public License
+-- along with OpenRIO. If not, see <http://www.gnu.org/licenses/>.
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
 -- Description
--- Containing RapidIO packet switching functionality contained in the top
--- entity RioSwitch.
+-- This file contains an implementation of a RapidIO switch with hotswap
+-- support.
+-- The hotswap feature lacks support for the Packet Time-to-live CSR.
 -- 
--- To Do:
+-- Backlog:
+-- - Fix LinkUninitDiscardTimerActive_o, it does not work presently.
+-- - Make the hotswap timing more generic.
 -- - Add a real crossbar as interconnect.
 -- - Change the internal addressing to one-hot.
 -- - Remove acknowledge cycle when transfering packets between ports to double
 --   the bandwidth.
--- - Add hot-swap.
 -- - Connect linkInitialized to all ports and read it from the source port
 --   using the interconnect. This will allow alternative routes since the
 --   sending port can see if a receiving port is up or not.
 -- - Add support for extended route.
--- 
+--
 -- Author(s): 
--- - Magnus Rosenius, magro732@opencores.org 
--- 
+-- - Magnus Rosenius, magro732@hemmai.se
+-- - Anders Thornemo, anders.thornemo@se.transport.bombardier.com
 -------------------------------------------------------------------------------
--- 
--- Copyright (C) 2013 Authors and OPENCORES.ORG 
--- 
--- This source file may be used and distributed without 
--- restriction provided that this copyright statement is not 
--- removed from the file and that any derivative work contains 
--- the original copyright notice and the associated disclaimer. 
--- 
--- This source file is free software; you can redistribute it 
--- and/or modify it under the terms of the GNU Lesser General 
--- Public License as published by the Free Software Foundation; 
--- either version 2.1 of the License, or (at your option) any 
--- later version. 
--- 
--- This source is distributed in the hope that it will be 
--- useful, but WITHOUT ANY WARRANTY; without even the implied 
--- warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
--- PURPOSE. See the GNU Lesser General Public License for more 
--- details. 
--- 
--- You should have received a copy of the GNU Lesser General 
--- Public License along with this source; if not, download it 
--- from http://www.opencores.org/lgpl.shtml 
--- 
--------------------------------------------------------------------------------
-
 
 -------------------------------------------------------------------------------
 -- RioSwitch
+-- ENABLE_DISCARD_UNINITIALIZED_ROUTES - Indicates if a route in the route
+-- table is considdered as uninitialized when the MSB in the portEntry is
+-- set. This enables the switch to discard packets at startup before the route
+-- table has been activly written with a value. It is also possible to disable
+-- routes and force packets to destinations that has been removed to be
+-- discarded.
+-- DEFAULT_ROUTE_TABLE_ENTRY_FFFE - The startup value to route a packet to
+-- destination 0xfffe. Can be used to have a preset route path to a booting
+-- node in the network.
+-- DEFAULT_ROUTE_TABLE_ENTRY_FFFF - The startup value to route a packet to
+-- destination 0xffff.
+-- SWITCH_PORTS - The number of ports to instantiate.
+-- DEVICE_IDENTITY - The DeviceIdentity to return when read using an access to
+-- configuration space.
+-- DEVICE_VENDOR_IDENTITY - The DeviceVendorIdentity to return when read using
+-- an access to configuration space.
+-- DEVICE_REV - The deviceRev to return when read using an access to
+-- configuration space.
+-- PORT_WRITE_TIMEOUT_RESET_VALUE - Set it to x"0001" to make testbench run
+-- faster: 1.5 ms timeout instead of 100 ms.
 -------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
@@ -64,14 +73,17 @@ use work.rio_common.all;
 -------------------------------------------------------------------------------
 entity RioSwitch is
   generic(
-    SWITCH_PORTS               : natural  range 3 to 255 := 4;
-    DEVICE_IDENTITY            : std_logic_vector(15 downto 0) := x"ABCD";
-    DEVICE_VENDOR_IDENTITY     : std_logic_vector(15 downto 0) := x"ACDC";
-    DEVICE_REV                 : std_logic_vector(31 downto 0) := x"ABCDEFDD";
-    ASSY_IDENTITY              : std_logic_vector(15 downto 0) := x"ADCA";
-    ASSY_VENDOR_IDENTITY       : std_logic_vector(15 downto 0) := x"AEFB";
-    ASSY_REV                   : std_logic_vector(15 downto 0) := x"AFFE";
-    portWriteTimeoutResetValue : std_logic_vector(15 downto 0) := x"FFFF");  -- Set it to x"0001" to make testbench run faster: 1.5 ms timeout instead of 100 ms..
+    ENABLE_DISCARD_UNINITIALIZED_ROUTES : boolean := false;
+    DEFAULT_ROUTE_TABLE_ENTRY_FFFE : std_logic_vector(7 downto 0) := x"80";
+    DEFAULT_ROUTE_TABLE_ENTRY_FFFF : std_logic_vector(7 downto 0) := x"80";
+    SWITCH_PORTS : natural  range 3 to 255 := 4;
+    DEVICE_IDENTITY : std_logic_vector(15 downto 0) := x"ABCD";
+    DEVICE_VENDOR_IDENTITY : std_logic_vector(15 downto 0) := x"ACDC";
+    DEVICE_REV : std_logic_vector(31 downto 0) := x"ABCDEFDD";
+    ASSY_IDENTITY : std_logic_vector(15 downto 0) := x"ADCA";
+    ASSY_VENDOR_IDENTITY : std_logic_vector(15 downto 0) := x"AEFB";
+    ASSY_REV : std_logic_vector(15 downto 0) := x"AFFE";
+    PORT_WRITE_TIMEOUT_RESET_VALUE : std_logic_vector(15 downto 0) := x"FFFF");
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -94,6 +106,7 @@ entity RioSwitch is
     outputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
     inputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
     portDisable_o : out Array1(SWITCH_PORTS-1 downto 0);
+    linkUninitPacketDiscardActive_o : out Array1(SWITCH_PORTS-1 downto 0);
 
     localAckIdWrite_o : out Array1(SWITCH_PORTS-1 downto 0);
     clrOutstandingAckId_o : out Array1(SWITCH_PORTS-1 downto 0);
@@ -162,6 +175,9 @@ architecture RioSwitchImpl of RioSwitch is
   
   component SwitchPortMaintenance is
     generic(
+      ENABLE_DISCARD_UNINITIALIZED_ROUTES : boolean;
+      DEFAULT_ROUTE_TABLE_ENTRY_FFFE : std_logic_vector(7 downto 0);
+      DEFAULT_ROUTE_TABLE_ENTRY_FFFF : std_logic_vector(7 downto 0);
       SWITCH_PORTS : natural range 0 to 255;
       DEVICE_IDENTITY : std_logic_vector(15 downto 0);
       DEVICE_VENDOR_IDENTITY : std_logic_vector(15 downto 0);
@@ -169,7 +185,7 @@ architecture RioSwitchImpl of RioSwitch is
       ASSY_IDENTITY : std_logic_vector(15 downto 0);
       ASSY_VENDOR_IDENTITY : std_logic_vector(15 downto 0);
       ASSY_REV : std_logic_vector(15 downto 0);
-      portWriteTimeoutResetValue : std_logic_vector(15 downto 0) := x"FFFF");
+      PORT_WRITE_TIMEOUT_RESET_VALUE : std_logic_vector(15 downto 0) := x"FFFF");
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -206,6 +222,8 @@ architecture RioSwitchImpl of RioSwitch is
       outputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
       inputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
       portDisable_o : out Array1(SWITCH_PORTS-1 downto 0);
+      linkUninitPacketDiscardActive_o : out Array1(SWITCH_PORTS-1 downto 0);
+      
       localAckIdWrite_o : out Array1(SWITCH_PORTS-1 downto 0);
       clrOutstandingAckId_o : out Array1(SWITCH_PORTS-1 downto 0);
       inboundAckId_o : out Array5(SWITCH_PORTS-1 downto 0);
@@ -225,6 +243,7 @@ architecture RioSwitchImpl of RioSwitch is
   
   component SwitchPort is
     generic(
+      ENABLE_DISCARD_UNINITIALIZED_ROUTES : boolean;
       MAINTENANCE_LOOKUP : boolean;
       PORT_INDEX : natural);
     port(
@@ -325,6 +344,7 @@ begin
   PortGeneration: for portIndex in 0 to SWITCH_PORTS-1 generate
     PortInst: SwitchPort
       generic map(
+        ENABLE_DISCARD_UNINITIALIZED_ROUTES=>ENABLE_DISCARD_UNINITIALIZED_ROUTES,
         MAINTENANCE_LOOKUP=>false,
         PORT_INDEX=>portIndex)
       port map(
@@ -365,6 +385,9 @@ begin
   -----------------------------------------------------------------------------
   MaintenancePort: SwitchPortMaintenance
     generic map(
+      ENABLE_DISCARD_UNINITIALIZED_ROUTES=>ENABLE_DISCARD_UNINITIALIZED_ROUTES,
+      DEFAULT_ROUTE_TABLE_ENTRY_FFFE=>DEFAULT_ROUTE_TABLE_ENTRY_FFFE,
+      DEFAULT_ROUTE_TABLE_ENTRY_FFFF=>DEFAULT_ROUTE_TABLE_ENTRY_FFFF,
       SWITCH_PORTS=>SWITCH_PORTS,
       DEVICE_IDENTITY=>DEVICE_IDENTITY,
       DEVICE_VENDOR_IDENTITY=>DEVICE_VENDOR_IDENTITY,
@@ -372,7 +395,7 @@ begin
       ASSY_IDENTITY=>ASSY_IDENTITY,
       ASSY_VENDOR_IDENTITY=>ASSY_VENDOR_IDENTITY,
       ASSY_REV=>ASSY_REV,
-      portWriteTimeoutResetValue => portWriteTimeoutResetValue)
+      PORT_WRITE_TIMEOUT_RESET_VALUE=>PORT_WRITE_TIMEOUT_RESET_VALUE)
     port map(
       clk=>clk, areset_n=>areset_n, 
       lookupStb_i=>slaveLookupStb, lookupAddr_i=>slaveLookupAddr,
@@ -392,6 +415,7 @@ begin
       linkInitialized_i=>linkInitialized_i,
       outputPortEnable_o=>outputPortEnable_o, inputPortEnable_o=>inputPortEnable_o,
       portDisable_o=>portDisable_o,
+      linkUninitPacketDiscardActive_o=>linkUninitPacketDiscardActive_o,
       localAckIdWrite_o=>localAckIdWrite_o, clrOutstandingAckId_o=>clrOutstandingAckId_o, 
       inboundAckId_o=>inboundAckId_o, outstandingAckId_o=>outstandingAckId_o, 
       outboundAckId_o=>outboundAckId_o, inboundAckId_i=>inboundAckId_i, 
@@ -405,6 +429,17 @@ end architecture;
 
 -------------------------------------------------------------------------------
 -- SwitchPort.
+-- MAINTENANCE_LOOKUP - indicates if maintenance packets should be directed to
+-- the maintenance packet receiver or not. Set this if the instance should be
+-- used in the maintenance handling port.
+-- ENABLE_DISCARD_UNINITIALIZED_ROUTES - indicates if a route in the route table is
+-- considdered as uninitialized when the MSB in the portEntry is set. This
+-- enables the switch to discard packets at startup before the route table has
+-- been activly written with a value. It is also possible to disable routes and
+-- force packets to be discarded at runtime.
+-- PORT_INDEX - the port index the instance has. It is needed to let the
+-- maintenance packet handler know which port a maintenance packet was received
+-- on.
 -------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
@@ -417,6 +452,7 @@ use work.rio_common.all;
 -------------------------------------------------------------------------------
 entity SwitchPort is
   generic(
+    ENABLE_DISCARD_UNINITIALIZED_ROUTES : boolean;
     MAINTENANCE_LOOKUP : boolean;
     PORT_INDEX : natural);
   port(
@@ -475,7 +511,8 @@ architecture SwitchPortImpl of SwitchPort is
                            STATE_READ_TARGET_PORT,
                            STATE_WAIT_TARGET_PORT,
                            STATE_WAIT_TARGET_WRITE,
-                           STATE_WAIT_COMPLETE);
+                           STATE_WAIT_COMPLETE,
+                           STATE_WAIT_DISCARD);
   signal masterState : MasterStateType;
   alias ftype : std_logic_vector(3 downto 0) is readContentData_i(19 downto 16);
   alias tt : std_logic_vector(1 downto 0) is readContentData_i(21 downto 20);
@@ -563,7 +600,7 @@ begin
 
                 -- Always route these frames to the maintenance module in the
                 -- switch by setting the MSB bit of the port address.
-                masterAddr_o <= '1' & std_logic_vector(to_unsigned(PORT_INDEX, 8)) & '0';
+                masterAddr_o <= "11" & std_logic_vector(to_unsigned(PORT_INDEX, 7)) & '0';
 
                 -- Start an access to the maintenance port.
                 masterState <= STATE_READ_TARGET_PORT;
@@ -581,13 +618,13 @@ begin
             else
               -- Unsupported tt-value, discard the frame.
               readFrame_o <= '1';
-              masterState <= STATE_IDLE;
+              masterState <= STATE_WAIT_DISCARD;
             end if;
           else
             -- End of frame.
             -- The frame is too short to contain a valid frame. Discard it.
             readFrame_o <= '1';
-            masterState <= STATE_IDLE;
+            masterState <= STATE_WAIT_DISCARD;
           end if;
 
         when STATE_READ_PORT_LOOKUP =>
@@ -602,9 +639,19 @@ begin
             -- Terminate the lookup cycle.
             lookupStb_o <= '0';
 
-            -- Proceed to read the target port.
-            masterAddr_o <= '0' & lookupData_i & '0';
-            masterState <= STATE_READ_TARGET_PORT;
+            -- Check if the route for this destination has been initialized.
+            if (not ENABLE_DISCARD_UNINITIALIZED_ROUTES) or (lookupData_i(7) = '1') then
+              -- There is an initialized route set for this destination.
+              -- Set the port to transfer the packet to and proceed to read
+              -- the target port.
+              masterAddr_o <= "00" & lookupData_i(6 downto 0) & '0';
+              masterState <= STATE_READ_TARGET_PORT;
+            else
+              -- There is no route set for this destination.
+              -- Discard the packet.
+              readFrame_o <= '1';
+              masterState <= STATE_WAIT_DISCARD;
+            end if;
           else
             -- Wait until the address lookup is complete.
             -- REMARK: Timeout here???
@@ -722,10 +769,17 @@ begin
             -- REMARK: Timeout here???
           end if;
 
+        when STATE_WAIT_DISCARD =>
+          ---------------------------------------------------------------------
+          -- Wait one tick for the packet buffer to update its outputs. Then
+          -- start waiting for a new packet.
+          ---------------------------------------------------------------------
+          masterState <= STATE_IDLE;
+          
         when others =>
           ---------------------------------------------------------------------
           -- 
-          ---------------------------------------------------------------------
+          ---------------------------------------------------------------------          
       end case;
     end if;
   end process;
@@ -838,6 +892,9 @@ use work.rio_common.all;
 -------------------------------------------------------------------------------
 entity SwitchPortMaintenance is
   generic(
+    ENABLE_DISCARD_UNINITIALIZED_ROUTES : boolean;
+    DEFAULT_ROUTE_TABLE_ENTRY_FFFE : std_logic_vector(7 downto 0);
+    DEFAULT_ROUTE_TABLE_ENTRY_FFFF : std_logic_vector(7 downto 0);
     SWITCH_PORTS : natural range 0 to 255;
     DEVICE_IDENTITY : std_logic_vector(15 downto 0);
     DEVICE_VENDOR_IDENTITY : std_logic_vector(15 downto 0);
@@ -845,7 +902,7 @@ entity SwitchPortMaintenance is
     ASSY_IDENTITY : std_logic_vector(15 downto 0);
     ASSY_VENDOR_IDENTITY : std_logic_vector(15 downto 0);
     ASSY_REV : std_logic_vector(15 downto 0);
-    portWriteTimeoutResetValue : std_logic_vector(15 downto 0) := x"FFFF");
+    PORT_WRITE_TIMEOUT_RESET_VALUE : std_logic_vector(15 downto 0) := x"FFFF");
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -890,6 +947,7 @@ entity SwitchPortMaintenance is
     outputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
     inputPortEnable_o : out Array1(SWITCH_PORTS-1 downto 0);
     portDisable_o : out Array1(SWITCH_PORTS-1 downto 0);
+    linkUninitPacketDiscardActive_o : out Array1(SWITCH_PORTS-1 downto 0);
     localAckIdWrite_o : out Array1(SWITCH_PORTS-1 downto 0);
     clrOutstandingAckId_o : out Array1(SWITCH_PORTS-1 downto 0);
     inboundAckId_o : out Array5(SWITCH_PORTS-1 downto 0);
@@ -916,6 +974,7 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
 
   component SwitchPort is
     generic(
+      ENABLE_DISCARD_UNINITIALIZED_ROUTES : boolean;
       MAINTENANCE_LOOKUP : boolean;
       PORT_INDEX : natural);
     port(
@@ -958,117 +1017,108 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
 
   component RioHotSwapPortStatus is 
     generic(LinkUninitTimerWidth : integer := 24); --RapidIO standard: 24 (can be changed for more convenient TB testing)
-       port(  clk : in  std_logic;
+    port(clk : in  std_logic;
          reset_ni : in  std_logic;
-      LinkUninitTimerTick_i : in  std_logic;
-      --
-      linkInitialized_i                     : in  std_logic;
-      LinkOKtoUninitTransitionEnable_i      : in  std_logic;
-      LinkUninitToOkTransitionEnable_i      : in  std_logic;
-      LinkUninitPacketDiscardActiveEnable_i : in  std_logic;   
-      LinkUninitTimeout_i                   : in  std_logic_vector(LinkUninitTimerWidth-1 downto 0);
-      linkOKtoUninitTransition_o            : out std_logic;
-      linkUninitToOkTransition_o            : out std_logic;
-      linkUninitPacketDiscardActive_o       : out std_logic;
-      sendHotSwapEventNow_o                 : out std_logic);
+         LinkUninitTimerTick_i : in  std_logic;
+         linkInitialized_i                     : in  std_logic;
+         LinkOKtoUninitTransitionEnable_i      : in  std_logic;
+         LinkUninitToOkTransitionEnable_i      : in  std_logic;
+         LinkUninitPacketDiscardActiveEnable_i : in  std_logic;   
+         LinkUninitTimeout_i                   : in  std_logic_vector(LinkUninitTimerWidth-1 downto 0);
+         linkOKtoUninitTransition_o            : out std_logic;
+         linkUninitToOkTransition_o            : out std_logic;
+         linkUninitPacketDiscardActive_o       : out std_logic;
+         sendHotSwapEventNow_o                 : out std_logic);
   end component;
 
   component MaintenancePortManager is
      generic(SWITCH_PORTS : natural := 4;
-             portWriteTimeoutResetValue : std_logic_vector(15 downto 0):= x"FFFF"); -- x"FFFF" = 100 ms
-        port( clk   : in  std_logic;
-           areset_n : in  std_logic;
-           ------------------------------------------------------------------------------------------
-           -- Signal interconnect for MaintenanceInbound
-             readRequestReadyInbound_i : in  std_logic;
-            writeRequestReadyInbound_i : in  std_logic;
-            readResponseReadyInbound_i : in  std_logic;
-           writeResponseReadyInbound_i : in  std_logic;
-               portWriteReadyInbound_i : in  std_logic;
-                           vcInbound_i : in  std_logic;
-                          crfInbound_i : in  std_logic;
-                         prioInbound_i : in  std_logic_vector( 1 downto 0);
-                           ttInbound_i : in  std_logic_vector( 1 downto 0);
-                        dstidInbound_i : in  std_logic_vector(31 downto 0);
-                        srcidInbound_i : in  std_logic_vector(31 downto 0);                  
-                         sizeInbound_i : in  std_logic_vector( 3 downto 0);                  
-                       statusInbound_i : in  std_logic_vector( 3 downto 0);
-                          tidInbound_i : in  std_logic_vector( 7 downto 0);
-                          hopInbound_i : in  std_logic_vector( 7 downto 0);
-                       offsetInbound_i : in  std_logic_vector(20 downto 0);
-                        wdptrInbound_i : in  std_logic;
-                payloadLengthInbound_i : in  std_logic_vector( 2 downto 0);
-                 payloadIndexInbound_o : out std_logic_vector( 2 downto 0);                  
-                      payloadInbound_i : in  std_logic_vector(63 downto 0);
-                         doneInbound_o : out std_logic;
-           ------------------------------------------------------------------------------------------
-           -- Signal interconnect for MaintenanceOutbound   
-             readRequestReadyOutbound_o : out std_logic;
-            writeRequestReadyOutbound_o : out std_logic;
-            readResponseReadyOutbound_o : out std_logic;
-           writeResponseReadyOutbound_o : out std_logic;
-               portWriteReadyOutbound_o : out std_logic;
-                           vcOutbound_o : out std_logic;
-                          crfOutbound_o : out std_logic;
-                         prioOutbound_o : out std_logic_vector( 1 downto 0);
-                           ttOutbound_o : out std_logic_vector( 1 downto 0);
-                        dstidOutbound_o : out std_logic_vector(31 downto 0);
-                        srcidOutbound_o : out std_logic_vector(31 downto 0);
-                         sizeOutbound_o : out std_logic_vector( 3 downto 0);
-                       statusOutbound_o : out std_logic_vector( 3 downto 0);
-                          tidOutbound_o : out std_logic_vector( 7 downto 0);
-                          hopOutbound_o : out std_logic_vector( 7 downto 0);
-                       offsetOutbound_o : out std_logic_vector(20 downto 0);
-                        wdptrOutbound_o : out std_logic;
-                payloadLengthOutbound_o : out std_logic_vector( 2 downto 0);
-                 payloadIndexOutbound_i : in  std_logic_vector( 2 downto 0);
-                      payloadOutbound_o : out std_logic_vector(63 downto 0);
-                         doneOutbound_i : in  std_logic;
-           ------------------------------------------------------------------------------------------
-           -- Signal interconnect for RioLogicalMaintenance 
-                  readRequestReadyMnt_o : out std_logic;
-                 writeRequestReadyMnt_o : out std_logic;
-                              sizeMnt_o : out std_logic_vector( 3 downto 0);
-                            offsetMnt_o : out std_logic_vector(20 downto 0);
-                             wdptrMnt_o : out std_logic;
-                     payloadLengthMnt_o : out std_logic_vector( 2 downto 0);
-                      payloadIndexMnt_i : in  std_logic_vector( 2 downto 0);
-                           payloadMnt_o : out std_logic_vector(63 downto 0);
-                              doneMnt_i : in  std_logic;
-                 readResponseReadyMnt_i : in  std_logic;
-                writeResponseReadyMnt_i : in  std_logic;
-                            statusMnt_i : in  std_logic_vector( 3 downto 0);
-                     payloadLengthMnt_i : in  std_logic_vector( 2 downto 0);
-                      payloadIndexMnt_o : out std_logic_vector( 2 downto 0);
-                           payloadMnt_i : in  std_logic_vector(63 downto 0);
-                              doneMnt_o : out std_logic;
-           ------------------------------------------------------------------------------------------
-           --
-                     inboundFramePort_i : in  std_logic_vector( 7 downto 0);
-                    outboundFramePort_o : out std_logic_vector( 7 downto 0);
-                           lookupData_i : in  std_logic_vector( 7 downto 0);
-                           lookupAddr_o : out std_logic_vector(15 downto 0);
-                            lookupStb_o : out std_logic;
-                            lookupAck_i : in  std_logic;
-           ------------------------------------------------------------------------------------------
-           -- Various signals for the Error Reporting Port-Write Packet Data Payload/HotSwap event --
-                         hotSwapEvent_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0);
-                  --           Dev32_PW : in  std_logic;
-                  --         Dev8_or_16 : in  std_logic;
-                     Dev16_deviceID_msb : in  std_logic_vector(7 downto 0); 
-                          Dev8_deviceID : in  std_logic_vector(7 downto 0); 
-                  --     Dev32_deviceID : in  std_logic_vector(31 downto 0) := (others=>'0');
-         PortWriteTransmissionDisable_i : in  std_logic;
-                           Tick_1_5us_i : in  std_logic;
-                     ComponentTag_CSR_i : in  std_logic_vector(31 downto 0);                  
-                   portNwriteDisabled_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0');
-                    PortNwritePending_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0);
-                 setPortNwritePending_o : out std_logic_vector(SWITCH_PORTS-1 downto 0);
-                           PortNindex_o : out integer range 0 to SWITCH_PORTS;
-                 PortNerrorDetect_CSR_i : in  std_logic_vector(31 downto 0);
-  LogicalTransportLayerErrorDetectCSR_i : in  std_logic_vector(31 downto 0) := (others=>'0') );
+             PORT_WRITE_TIMEOUT_RESET_VALUE : std_logic_vector(15 downto 0):= x"FFFF"); -- x"FFFF" = 100 ms
+     port(clk   : in  std_logic;
+          areset_n : in  std_logic;
+
+          readRequestReadyInbound_i : in  std_logic;
+          writeRequestReadyInbound_i : in  std_logic;
+          readResponseReadyInbound_i : in  std_logic;
+          writeResponseReadyInbound_i : in  std_logic;
+          portWriteReadyInbound_i : in  std_logic;
+          vcInbound_i : in  std_logic;
+          crfInbound_i : in  std_logic;
+          prioInbound_i : in  std_logic_vector( 1 downto 0);
+          ttInbound_i : in  std_logic_vector( 1 downto 0);
+          dstidInbound_i : in  std_logic_vector(31 downto 0);
+          srcidInbound_i : in  std_logic_vector(31 downto 0);                  
+          sizeInbound_i : in  std_logic_vector( 3 downto 0);                  
+          statusInbound_i : in  std_logic_vector( 3 downto 0);
+          tidInbound_i : in  std_logic_vector( 7 downto 0);
+          hopInbound_i : in  std_logic_vector( 7 downto 0);
+          offsetInbound_i : in  std_logic_vector(20 downto 0);
+          wdptrInbound_i : in  std_logic;
+          payloadLengthInbound_i : in  std_logic_vector( 2 downto 0);
+          payloadIndexInbound_o : out std_logic_vector( 2 downto 0);                  
+          payloadInbound_i : in  std_logic_vector(63 downto 0);
+          doneInbound_o : out std_logic;
+
+          readRequestReadyOutbound_o : out std_logic;
+          writeRequestReadyOutbound_o : out std_logic;
+          readResponseReadyOutbound_o : out std_logic;
+          writeResponseReadyOutbound_o : out std_logic;
+          portWriteReadyOutbound_o : out std_logic;
+          vcOutbound_o : out std_logic;
+          crfOutbound_o : out std_logic;
+          prioOutbound_o : out std_logic_vector( 1 downto 0);
+          ttOutbound_o : out std_logic_vector( 1 downto 0);
+          dstidOutbound_o : out std_logic_vector(31 downto 0);
+          srcidOutbound_o : out std_logic_vector(31 downto 0);
+          sizeOutbound_o : out std_logic_vector( 3 downto 0);
+          statusOutbound_o : out std_logic_vector( 3 downto 0);
+          tidOutbound_o : out std_logic_vector( 7 downto 0);
+          hopOutbound_o : out std_logic_vector( 7 downto 0);
+          offsetOutbound_o : out std_logic_vector(20 downto 0);
+          wdptrOutbound_o : out std_logic;
+          payloadLengthOutbound_o : out std_logic_vector( 2 downto 0);
+          payloadIndexOutbound_i : in  std_logic_vector( 2 downto 0);
+          payloadOutbound_o : out std_logic_vector(63 downto 0);
+          doneOutbound_i : in  std_logic;
+
+          readRequestReadyMnt_o : out std_logic;
+          writeRequestReadyMnt_o : out std_logic;
+          sizeMnt_o : out std_logic_vector( 3 downto 0);
+          offsetMnt_o : out std_logic_vector(20 downto 0);
+          wdptrMnt_o : out std_logic;
+          payloadLengthMnt_o : out std_logic_vector( 2 downto 0);
+          payloadIndexMnt_i : in  std_logic_vector( 2 downto 0);
+          payloadMnt_o : out std_logic_vector(63 downto 0);
+          doneMnt_i : in  std_logic;
+          readResponseReadyMnt_i : in  std_logic;
+          writeResponseReadyMnt_i : in  std_logic;
+          statusMnt_i : in  std_logic_vector( 3 downto 0);
+          payloadLengthMnt_i : in  std_logic_vector( 2 downto 0);
+          payloadIndexMnt_o : out std_logic_vector( 2 downto 0);
+          payloadMnt_i : in  std_logic_vector(63 downto 0);
+          doneMnt_o : out std_logic;
+
+          inboundFramePort_i : in  std_logic_vector( 7 downto 0);
+          outboundFramePort_o : out std_logic_vector( 7 downto 0);
+          lookupData_i : in  std_logic_vector( 7 downto 0);
+          lookupAddr_o : out std_logic_vector(15 downto 0);
+          lookupStb_o : out std_logic;
+          lookupAck_i : in  std_logic;
+
+          hotSwapEvent_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0);
+          Dev16_deviceID_msb : in  std_logic_vector(7 downto 0); 
+          Dev8_deviceID : in  std_logic_vector(7 downto 0); 
+          PortWriteTransmissionDisable_i : in  std_logic;
+          Tick_1_5us_i : in  std_logic;
+          ComponentTag_CSR_i : in  std_logic_vector(31 downto 0);                  
+          portNwriteDisabled_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0');
+          PortNwritePending_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0);
+          setPortNwritePending_o : out std_logic_vector(SWITCH_PORTS-1 downto 0);
+          PortNindex_o : out integer range 0 to SWITCH_PORTS;
+          PortNerrorDetect_CSR_i : in  std_logic_vector(31 downto 0);
+          LogicalTransportLayerErrorDetectCSR_i : in  std_logic_vector(31 downto 0) := (others=>'0') );
   end component;
-      
+  
   -----------------------------------------------------------------------------
   -- Signals between the port and the packet-queue.
   -----------------------------------------------------------------------------
@@ -1170,10 +1220,11 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
 
   signal routeTableEnable : std_logic;
   signal routeTableWrite : std_logic;
-  signal routeTableAddress : std_logic_vector(10 downto 0);
+  signal routeTableAddress : std_logic_vector(15 downto 0);
   signal routeTablePortWrite : std_logic_vector(7 downto 0);
   signal routeTablePortRead : std_logic_vector(7 downto 0);
-  
+  signal routeTablePortFFFE : std_logic_vector(7 downto 0) := DEFAULT_ROUTE_TABLE_ENTRY_FFFE;
+  signal routeTablePortFFFF : std_logic_vector(7 downto 0) := DEFAULT_ROUTE_TABLE_ENTRY_FFFF;
   signal routeTablePortDefault : std_logic_vector(7 downto 0);
 
   -----------------------------------------------------------------------------
@@ -1196,79 +1247,73 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
   signal inputPortEnable : Array1(SWITCH_PORTS-1 downto 0);
   signal portDisable : Array1(SWITCH_PORTS-1 downto 0);
   
-  constant LogicalTransportLayerErrorDetectCSR : std_logic_vector(31 downto 0) := (others=>'0');
+  constant logicalTransportLayerErrorDetectCSR : std_logic_vector(31 downto 0) := (others=>'0');
   
   -----------------------------------------------------------------------------
   -- HotSwap related signals.
   -----------------------------------------------------------------------------
 
-  constant ErrorManagementNotFullySupported    : std_logic := '1';  -- '1'=all registers/bit fields of Error management extensions may not be supported. 0=all supported.
-  constant HotSwapFullySupported               : std_logic := '1';  -- '1'=all registers/bit fields specific to HotSwap support shall be supported. 0=not all fields are supported.
-  constant PHlayerErrorCaptureFifoSupport      : std_logic := '0';  -- Physical Layer Error Capture FIFO: 0=may not be supported, 1=full support            ****check this bit!!****
-  constant LTlayerErrorCaptureFifoSupport      : std_logic := '0';  -- Logical/Transport Layer Error Capture FIFO: 0=may not be supported, 1=full support   ****check this bit!!****
+  constant ErrorManagementNotFullySupported : std_logic := '1';  -- '1'=all registers/bit fields of Error management extensions may not be supported. 0=all supported.
+  constant HotSwapFullySupported : std_logic := '1';  -- '1'=all registers/bit fields specific to HotSwap support shall be supported. 0=not all fields are supported.
+  constant PHlayerErrorCaptureFifoSupport : std_logic := '0';  -- Physical Layer Error Capture FIFO: 0=may not be supported, 1=full support            ****check this bit!!****
+  constant LTlayerErrorCaptureFifoSupport : std_logic := '0';  -- Logical/Transport Layer Error Capture FIFO: 0=may not be supported, 1=full support   ****check this bit!!****
   
---signal   Dev8_or_16                          : std_logic := '0';                               -- When dev32_PW=0:  '0'=dev8, '1'=dev16 id-size
---signal   Dev32_PW                            : std_logic := '0';                               -- '0'=devID is controlled by Dev8_or_16 field, '1'=dev32 deviceID
---signal   Dev32_deviceID                      : std_logic_vector(31 downto 0) := (others=>'0'); --ID to use when Dev32_PW bit is set.
-  signal   Dev16_deviceID_msb                  : std_logic_vector(7 downto 0) := (others=>'0');  -- Address to use when a device generates a Maintenance Port Write to rweport errors to system host.
-  signal   Dev8_deviceID                       : std_logic_vector(7 downto 0) := (others=>'0');
+  signal dev16_deviceID_msb : std_logic_vector(7 downto 0) := (others=>'0');  -- Address to use when a device generates a Maintenance Port Write to rweport errors to system host.
+  signal dev8_deviceID : std_logic_vector(7 downto 0) := (others=>'0');
   
-  signal   PacketTimeToLiveValue               : std_logic_vector(15 downto 0) := (others=>'0'); --Maximum time a packet is allowed to exist within a switch device. 0xFFFF=100ms+-34%, 0=timeout is disabled.
-  signal   PortWriteTransmissionDisable        : std_logic := '0';                               --'1' enabled events shall not cause new port writes to be generated. '0'=port writes shall be generated.
+  signal packetTimeToLiveValue : std_logic_vector(15 downto 0) := (others=>'0'); --Maximum time a packet is allowed to exist within a switch device. 0xFFFF=100ms+-34%, 0=timeout is disabled.
+  signal portWriteTransmissionDisable : std_logic := '0';                               --'1' enabled events shall not cause new port writes to be generated. '0'=port writes shall be generated.
   
-  signal   linkOKtoUninitTransition            : std_logic_vector(SWITCH_PORTS-1 downto 0);      -- '1'=link has transitioned from linkInit to linkUninit state    
-  signal   linkUninitPacketDiscardActive       : std_logic_vector(SWITCH_PORTS-1 downto 0);      -- '1'=The link uninit discard timer CSR period has expired.      
-  signal   linkUninitToOkTransition            : std_logic_vector(SWITCH_PORTS-1 downto 0);      -- '1'=The link has transitioned from uninit to initialized state.
-  signal   LinkOKtoUninitTransitionEnable      : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); -- Enable event notification for when the link has transitioned from a link initialized to link uninitialized state.
-  signal   LinkUninitPacketDiscardActiveEnable : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); -- Enable event notification for Link Uninit Packet Discard Timer events.                                           
-  signal   LinkUninitToOkTransitionEnable      : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); -- Enable event notification for when the link has transitioned from a link uninitialized to link initialized state.
-  signal   hotSwapEvent                        : std_logic_vector(SWITCH_PORTS-1 downto 0);
+  signal linkOKtoUninitTransition : std_logic_vector(SWITCH_PORTS-1 downto 0);      -- '1'=link has transitioned from linkInit to linkUninit state    
+  signal linkUninitPacketDiscardActive : std_logic_vector(SWITCH_PORTS-1 downto 0);      -- '1'=The link uninit discard timer CSR period has expired.      
+  signal linkUninitToOkTransition : std_logic_vector(SWITCH_PORTS-1 downto 0);      -- '1'=The link has transitioned from uninit to initialized state.
+  signal linkOKtoUninitTransitionEnable : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); -- Enable event notification for when the link has transitioned from a link initialized to link uninitialized state.
+  signal linkUninitPacketDiscardActiveEnable : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); -- Enable event notification for Link Uninit Packet Discard Timer events.                                           
+  signal linkUninitToOkTransitionEnable : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); -- Enable event notification for when the link has transitioned from a link uninitialized to link initialized state.
+  signal hotSwapEvent : std_logic_vector(SWITCH_PORTS-1 downto 0);
   
---signal   packetReadyForTransmission          : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0');
---signal   discardPacket                       : std_logic_vector(SWITCH_PORTS-1 downto 0);
-  
-  signal   PacketTimeToLiveTick : std_logic;
-  signal   LinkUninitTimerTick  : std_logic;
+  signal packetTimeToLiveTick : std_logic;
+  signal linkUninitTimerTick : std_logic;
 
-  type     LinkUninitTimeout_Type        is array (0 to SWITCH_PORTS-1) of std_logic_vector(23 downto 0);
-  signal   LinkUninitTimeout         : LinkUninitTimeout_Type := (others=>(others=>'0')); -- 0xFFFFFF shall correspond to 6-12 s, if 0 the discard timer shall be disabled.
+  type linkUninitTimeout_Type is array (0 to SWITCH_PORTS-1) of std_logic_vector(23 downto 0);
+  signal linkUninitTimeout : LinkUninitTimeout_Type := (others=>(others=>'0')); -- 0xFFFFFF shall correspond to 6-12 s, if 0 the discard timer shall be disabled.
 
-  type        PortNerrorDetect_CSR_Type  is array (0 to SWITCH_PORTS-1) of std_logic_vector(31 downto 0);
-  signal      PortNerrorDetect_CSR   : PortNerrorDetect_CSR_Type := (others=>(others=>'0'));       -- Error/hotswap:  Port N Error Detect CSR
-  signal   stbPortNerrorDetect_CSR   : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0');
-  signal   wrtPortNerrorDetect_CSR   : PortNerrorDetect_CSR_Type := (others=>(others=>'0'));
+  type PortNerrorDetect_CSR_Type is array (0 to SWITCH_PORTS-1) of std_logic_vector(31 downto 0);
+  signal portNerrorDetect_CSR : PortNerrorDetect_CSR_Type := (others=>(others=>'0'));       -- Error/hotswap:  Port N Error Detect CSR
+  signal stbPortNerrorDetect_CSR : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0');
+  signal wrtPortNerrorDetect_CSR : PortNerrorDetect_CSR_Type := (others=>(others=>'0'));
   
-  signal   setPortNwritePending      : std_logic_vector(SWITCH_PORTS-1 downto 0);                  --when '1', set the bit in PortNwritePending "sticky", from RioMaintenancePortManager
-  signal   stbPortNwritePending      : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); --write strobe for access from config access.
-  signal      PortNwritePending      : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); --LP-serial: Port N Error and Status CSR: port-write Pending  (std:bit 27)
-  signal      portNwriteDisabled     : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); --LP-serial: Port N Error and Status CSR: Port-write Disabled (std:bit 26)
+  signal setPortNwritePending : std_logic_vector(SWITCH_PORTS-1 downto 0);                  --when '1', set the bit in PortNwritePending "sticky", from RioMaintenancePortManager
+  signal stbPortNwritePending : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); --write strobe for access from config access.
+  signal portNwritePending : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); --LP-serial: Port N Error and Status CSR: port-write Pending  (std:bit 27)
+  signal portNwriteDisabled : std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); --LP-serial: Port N Error and Status CSR: Port-write Disabled (std:bit 26)
   
-  signal   vcOutbound     : std_logic;
-  signal   crfOutbound    : std_logic;
-  signal   prioOutbound   : std_logic_vector( 1 downto 0);
-  signal   ttOutbound     : std_logic_vector( 1 downto 0);
-  signal   tidOutbound    : std_logic_vector( 7 downto 0);
-  signal   sizeOutbound   : std_logic_vector( 3 downto 0);
-  signal   offsetOutbound : std_logic_vector(20 downto 0);
-  signal   wdptrOutbound  : std_logic;
+  signal vcOutbound : std_logic;
+  signal crfOutbound : std_logic;
+  signal prioOutbound : std_logic_vector( 1 downto 0);
+  signal ttOutbound : std_logic_vector( 1 downto 0);
+  signal tidOutbound : std_logic_vector( 7 downto 0);
+  signal sizeOutbound : std_logic_vector( 3 downto 0);
+  signal offsetOutbound : std_logic_vector(20 downto 0);
+  signal wdptrOutbound : std_logic;
   
-  signal   vcInbound      : std_logic;
-  signal   crfInbound     : std_logic;
-  signal   prioInbound    : std_logic_vector( 1 downto 0);
-  signal   ttInbound      : std_logic_vector( 1 downto 0);
-  signal   tidInbound     : std_logic_vector( 7 downto 0);
+  signal vcInbound : std_logic;
+  signal crfInbound : std_logic;
+  signal prioInbound : std_logic_vector( 1 downto 0);
+  signal ttInbound : std_logic_vector( 1 downto 0);
+  signal tidInbound : std_logic_vector( 7 downto 0);
 
-  signal   sizeMaint      : std_logic_vector( 3 downto 0);
-  signal   offsetMaint    : std_logic_vector(20 downto 0);
-  signal   wdptrMaint     : std_logic;
-  signal   payloadLengthOutboundMaint : std_logic_vector( 2 downto 0);
-  signal   payloadIndexOutboundMaint  : std_logic_vector( 2 downto 0);
-  signal   payloadOutboundMaint       : std_logic_vector(63 downto 0);
-  signal   doneOutboundMaint          : std_logic;
+  signal sizeMaint : std_logic_vector( 3 downto 0);
+  signal offsetMaint : std_logic_vector(20 downto 0);
+  signal wdptrMaint : std_logic;
+  signal payloadLengthOutboundMaint : std_logic_vector( 2 downto 0);
+  signal payloadIndexOutboundMaint : std_logic_vector( 2 downto 0);
+  signal payloadOutboundMaint : std_logic_vector(63 downto 0);
+  signal doneOutboundMaint : std_logic;
 
-  --used for Port-write datapacket payload generation  
-  signal   PortNerrorDetect : std_logic_vector(31 downto 0) := (others=>'0');
-  signal   PortNindex       : integer range 0 to SWITCH_PORTS;
+  -- Used for Port-write datapacket payload generation.
+  signal portNerrorDetect : std_logic_vector(31 downto 0) := (others=>'0');
+  signal portNindex : integer range 0 to SWITCH_PORTS;
   
   -----------------------------------------------------------------------------
   
@@ -1280,6 +1325,7 @@ begin
   -- Note that PORT_INDEX is not used in this instantiation and set to zero.
   PortInst: SwitchPort
     generic map(
+      ENABLE_DISCARD_UNINITIALIZED_ROUTES=>ENABLE_DISCARD_UNINITIALIZED_ROUTES,
       MAINTENANCE_LOOKUP=>true,
       PORT_INDEX=>0)
     port map(
@@ -1433,23 +1479,23 @@ begin
   OutboundPacket: MaintenanceOutbound
     port map(
       clk=>clk, areset_n=>areset_n, enable=>'1', 
-      readRequestReady_i  =>readRequestOutbound,
-      writeRequestReady_i =>writeRequestOutbound,
-      readResponseReady_i =>readResponseOutbound, 
+      readRequestReady_i=>readRequestOutbound,
+      writeRequestReady_i=>writeRequestOutbound,
+      readResponseReady_i=>readResponseOutbound, 
       writeResponseReady_i=>writeResponseOutbound, 
-      portWriteReady_i    =>portWriteOutbound,
-      vc_i     => vcOutbound, 
-      crf_i    => crfOutbound, 
-      prio_i   => prioOutbound, 
-      tt_i     => ttOutbound, 
-      dstid_i  => dstIdOutbound, 
-      srcid_i  => srcIdOutbound,
-      size_i   => sizeOutbound,
-      status_i => statusOutbound,
-      tid_i    => tidOutbound,
-      hop_i    => hopOutbound,
-      offset_i => offsetOutbound,
-      wdptr_i  => wdptrOutbound,
+      portWriteReady_i=>portWriteOutbound,
+      vc_i=>vcOutbound, 
+      crf_i=>crfOutbound, 
+      prio_i=>prioOutbound, 
+      tt_i=>ttOutbound, 
+      dstid_i=>dstIdOutbound, 
+      srcid_i=>srcIdOutbound,
+      size_i=>sizeOutbound,
+      status_i=>statusOutbound,
+      tid_i=>tidOutbound,
+      hop_i=>hopOutbound,
+      offset_i=>offsetOutbound,
+      wdptr_i=>wdptrOutbound,
       payloadLength_i=>payloadLengthOutbound, 
       payloadIndex_o=>payloadIndexOutbound, 
       payload_i=>payloadOutbound, 
@@ -1464,100 +1510,94 @@ begin
   -----------------------------------------------------------------------------
   MntPortManager: MaintenancePortManager
     generic map(SWITCH_PORTS => SWITCH_PORTS,
-                portWriteTimeoutResetValue => portWriteTimeoutResetValue)
-      port map(      clk => clk, 
-                areset_n => areset_n, 
-     --
-     -- Signal interconnect for MaintenanceInbound    --
-       readRequestReadyInbound_i => readRequestInbound,  
-      writeRequestReadyInbound_i => writeRequestInbound, 
-      readResponseReadyInbound_i => readResponseInbound, 
-     writeResponseReadyInbound_i => writeResponseInbound,
-         portWriteReadyInbound_i => portWriteInbound,    
-                     vcInbound_i => vcInbound,
-                    crfInbound_i => crfInbound,
-                   prioInbound_i => prioInbound, 
-                     ttInbound_i => ttInbound,   
-                  dstidInbound_i => dstIdInbound, 
-                  srcidInbound_i => srcIdInbound,                  
-                   sizeInbound_i => sizeInbound,                   
-                 statusInbound_i => statusInbound,
-                    tidInbound_i => tidInbound,   
-                    hopInbound_i => hopInbound,   
-                 offsetInbound_i => offsetInbound,
-                  wdptrInbound_i => wdptrInbound,
-          payloadLengthInbound_i => payloadLengthInbound, 
-           payloadIndexInbound_o => payloadIndexInbound,                    
-                payloadInbound_i => payloadInbound,       
-                   doneInbound_o => doneInbound,
-    --
-    -- Signal interconnect for MaintenanceOutbound   --
-      readRequestReadyOutbound_o => readRequestOutbound,  
-     writeRequestReadyOutbound_o => writeRequestOutbound, 
-     readResponseReadyOutbound_o => readResponseOutbound, 
-    writeResponseReadyOutbound_o => writeResponseOutbound,
-        portWriteReadyOutbound_o => portWriteOutbound,    
-                    vcOutbound_o => vcOutbound, 
-                   crfOutbound_o => crfOutbound,
-                  prioOutbound_o => prioOutbound,    
-                    ttOutbound_o => ttOutbound,      
-                 dstidOutbound_o => dstIdOutbound,   
-                 srcidOutbound_o => srcIdOutbound,   
-                  sizeOutbound_o => sizeOutbound,    
-                statusOutbound_o => statusOutbound,  
-                   tidOutbound_o => tidOutbound,     
-                   hopOutbound_o => hopOutbound,     
-                offsetOutbound_o => offsetOutbound,  
-                 wdptrOutbound_o => wdptrOutbound,
-         payloadLengthOutbound_o => payloadLengthOutbound, 
-          payloadIndexOutbound_i => payloadIndexOutbound,  
-               payloadOutbound_o => payloadOutbound,       
-                  doneOutbound_i => doneOutbound,    
-            -- 
-            -- Signal interconnect for RioLogicalMaintenance --
-           readRequestReadyMnt_o => readRequestMaint,           
-          writeRequestReadyMnt_o => writeRequestMaint,          
-                       sizeMnt_o => sizeMaint,                  
-                     offsetMnt_o => offsetMaint,                
-                      wdptrMnt_o => wdptrMaint,                 
-              payloadLengthMnt_o => payloadLengthMaint,         
-               payloadIndexMnt_i => payloadIndexMaint,          
-                    payloadMnt_o => payloadMaint,               
-                       doneMnt_i => doneMaint,                  
-          readResponseReadyMnt_i => readResponseMaint,          
-         writeResponseReadyMnt_i => writeResponseMaint,         
-                     statusMnt_i => statusMaint,                
-              payloadLengthMnt_i => payloadLengthOutboundMaint, 
-               payloadIndexMnt_o => payloadIndexOutboundMaint,  
-                    payloadMnt_i => payloadOutboundMaint,       
-                       doneMnt_o => doneOutboundMaint,          
-            --
-            --
-              inboundFramePort_i => inboundFramePort,
-             outboundFramePort_o => outboundFramePort,
-                    lookupData_i => lookupData_i,
-                    lookupAddr_o => lookupAddr_o,
-                     lookupStb_o => lookupStb_o,
-                     lookupAck_i => lookupAck_i,
-            --
-            -- Various signals for the Error Reporting Port-Write Packet Data Payload/HotSwap event --
-                  hotSwapEvent_i => hotSwapEvent,        
-                --      Dev32_PW => Dev32_PW,            
-                --    Dev8_or_16 => Dev8_or_16,          
-              Dev16_deviceID_msb => Dev16_deviceID_msb,  
-                   Dev8_deviceID => Dev8_deviceID,       
-                --Dev32_deviceID => Dev32_deviceID,      
-  PortWriteTransmissionDisable_i => PortWriteTransmissionDisable,
-                    Tick_1_5us_i => PacketTimeToLiveTick,
-              ComponentTag_CSR_i => ComponentTag,
-            portNwriteDisabled_i => portNwriteDisabled,
-             PortNwritePending_i => PortNwritePending,
-          setPortNwritePending_o => setPortNwritePending, 
-                    PortNindex_o => PortNindex,          
-          PortNerrorDetect_CSR_i => PortNerrorDetect,
-  LogicalTransportLayerErrorDetectCSR_i => LogicalTransportLayerErrorDetectCSR
-        );   
-   
+                PORT_WRITE_TIMEOUT_RESET_VALUE=>PORT_WRITE_TIMEOUT_RESET_VALUE)
+    port map(clk=>clk, 
+             areset_n=>areset_n, 
+             -- Signal interconnect for MaintenanceInbound.
+             readRequestReadyInbound_i=>readRequestInbound,  
+             writeRequestReadyInbound_i=>writeRequestInbound, 
+             readResponseReadyInbound_i=>readResponseInbound, 
+             writeResponseReadyInbound_i=>writeResponseInbound,
+             portWriteReadyInbound_i=>portWriteInbound,    
+             vcInbound_i=>vcInbound,
+             crfInbound_i=>crfInbound,
+             prioInbound_i=>prioInbound, 
+             ttInbound_i=>ttInbound,   
+             dstidInbound_i=>dstIdInbound, 
+             srcidInbound_i=>srcIdInbound,                  
+             sizeInbound_i=>sizeInbound,                   
+             statusInbound_i=>statusInbound,
+             tidInbound_i=>tidInbound,   
+             hopInbound_i=>hopInbound,   
+             offsetInbound_i=>offsetInbound,
+             wdptrInbound_i=>wdptrInbound,
+             payloadLengthInbound_i=>payloadLengthInbound, 
+             payloadIndexInbound_o=>payloadIndexInbound,                    
+             payloadInbound_i=>payloadInbound,       
+             doneInbound_o=>doneInbound,
+
+             -- Signal interconnect for MaintenanceOutbound.
+             readRequestReadyOutbound_o=>readRequestOutbound,  
+             writeRequestReadyOutbound_o=>writeRequestOutbound, 
+             readResponseReadyOutbound_o=>readResponseOutbound, 
+             writeResponseReadyOutbound_o=>writeResponseOutbound,
+             portWriteReadyOutbound_o=>portWriteOutbound,    
+             vcOutbound_o=>vcOutbound, 
+             crfOutbound_o=>crfOutbound,
+             prioOutbound_o=>prioOutbound,    
+             ttOutbound_o=>ttOutbound,      
+             dstidOutbound_o=>dstIdOutbound,   
+             srcidOutbound_o=>srcIdOutbound,   
+             sizeOutbound_o=>sizeOutbound,    
+             statusOutbound_o=>statusOutbound,  
+             tidOutbound_o=>tidOutbound,     
+             hopOutbound_o=>hopOutbound,     
+             offsetOutbound_o=>offsetOutbound,  
+             wdptrOutbound_o=>wdptrOutbound,
+             payloadLengthOutbound_o=>payloadLengthOutbound, 
+             payloadIndexOutbound_i=>payloadIndexOutbound,  
+             payloadOutbound_o=>payloadOutbound,       
+             doneOutbound_i=>doneOutbound,    
+
+             -- Signal interconnect for RioLogicalMaintenance.
+             readRequestReadyMnt_o=>readRequestMaint,           
+             writeRequestReadyMnt_o=>writeRequestMaint,          
+             sizeMnt_o=>sizeMaint,                  
+             offsetMnt_o=>offsetMaint,                
+             wdptrMnt_o=>wdptrMaint,                 
+             payloadLengthMnt_o=>payloadLengthMaint,         
+             payloadIndexMnt_i=>payloadIndexMaint,          
+             payloadMnt_o=>payloadMaint,               
+             doneMnt_i=>doneMaint,                  
+             readResponseReadyMnt_i=>readResponseMaint,          
+             writeResponseReadyMnt_i=>writeResponseMaint,         
+             statusMnt_i=>statusMaint,                
+             payloadLengthMnt_i=>payloadLengthOutboundMaint, 
+             payloadIndexMnt_o=>payloadIndexOutboundMaint,  
+             payloadMnt_i=>payloadOutboundMaint,       
+             doneMnt_o=>doneOutboundMaint,          
+
+             inboundFramePort_i=>inboundFramePort,
+             outboundFramePort_o=>outboundFramePort,
+             lookupData_i=>lookupData_i,
+             lookupAddr_o=>lookupAddr_o,
+             lookupStb_o=>lookupStb_o,
+             lookupAck_i=>lookupAck_i,
+
+             -- Various signals for the Error Reporting Port-Write Packet Data Payload/HotSwap event.
+             hotSwapEvent_i=>hotSwapEvent,        
+             dev16_deviceID_msb=>Dev16_deviceID_msb,  
+             dev8_deviceID=>Dev8_deviceID,       
+             portWriteTransmissionDisable_i=>PortWriteTransmissionDisable,
+             tick_1_5us_i=>PacketTimeToLiveTick,
+             componentTag_CSR_i=>ComponentTag,
+             portNwriteDisabled_i=>portNwriteDisabled,
+             PortNwritePending_i=>PortNwritePending,
+             setPortNwritePending_o=>setPortNwritePending, 
+             portNindex_o=>PortNindex,          
+             portNerrorDetect_CSR_i=>PortNerrorDetect,
+             logicalTransportLayerErrorDetectCSR_i=>LogicalTransportLayerErrorDetectCSR);   
+  
   -----------------------------------------------------------------------------
   -- Bridge between the inbound RapidIO maintenance packets to the internal
   -- config-space bus.
@@ -1587,6 +1627,7 @@ begin
       configDat_o=>configDataWrite, 
       configDat_i=>configDataRead, 
       configAck_i=>configAck);
+  
   configAdr(1 downto 0) <= "00";
   
   -----------------------------------------------------------------------------
@@ -1608,39 +1649,37 @@ begin
   ConfigMemory: process(areset_n, clk)
   begin
     if (areset_n = '0') then
-      configDataReadInternal <= (others => '0');
+      configDataReadInternal <= (others=>'0');
       configAckInternal <= '0';
 
       routeTableEnable <= '1';
       routeTableWrite <= '0';
-      routeTableAddress <= (others => '0');
-      routeTablePortWrite <= (others => '0');
-      routeTablePortDefault <= (others => '0');
+      routeTableAddress <= (others=>'0');
+      routeTablePortWrite <= (others=>'0');
+      routeTablePortFFFE <= DEFAULT_ROUTE_TABLE_ENTRY_FFFE;
+      routeTablePortFFFF <= DEFAULT_ROUTE_TABLE_ENTRY_FFFF;
+      routeTablePortDefault <= (others=>'0');
 
       discovered <= '0';
       
       hostBaseDeviceIdLocked <= '0';
-      hostBaseDeviceId <= (others => '1');
-      componentTag <= (others => '0');
+      hostBaseDeviceId <= (others=>'1');
+      componentTag <= (others=>'0');
 
-      portLinkTimeout   <= (others => '1');
-      portNwriteDisabled <= (others => '0');
+      portLinkTimeout   <= (others=>'1');
+      portNwriteDisabled <= (others=>'0');
 
       -- REMARK: These should be set to zero when a port gets initialized...
-      outputPortEnable <= (others => '0');
-      inputPortEnable <= (others => '0');
-      portDisable <= (others => '0');
+      outputPortEnable <= (others=>'0');
+      inputPortEnable <= (others=>'0');
+      portDisable <= (others=>'0');
 
-      localAckIdWrite_o <= (others => '0');
+      localAckIdWrite_o <= (others=>'0');
       
       --Error management/HotSwap register fields
       PortWriteTransmissionDisable<='0';
-    --Dev8_or_16 <= '0';    
-    --Dev32_PW   <= '0';    
-    --Dev32_deviceID    <= (others=>'0');
       Dev16_deviceID_msb<= (others=>'0');
       Dev8_deviceID     <= (others=>'0');    
-      PacketTimeToLiveValue <= (others=>'0');
       LinkOKtoUninitTransitionEnable <= (others=>'0');
       LinkUninitToOkTransitionEnable <= (others=>'0');
       LinkUninitPacketDiscardActiveEnable <= (others=>'0');
@@ -1650,7 +1689,7 @@ begin
       stbPortNerrorDetect_CSR <= (others=>'0'); --Notice that value may change further down in this process!
       stbPortNwritePending <= (others=>'0');
       routeTableWrite     <= '0';
-      localAckIdWrite_o   <= (others => '0');
+      localAckIdWrite_o   <= (others=>'0');
       
       if (configAckInternal = '0') then
         if (configStbInternal = '1') then
@@ -1664,7 +1703,6 @@ begin
             configDataReadInternal <= (others=>'0');
           else
             -- Access should be handled here.
-            
             case (configAdr) is
               when x"000000" =>
                 -----------------------------------------------------------------
@@ -1715,7 +1753,7 @@ begin
                 configDataReadInternal(28) <= '1';
                 
                 -- Reserved.
-                configDataReadInternal(27 downto 10) <= (others => '0');
+                configDataReadInternal(27 downto 10) <= (others=>'0');
                 
                 -- Extended route table configuration support.
                 configDataReadInternal(9) <= '0';
@@ -1724,7 +1762,7 @@ begin
                 configDataReadInternal(8) <= '1';
                 
                 -- Reserved.
-                configDataReadInternal(7 downto 5) <= (others => '0');
+                configDataReadInternal(7 downto 5) <= (others=>'0');
                 
                 -- Common transport large system support.
                 configDataReadInternal(4) <= '1';
@@ -1742,14 +1780,14 @@ begin
                 -----------------------------------------------------------------
 
                 -- Reserved.
-                configDataReadInternal(31 downto 16) <= (others => '0');
+                configDataReadInternal(31 downto 16) <= (others=>'0');
 
                 -- PortTotal.
                 configDataReadInternal(15 downto 8) <=
                   std_logic_vector(to_unsigned(SWITCH_PORTS, 8));
 
                 -- PortNumber.
-                configDataReadInternal(7 downto 0) <= inboundFramePort;
+                configDataReadInternal(7 downto 0) <= '0' & inboundFramePort(6 downto 0);
                 
               when x"000034" =>
                 -----------------------------------------------------------------
@@ -1778,7 +1816,7 @@ begin
                     if (hostBaseDeviceId = configDataWrite(15 downto 0)) then
                       -- Same as stored, reset the value to its initial value.
                       hostBaseDeviceIdLocked <= '0';
-                      hostBaseDeviceId <= (others => '1');
+                      hostBaseDeviceId <= (others=>'1');
                     else
                       -- Not writing the same as the stored value.
                       -- Ignore the write.
@@ -1786,7 +1824,7 @@ begin
                   end if;
                 end if;
                 
-                configDataReadInternal(31 downto 16) <= (others => '0');
+                configDataReadInternal(31 downto 16) <= (others=>'0');
                 configDataReadInternal(15 downto 0) <= hostBaseDeviceId;
                 
               when x"00006c" =>
@@ -1807,26 +1845,42 @@ begin
 
                 if (configWe = '1') then
                   -- Write the address to access the routing table.
-                  routeTableAddress <= configDataWrite(10 downto 0);
+                  routeTableAddress <= configDataWrite(15 downto 0);
                 end if;
                 
-                configDataReadInternal(31 downto 11) <= (others => '0');
-                configDataReadInternal(10 downto 0) <= routeTableAddress;
+                configDataReadInternal(31 downto 16) <= (others=>'0');
+                configDataReadInternal(15 downto 0) <= routeTableAddress;
                 
               when x"000074" =>
                 -----------------------------------------------------------------
                 -- Standard Route Configuration Port Select CSR.
                 -----------------------------------------------------------------
 
-                if (configWe = '1') then
-                  -- Write the port information for the address selected by the
-                  -- above register.
-                  routeTableWrite <= '1';
-                  routeTablePortWrite <= configDataWrite(7 downto 0);
+                -- Write the port information for the address selected by the
+                -- above register.
+                if (routeTableAddress = x"ffff") then
+                  if (configWe = '1') then
+                    routeTablePortFFFF <= configDataWrite(7 downto 0);
+                  end if;
+                  
+                  configDataReadInternal(31 downto 8) <= (others=>'0');
+                  configDataReadInternal(7 downto 0) <= routeTablePortFFFF;
+                elsif (routeTableAddress = x"fffe") then
+                  if (configWe = '1') then
+                    routeTablePortFFFE <= configDataWrite(7 downto 0);
+                  end if;
+                  
+                  configDataReadInternal(31 downto 8) <= (others=>'0');
+                  configDataReadInternal(7 downto 0) <= routeTablePortFFFE;
+                else
+                  if (configWe = '1') then
+                    routeTableWrite <= '1';
+                    routeTablePortWrite <= configDataWrite(7 downto 0);
+                  end if;
+                  
+                  configDataReadInternal(31 downto 8) <= (others=>'0');
+                  configDataReadInternal(7 downto 0) <= routeTablePortRead;
                 end if;
-
-                configDataReadInternal(31 downto 8) <= (others => '0');
-                configDataReadInternal(7 downto 0) <= routeTablePortRead;
                 
               when x"000078" =>
                 -----------------------------------------------------------------
@@ -1838,7 +1892,7 @@ begin
                   routeTablePortDefault <= configDataWrite(7 downto 0);
                 end if;
                 
-                configDataReadInternal(31 downto 8) <= (others => '0');
+                configDataReadInternal(31 downto 8) <= (others=>'0');
                 configDataReadInternal(7 downto 0) <= routeTablePortDefault;
                 
               when x"000100" =>
@@ -1846,8 +1900,9 @@ begin
                 -- Extended features. LP-Serial Register Block Header.
                 -----------------------------------------------------------------
 
-                -- One feature only, 0x0003=Generic End Point Free Device.
-                configDataReadInternal(31 downto 16) <= x"2100";  --next EF_PTR is Error/HotSwap
+                -- 0x0003=Generic End Point Free Device.
+                -- next EF_PTR is Error/HotSwap
+                configDataReadInternal(31 downto 16) <= x"2100";
                 configDataReadInternal(15 downto 0) <= x"0003";
                 
               when x"000120" =>
@@ -1873,69 +1928,40 @@ begin
                 
                 configDataReadInternal(31 downto 30) <= "00";
                 configDataReadInternal(29) <= discovered;
-                configDataReadInternal(28 downto 0) <= (others => '0');
-
+                configDataReadInternal(28 downto 0) <= (others=>'0');
                 
-                
-              --------------------------------------------------------------------
-              -- Extended features. (Error/)HotSwap Extensions Register Block
-              --------------------------------------------------------------------
               when x"002100" => --0x00
                  -----------------------------------------------------------------
                  -- Error Managment/HotSwap Extensions Block Header.
                  -----------------------------------------------------------------
-                 configDataReadInternal(31 downto 16) <= x"0000";  --Next EF_PTR is N/A
-                 configDataReadInternal(15 downto  0) <= x"0017";  --EF_ID=0x0017; only HotSwap part of error management is supported (0x0007=Error management, with or without hot swap support)
-                 --
+
+                configDataReadInternal(31 downto 16) <= x"0000";  --Next EF_PTR is N/A
+                configDataReadInternal(15 downto  0) <= x"0017";  --EF_ID=0x0017; only HotSwap part of error management is supported (0x0007=Error management, with or without hot swap support)
+
               when x"002104" => --0x04
-                 -----------------------------------------------------------------
-                 -- Error Managment/HotSwap Extensions Block CAR.
-                 -----------------------------------------------------------------
-                 configDataReadInternal(31) <= ErrorManagementNotFullySupported; --'1'=all registers/bit fields of Error management extensions may not be supported. 0=all supported.
-                 configDataReadInternal(30) <= HotSwapFullySupported;            --'1'=all registers/bit fields specific to HotSwap support shall be supported. 0=not all fields are supported.
-                 configDataReadInternal(29) <= PHlayerErrorCaptureFifoSupport;   --Physical Layer Error Capture FIFO: 0=may not be supported, 1=full support            ****check this bit!!****
-                 configDataReadInternal(28) <= LTlayerErrorCaptureFifoSupport;   --Logical/Transport Layer Error Capture FIFO: 0=may not be supported, 1=full support   ****check this bit!!****
-                 configDataReadInternal(27 downto  0) <= (others=>'0');
-                 --
+                -----------------------------------------------------------------
+                -- Error Managment/HotSwap Extensions Block CAR.
+                -----------------------------------------------------------------
+                configDataReadInternal(31) <= ErrorManagementNotFullySupported; --'1'=all registers/bit fields of Error management extensions may not be supported. 0=all supported.
+                configDataReadInternal(30) <= HotSwapFullySupported;            --'1'=all registers/bit fields specific to HotSwap support shall be supported. 0=not all fields are supported.
+                configDataReadInternal(29) <= PHlayerErrorCaptureFifoSupport;   --Physical Layer Error Capture FIFO: 0=may not be supported, 1=full support            ****check this bit!!****
+                configDataReadInternal(28) <= LTlayerErrorCaptureFifoSupport;   --Logical/Transport Layer Error Capture FIFO: 0=may not be supported, 1=full support   ****check this bit!!****
+                configDataReadInternal(27 downto  0) <= (others=>'0');
+
               when x"002128" => --0x28
-                 -----------------------------------------------------------------
-                 -- Port Write Target deviceID CSR
-                 -----------------------------------------------------------------
-                 if configWe = '1' then
-                    Dev16_deviceID_msb <= configDataWrite(31 downto 24);
-                    Dev8_deviceID      <= configDataWrite(23 downto 16);
-                  --Dev8_or_16         <= configDataWrite(15);
-                  --Dev32_PW           <= configDataWrite(14);
-                 end if;
-                 
-                 configDataReadInternal(31 downto 24) <= Dev16_deviceID_msb;  --address to use when a device generates a Maintenance Port Write to rweport errors to system host.
-                 configDataReadInternal(23 downto 16) <= Dev8_deviceID;       --
-                 configDataReadInternal(15) <= '1';   --only support for 16 bit 
-               --configDataReadInternal(15)           <= Dev8_or_16;          --when dev32_PW=0:  '0'=dev8, '1'=dev16 id-size
-               --configDataReadInternal(14)           <= Dev32_PW;            --'0'=devID is controlled by Dev8_or_16 field, '1'=dev32 deviceID
-                 configDataReadInternal(14 downto  0) <= (others=>'0');       --Reserved bits.
-                 --
-           -- when x"00212C" => --0x2C
-           --    -----------------------------------------------------------------
-           --    -- Packet Time-to-live CSR
-           --    -----------------------------------------------------------------
-           --    if configWe = '1' then
-           --       PacketTimeToLiveValue <= configDataWrite(31 downto 16);
-           --    end if;
-           --    
-           --    configDataReadInternal(31 downto 16) <= PacketTimeToLiveValue; --Maximum time a packet is allowed to exist within a switch device. 0xFFFF=100ms+-34%, 0=timeout is disabled.
-           --    configDataReadInternal(15 downto  0) <= (others=>'0');
-           --    --
-           -- when x"002130" => --0x30
-           --    -----------------------------------------------------------------
-           --    -- Port-write DEV32 Target deviceID CSR
-           --    -----------------------------------------------------------------
-           --    if configWe = '1' then
-           --       Dev32_deviceID <= configDataWrite;
-           --    end if;
-           --    
-           --    configDataReadInternal <= Dev32_deviceID;                   --ID to use when Dev32_PW bit is set.
-           --    --
+                -----------------------------------------------------------------
+                -- Port Write Target deviceID CSR
+                -----------------------------------------------------------------
+                if configWe = '1' then
+                  Dev16_deviceID_msb <= configDataWrite(31 downto 24);
+                  Dev8_deviceID      <= configDataWrite(23 downto 16);
+                end if;
+                
+                configDataReadInternal(31 downto 24) <= Dev16_deviceID_msb;  --address to use when a device generates a Maintenance Port Write to rweport errors to system host.
+                configDataReadInternal(23 downto 16) <= Dev8_deviceID;       --
+                configDataReadInternal(15) <= '1';   --only support for 16 bit 
+                configDataReadInternal(14 downto  0) <= (others=>'0');       --Reserved bits.
+
               when x"002134" => --0x34
                  -----------------------------------------------------------------
                  -- Port Write Transmission Control CSR
@@ -1946,34 +1972,18 @@ begin
                  
                  configDataReadInternal(31 downto 1) <= (others=>'0');       --Reserved bits.
                  configDataReadInternal(0) <= PortWriteTransmissionDisable;  --'1' enabled events shall not cause new port writes to be generated. '0'=port writes shall be generated.
-                 --
-       ---------------------------------------------------------------------------
-       --        -- Not yet implemented: Error management
-       --     when x"002108" => -- 0x08  Logical/Transport Layer Error Detect CSR
-       --                       configDataReadInternal <= LogicalTransportLayerErrorDetectCSR;
-       --     when x"00210C" |  -- 0x0C  Logical/Transport Layer Error Enable CSR
-       --          x"002110" |  -- 0x10  Logical/Transport Layer High Address Capture SCR
-       --          x"002114" |  -- 0x14  Logical/Transport Layer Address Capture SCR
-       --          x"002118" |  -- 0x18  Logical/Transport Layer Device ID Capture CSR
-       --          x"00211C" |  -- 0x1C  Logical/Transport Layer Control Capture CSR
-       --          x"002120" |  -- 0x20  Logical/Transport Layer Dev32 Destination ID Capture CSR
-       --          x"002124" => -- 0x24  Logical/Transport Layer Dev32 Source ID Capture CSR
-       --                       configDataReadInternal <= (others=>'0');
-                 -----------------------------------------------------------------
 
-              when others => -- Registers based on Number of SWITCH_PORTS:
+              when others =>
                 -----------------------------------------------------------------
-                -- Other port specific registers.
+                -- Other Port[N] specific registers.
                 -----------------------------------------------------------------
                 
                 -- Make sure the output is always set to something.
-                configDataReadInternal <= (others=>'0');  --Notice! may be replaced by other value further down..
+                -- Note that it may be replaced by another value further down.
+                configDataReadInternal <= (others=>'0');
 
                 -- Iterate through all active ports.
                 for portIndex in 0 to SWITCH_PORTS-1 loop
-
-                  -----------------------------------------------------
-                  --Error Managment/HotSwap **Port related** Registers:
                   if unsigned(configAdr) = (x"002140" + (x"000040"*portIndex)) then
                      -----------------------------------------------------------------
                      -- Port N Error Detect CSR.
@@ -1986,9 +1996,9 @@ begin
                         wrtPortNerrorDetect_CSR(portIndex)(28) <= configDataWrite(28);    -- linkUninitToOkTransition
                         wrtPortNerrorDetect_CSR(portIndex)(27 downto 0) <= (others=>'0');
                      end if;
-                     --
+                     
                      configDataReadInternal <= PortNerrorDetect_CSR(portIndex);
-                     --
+
                   elsif unsigned(configAdr) = (x"002144" + (x"000040"*portIndex)) then
                      -----------------------------------------------------------------
                      -- Port N Error Rate Enable CSR.
@@ -2004,7 +2014,7 @@ begin
                      configDataReadInternal(29) <= LinkUninitPacketDiscardActiveEnable(portIndex); -- Enable event notification for Link Uninit Packet Discard Timer events.
                      configDataReadInternal(28) <= LinkUninitToOkTransitionEnable(portIndex);      -- Enable event notification for when the link has transitioned from a link uninitialized to link initialized state.
                      configDataReadInternal(27 downto 0) <= (others=>'0');
-                     --
+                     
                   elsif unsigned(configAdr) = (x"002170" + (x"000040"*portIndex)) then
                      -----------------------------------------------------------------
                      -- Port N Link Uninit Discard Timer CSR.
@@ -2015,38 +2025,7 @@ begin
                      
                      configDataReadInternal(31 downto 8) <= LinkUninitTimeout(portIndex);   --0xFFFFFF shall correspond to 6-12 s, if 0 the discard timer shall be disabled.
                      configDataReadInternal( 7 downto 0) <= (others=>'0');
-                     --
-         --       elsif unsigned(configAdr) = (x"00217C" + (x"000040"*portIndex)) then
-         --          -----------------------------------------------------------------
-         --          -- Port N FIFO Error Detect CSR. (Not required for HotSwap according Part 8:Table 2-4, but contain hotSwap bits if bit 2 of Error Management/HotSwap Extension block CAR is set!
-         --          -----------------------------------------------------------------
-         --          configDataReadInternal(31) <= '0';
-         --          configDataReadInternal(30) <= PortNerrorDetect_CSR(portIndex)(30); --LinkOKtoUninitTransition(portIndex); --fields are identical to (x"000240" + (x"000040"*portIndex))  ????
-         --          configDataReadInternal(29) <= PortNerrorDetect_CSR(portIndex)(29); --LinkUninitPacketDiscardActive(portIndex);
-         --          configDataReadInternal(28) <= PortNerrorDetect_CSR(portIndex)(28); --LinkUninitToOkTransition(portIndex);
-         --          configDataReadInternal(27 downto 0) <= (others=>'0');
-         --          --
-         ---------------------------------------------------------------------------
-         --          -- Not yet implemented: Error management
-         --       elsif (unsigned(configAdr) = (x"002148" + (x"000040"*portIndex))) or  -- Port n Attributes Capture CSR
-         --             (unsigned(configAdr) = (x"00214C" + (x"000040"*portIndex))) or  -- Port n Capture 0 CSR
-         --             (unsigned(configAdr) = (x"002150" + (x"000040"*portIndex))) or  -- Port n Capture 1 CSR
-         --             (unsigned(configAdr) = (x"002154" + (x"000040"*portIndex))) or  -- Port n Capture 2 CSR
-         --             (unsigned(configAdr) = (x"002158" + (x"000040"*portIndex))) or  -- Port n Capture 3 CSR
-         --             (unsigned(configAdr) = (x"00215C" + (x"000040"*portIndex))) or  -- Port n Capture 4 CSR
-         --             (unsigned(configAdr) = (x"002160" + (x"000040"*portIndex))) or  -- Reserved
-         --             (unsigned(configAdr) = (x"002164" + (x"000040"*portIndex))) or  -- Reserved
-         --             (unsigned(configAdr) = (x"002168" + (x"000040"*portIndex))) or  -- Port n Error Rate CSR
-         --             (unsigned(configAdr) = (x"00216C" + (x"000040"*portIndex))) or  -- Port n Error Rate Threshold CSR
-         --             (unsigned(configAdr) = (x"002174" + (x"000040"*portIndex))) or  -- Reserved
-         --             (unsigned(configAdr) = (x"002178" + (x"000040"*portIndex))) or  -- Reserved
-         --           --(unsigned(configAdr) = (x"00217C" + (x"000040"*portIndex)))     -- Port n Error Detect FIFO CSR
-         --       then
-         --          configDataReadInternal <= (others=>'0');
-         --          --
-                    
-                  -----------------------------------------------------
-                  --LP-Serial Register Block:
+                     
                   elsif(unsigned(configAdr) = (x"000148" + (x"000020"*portIndex))) then
                     -----------------------------------------------------------------
                     -- Port N Local ackID CSR.
@@ -2225,7 +2204,8 @@ begin
   end process;
   
   -----------------------------------------------------------------------------
-  -- This process manages the Port n Error Detect CSR register, set and write..
+  -- This process manages the Port n Error Detect CSR register, set and write.
+  -----------------------------------------------------------------------------
   pNerrDetCSR:process(clk, areset_n)
   begin
      if areset_n = '0' then
@@ -2233,7 +2213,7 @@ begin
      elsif rising_edge(clk) then
         for portIndex in 0 to SWITCH_PORTS-1 loop
            PortNerrorDetect_CSR(portIndex)(31) <= '0';
-           --
+
            if linkOKtoUninitTransition(portIndex)='1' then
               --A new event!
               PortNerrorDetect_CSR(portIndex)(30) <= '1';
@@ -2241,7 +2221,7 @@ begin
               --port write (probably a clearing write)
               PortNerrorDetect_CSR(portIndex)(30) <= wrtPortNerrorDetect_CSR(portIndex)(30);
            end if;
-           --
+
            if linkUninitPacketDiscardActive(portIndex)='1' then
               --A new event!
               PortNerrorDetect_CSR(portIndex)(29) <= '1';
@@ -2249,7 +2229,7 @@ begin
               --port write (probably a clearing write)
               PortNerrorDetect_CSR(portIndex)(29) <= wrtPortNerrorDetect_CSR(portIndex)(29);
            end if;
-           --
+
            if linkUninitToOkTransition(portIndex)='1' then
               --A new event!
               PortNerrorDetect_CSR(portIndex)(28) <= '1';
@@ -2257,18 +2237,20 @@ begin
               --port write (probably a clearing write)
               PortNerrorDetect_CSR(portIndex)(28) <= wrtPortNerrorDetect_CSR(portIndex)(28);
            end if;
-           --
+
            PortNerrorDetect_CSR(portIndex)(27 downto 0) <= (others=>'0');
         end loop;
      end if;
   end process;
   
-  --used for Port-Write Packet for Error Reporting
-  PortNerrorDetect<=PortNerrorDetect_CSR(PortNindex) when PortNindex<SWITCH_PORTS else (others=>'0');
+  -- Used for Port-Write Packet for Error Reporting.
+  portNerrorDetect <= portNerrorDetect_CSR(PortNindex) when PortNindex<SWITCH_PORTS else (others=>'0');
         
   -----------------------------------------------------------------------------
-  -- This process manages the Port-Write Pending Bits, part of the Port n Error and Status CSR register.
-  pwPending:process(clk, areset_n)
+  -- This process manages the Port-Write Pending Bits, part of the
+  -- Port n Error and Status CSR register.
+  -----------------------------------------------------------------------------
+  pwPending: process(clk, areset_n)
   begin
      if areset_n = '0' then
         PortNwritePending <= (others=>'0');
@@ -2286,13 +2268,16 @@ begin
   end process;
   
   -----------------------------------------------------------------------------
-  -- Logic implementing the routing table access.
+  -- Route table logic.
   -----------------------------------------------------------------------------
 
   -- Lookup interface port memory signals.
   lookupEnable <= '1' when (lookupStb_i = '1') and (lookupAddr_i(15 downto 11) = "00000") else '0';
   lookupAddress <= lookupAddr_i(10 downto 0);
-  lookupData_o <= lookupData when (lookupEnable = '1') else routeTablePortDefault;
+  lookupData_o <= lookupData when (lookupAddr_i(15 downto 11) = "00000") else
+                  routeTablePortFFFE when (lookupAddr_i = x"fffe") else
+                  routeTablePortFFFF when (lookupAddr_i = x"ffff") else
+                  routeTablePortDefault;
   lookupAck_o <= lookupAck;
   LookupProcess: process(clk, areset_n)
   begin
@@ -2313,80 +2298,79 @@ begin
       ADDRESS_WIDTH=>11, DATA_WIDTH=>8)
     port map(
       clkA_i=>clk, enableA_i=>routeTableEnable, writeEnableA_i=>routeTableWrite,
-      addressA_i=>routeTableAddress,
+      addressA_i=>routeTableAddress(10 downto 0),
       dataA_i=>routeTablePortWrite, dataA_o=>routeTablePortRead,
       clkB_i=>clk, enableB_i=>lookupEnable,
       addressB_i=>lookupAddress, dataB_o=>lookupData);
-  
       
-   -----------------------------------------------------------------------------
-   -- HotSwap Timers, etc. 
-   -----------------------------------------------------------------------------
-   Tick_1_5us: Ticker      -- Select generic so that for the used clk rate, a tick rate of below range is satisfied.             
-     generic map(clksPerTick => 38)    -- Ideal: 1.52590219 us/tick --> 655350 Hz (+-34%), @25MHz: 38 clk's/tick = 1.52us=657894.7Hz (-0.387%)     
-        port map(clk_i => clk,      
-              reset_ni => areset_n,
-                tick_o => PacketTimeToLiveTick);
+  -----------------------------------------------------------------------------
+  -- HotSwap Timers, etc. 
+  -----------------------------------------------------------------------------
+
+  -- Select generic so that for the used clk rate, a tick rate of below range is satisfied.
+  -- Ideal: 1.52590219 us/tick --> 655350 Hz (+-34%), @25MHz: 38 clk's/tick = 1.52us=657894.7Hz (-0.387%)
+  -- REMARK: Rewrite this more generically.
+  Tick_1_5us: Ticker
+    generic map(clksPerTick => 38)
+    port map(clk_i=>clk,      
+             reset_ni=>areset_n,
+             tick_o=>PacketTimeToLiveTick);
    
-   -- LinkUninitTimeoutTicker: max value for timer counter is 16777215, max time allowed somwhere in the range 6-12 s
-   -- 6 s to 12 s divided by 16777215 = 357.62789 ns to 715.25578 ns per tick --> 2.7962025MHz to 1.39810125MHz tick rate
-   --
-   --    Assuming clk of 25MHz:
-   --      clksPerTick   Tick rate   max LinkUninitTimeout unsing Tick+Timer
-   --              9       360 ns      6.0398 s
-   --             10       400 ns      6.7109 s
-   --             11       440 ns      7.3820 s      
-   --             12       480 ns      8.0531 s
-   --             13       520 ns      8.7242 s
-   --             14       560 ns      9.3952 s  
-   --             15       600 ns     10.0663 s   <-- This one is used for LinkUninitTimeoutTicker
-   --             16       640 ns     10.7374 s   
-   --             17       680 ns     11.4085 s   
-   --             18       720 ns     12.0796 s
-   --             19       760 ns     12.7507 s
-   --             20       800 ns     13.4218 s
-   --             21       840 ns     14.0929 s
-   --             22       880 ns     14.7639 s
-   --             23       920 ns     15.4350 s
-   --             24       960 ns     16.1061 s
-   --             25      1000 ns     16.7772 s
-   --
-   LinkUninitTimeoutTicker: Ticker     
-     generic map(clksPerTick => 15)    --Select generic so that for the used clk rate, a tick rate of below range is satisfied.
+  -----------------------------------------------------------------------------
+  -- LinkUninitTimeoutTicker: max value for timer counter is 16777215, max
+  -- time allowed somwhere in the range 6-12 s
+  -- 6 s to 12 s divided by 16777215 = 357.62789 ns to 715.25578 ns per
+  -- tick --> 2.7962025MHz to 1.39810125MHz tick rate
+  --
+  --    Assuming clk of 25MHz:
+  --      clksPerTick   Tick rate   max LinkUninitTimeout unsing Tick+Timer
+  --              9       360 ns      6.0398 s
+  --             10       400 ns      6.7109 s
+  --             11       440 ns      7.3820 s      
+  --             12       480 ns      8.0531 s
+  --             13       520 ns      8.7242 s
+  --             14       560 ns      9.3952 s  
+  --             15       600 ns     10.0663 s   <-- This one is used for LinkUninitTimeoutTicker
+  --             16       640 ns     10.7374 s   
+  --             17       680 ns     11.4085 s   
+  --             18       720 ns     12.0796 s
+  --             19       760 ns     12.7507 s
+  --             20       800 ns     13.4218 s
+  --             21       840 ns     14.0929 s
+  --             22       880 ns     14.7639 s
+  --             23       920 ns     15.4350 s
+  --             24       960 ns     16.1061 s
+  --             25      1000 ns     16.7772 s
+  --
+  -----------------------------------------------------------------------------
+  LinkUninitTimeoutTicker: Ticker     
+    generic map(clksPerTick => 15)    --Select generic so that for the used clk rate, a tick rate of below range is satisfied.
         port map(clk_i => clk,
-              reset_ni => areset_n,
-                tick_o => LinkUninitTimerTick);
-   
-   HotSwapPortStat:for pI in 0 to SWITCH_PORTS-1 
-   generate
-      --
-      HswpPortStat: RioHotSwapPortStatus
-         port map(                  clk => clk,
-                               reset_ni => areset_n,
-                  LinkUninitTimerTick_i => LinkUninitTimerTick,
-        -----------------------------------Port related signals
-                      linkInitialized_i => linkInitialized_i(pI),
-       LinkOKtoUninitTransitionEnable_i => LinkOKtoUninitTransitionEnable(pI),
-       LinkUninitToOkTransitionEnable_i => LinkUninitToOkTransitionEnable(pI),
-  LinkUninitPacketDiscardActiveEnable_i => LinkUninitPacketDiscardActiveEnable(pI),   
-                    LinkUninitTimeout_i => LinkUninitTimeout(pI),
-             linkOKtoUninitTransition_o => linkOKtoUninitTransition(pI),
-             linkUninitToOkTransition_o => linkUninitToOkTransition(pI),
-        linkUninitPacketDiscardActive_o => linkUninitPacketDiscardActive(pI),
-                  sendHotSwapEventNow_o => hotSwapEvent(pI));
-      --          
-   -- PacketTimeToLiveTimer: Timer
-   --   generic map(timerWidth=>PacketTimeToLiveValue'length) --16 bits
-   --      port map(clk_i => clk,
-   --            reset_ni => areset_n,
-   --        resetValue_i => PacketTimeToLiveValue,           --if x"0000" the timer is disabled
-   --         timerTick_i => PacketTimeToLiveTick,            --tick rate strobe input for this timer: x"FFFF" = 100ms --> 1.52590219 us/tick --> 655350 Hz   +- 34%
-   --                wd_i => packetReadyForTransmission(pI),  --watch dog input "from kicker" -ie. toggle this high whenever a packet is created
-   --           expired_o => discardPacket(pI));
-      --       
-   end generate;
+                 reset_ni => areset_n,
+                 tick_o => LinkUninitTimerTick);
+
+  HotSwapPortStat:for pI in 0 to SWITCH_PORTS-1 generate
+    linkUninitPacketDiscardActive_o(pI) <= linkUninitPacketDiscardActive(pI);
+
+    HswpPortStat: RioHotSwapPortStatus
+      port map(
+        clk=>clk,
+        reset_ni=>areset_n,
+        linkUninitTimerTick_i=>linkUninitTimerTick,
+        linkInitialized_i=>linkInitialized_i(pI),
+        linkOKtoUninitTransitionEnable_i=>linkOKtoUninitTransitionEnable(pI),
+        linkUninitToOkTransitionEnable_i =>linkUninitToOkTransitionEnable(pI),
+        linkUninitPacketDiscardActiveEnable_i=>linkUninitPacketDiscardActiveEnable(pI),   
+        linkUninitTimeout_i=>linkUninitTimeout(pI),
+        linkOKtoUninitTransition_o=>linkOKtoUninitTransition(pI),
+        linkUninitToOkTransition_o=>linkUninitToOkTransition(pI),
+        linkUninitPacketDiscardActive_o=>linkUninitPacketDiscardActive(pI),
+        sendHotSwapEventNow_o=>hotSwapEvent(pI));
+  end generate;
   
 end architecture;
+
+
 
 -------------------------------------------------------------------------------
 -- 
@@ -2465,6 +2449,7 @@ begin
 end architecture;
 
 
+
 -------------------------------------------------------------------------------
 -- 
 -------------------------------------------------------------------------------
@@ -2507,6 +2492,8 @@ end entity;
 -- 
 -------------------------------------------------------------------------------
 architecture SwitchPortInterconnectImpl of SwitchPortInterconnect is
+  -- A debugging probe to listen to ALL packets can be inserted by
+  -- uncommenting these components and instantiations below.
   --component ChipscopeIcon1 is
   --  port (
   --    CONTROL0 : inout STD_LOGIC_VECTOR ( 35 downto 0 )
