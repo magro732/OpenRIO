@@ -1,133 +1,162 @@
 -------------------------------------------------------------------------------
--- 
--- RapidIO IP Library Core
--- 
--- This file is part of the RapidIO IP library project
--- http://www.opencores.org/cores/rio/
--- 
+-- (C) Copyright 2013-2015 Authors and the Free Software Foundation.
+--
+-- This file is part of OpenRIO.
+--
+-- OpenRIO is free software: you can redistribute it and/or modify
+-- it under the terms of the GNU Lesser General Public License as published by
+-- the Free Software Foundation, either version 3 of the License, or
+-- (at your option) any later version.
+--
+-- OpenRIO is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+-- GNU Lesser General Public License for more details.
+--
+-- You should have received a copy of the GNU General Lesser Public License
+-- along with OpenRIO. If not, see <http://www.gnu.org/licenses/>.
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
 -- Description
--- Helper module for RioSwitch.
+-- Helper module for RioSwitch implementing hotswap event handling.
 -- 
--- To Do:
--- - 
+-- Backlog:
+-- - Rename this file with a RioSwitch prefix.
 -- 
 -- Author(s): 
--- - Anders Thornemo
--- 
--------------------------------------------------------------------------------
--- 
--- Copyright (C) 2015 Authors and OPENCORES.ORG 
--- 
--- This source file may be used and distributed without 
--- restriction provided that this copyright statement is not 
--- removed from the file and that any derivative work contains 
--- the original copyright notice and the associated disclaimer. 
--- 
--- This source file is free software; you can redistribute it 
--- and/or modify it under the terms of the GNU Lesser General 
--- Public License as published by the Free Software Foundation; 
--- either version 2.1 of the License, or (at your option) any 
--- later version. 
--- 
--- This source is distributed in the hope that it will be 
--- useful, but WITHOUT ANY WARRANTY; without even the implied 
--- warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
--- PURPOSE. See the GNU Lesser General Public License for more 
--- details. 
--- 
--- You should have received a copy of the GNU Lesser General 
--- Public License along with this source; if not, download it 
--- from http://www.opencores.org/lgpl.shtml 
--- 
+-- - Anders Thornemo, anders.thornemo@se.transport.bombardier.com
+-- - Magnus Rosenius, magro732@hemmai.se
 -------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
--- Hot Swap Port Status logic
+-- RioSwitchHotSwapPortStatus.
 -------------------------------------------------------------------------------
-
 library ieee;
-    use ieee.std_logic_1164.all;
-    use ieee.numeric_std.all; 
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all; 
 
-entity RioHotSwapPortStatus is   -- instantiate one RioHotSwapPortStatusManager per port
-   generic(LinkUninitTimerWidth : integer := 24); --RapidIO standard: 24 (can be changed for more convenient TB testing)
-     port(clk   : in  std_logic;
-       reset_ni : in  std_logic;
-    LinkUninitTimerTick_i : in  std_logic;        -- tick rate "strobe" input for this timer: x"FFFFFF" = 6-12 s --> 6 to 12 / 16777215 = 357.62789 ps to 715.25578 ps per tick --> 2.7962025MHz to 1.39810125MHz
-    --
-    linkInitialized_i                     : in  std_logic;  -- from RioPcs.. When '1' the link is in active state, when '0' the link is down.
-    LinkOKtoUninitTransitionEnable_i      : in  std_logic;
-    LinkUninitToOkTransitionEnable_i      : in  std_logic;
-    LinkUninitPacketDiscardActiveEnable_i : in  std_logic;   
-    LinkUninitTimeout_i                   : in  std_logic_vector(LinkUninitTimerWidth-1 downto 0);  -- if x"000000" the timer is disabled
-    linkOKtoUninitTransition_o            : out std_logic;                      -- event
-    linkUninitToOkTransition_o            : out std_logic;                      -- event
-    linkUninitPacketDiscardActive_o       : out std_logic;                      -- event?? --(timer has expired)
-    sendHotSwapEventNow_o                 : out std_logic                       -- Trigger a hotSwap message to be sent
-   );
+
+-------------------------------------------------------------------------------
+-- Entity for RioSwitchHotSwapPortStatus.
+-------------------------------------------------------------------------------
+entity RioSwitchHotSwapPortStatus is
+  generic(
+    LINK_UNINIT_TIMER_WIDTH : integer);
+  port(
+    clk : in std_logic;
+    reset_ni : in std_logic;
+
+    linkInitialized_i : in std_logic;
+    
+    linkOKToUninitTransitionEnable_i : in std_logic;
+    linkUninitToOKTransitionEnable_i : in std_logic;
+    linkUninitPacketDiscardActiveEnable_i : in std_logic;
+    linkUninitPacketDiscardActiveClear_i : in std_logic;
+    linkUninitTimeout_i : in std_logic_vector(23 downto 0);
+    
+    linkOKToUninitTransition_o : out std_logic;
+    linkUninitToOKTransition_o : out std_logic;
+    linkUninitPacketDiscardActiveEvent_o : out std_logic;
+
+    linkUninitPacketDiscardActive_o : out std_logic;
+    
+    sendHotSwapEventNow_o : out std_logic);
 end entity;
 
-architecture rtl of RioHotSwapPortStatus is
-   signal  Expired           : std_logic;
-   signal  linkInitialized_D : std_logic := '0';
-   signal  linkUpEvent       : std_logic := '0';
-   signal  linkDownEvent     : std_logic := '0';
-   signal  linkUp            : std_logic := '0';
-   signal  linkUninitPacketDiscardActive   : std_logic;
-   signal  linkUninitPacketDiscardActive_D : std_logic_vector(1 downto 0) := (others=>'0');
+
+-------------------------------------------------------------------------------
+-- Architecture for RioSwitchHotSwapPortStatus.
+-------------------------------------------------------------------------------
+architecture rtl of RioSwitchHotSwapPortStatus is
+  signal linkUpEvent : std_logic := '0';
+  signal linkDownEvent : std_logic := '0';
+  
+  signal linkUninitPacketDiscardActive : std_logic;
+  signal linkUninitPacketDiscardEvent : std_logic;
+
+  signal linkInitialized_D : std_logic := '0';
+  signal linkUninitPacketDiscardActive_D : std_logic := '0';
+
+  signal counter : unsigned(LINK_UNINIT_TIMER_WIDTH-1 downto 0);
+  signal counterReset : unsigned(LINK_UNINIT_TIMER_WIDTH-1 downto 0);
 begin
 
-   linkEvent:process(reset_ni, clk)  -- edge detector for linkInitialized_i
-   begin
-      if reset_ni='0' then
-         linkInitialized_D <= '0';
-         linkUpEvent       <= '0';
-         linkDownEvent     <= '0';
-         linkUp            <= '0';
-         linkUninitToOkTransition_o<='0';
-         --
-      elsif rising_edge(clk) then
-         linkInitialized_D <= linkInitialized_i;
-         linkUninitPacketDiscardActive_D<=linkUninitPacketDiscardActive_D(0) & linkUninitPacketDiscardActive;
-         --
-         if    linkInitialized_D = '0' and linkInitialized_i='1' then
-            linkUpEvent   <= '1';
-            linkDownEvent <= '0';
-            linkUp        <= '1';
-            linkUninitToOkTransition_o<='1';
-         elsif linkInitialized_D = '1' and linkInitialized_i='0' then
-            linkUpEvent   <= '0';
-            linkDownEvent <= '1';
-            linkUp        <= '0';
-            linkUninitToOkTransition_o<='0';
-         else
-            linkUpEvent   <= '0';
-            linkDownEvent <= '0';
-            linkUninitToOkTransition_o<='0';
-         end if;
-         --
-      end if;
-   end process;
-   
-   linkOKtoUninitTransition_o <= linkDownEvent;
-   
-   sendHotSwapEventNow_o <= '1' when (LinkUninitToOkTransitionEnable_i   =  '1' and linkUpEvent   = '1') 
-                                  or (LinkOKtoUninitTransitionEnable_i   =  '1' and linkDownEvent = '1') 
-                                  or (LinkUninitPacketDiscardActiveEnable_i='1' and linkUninitPacketDiscardActive_D = b"01")
-                                else '0';
-   
-   linkUninitPacketDiscardActive <= Expired when LinkUninitPacketDiscardActiveEnable_i = '1' else '0';  -- should activate after a timeout expired -from link unavailable event
-                                            
-   linkUninitPacketDiscardActive_o <= linkUninitPacketDiscardActive;
+  linkOKToUninitTransition_o <= linkDownEvent and linkOKToUninitTransitionEnable_i;
+  linkUninitToOKTransition_o <= linkUpEvent and linkUninitToOKTransitionEnable_i;
+  linkUninitPacketDiscardActiveEvent_o <= linkUninitPacketDiscardEvent and linkUninitPacketDiscardActiveEnable_i;
+  linkUninitPacketDiscardActive_o <= linkUninitPacketDiscardActive;
+  
+  sendHotSwapEventNow_o <=
+    '1' when (((linkUninitToOKTransitionEnable_i = '1') and (linkUpEvent = '1')) or
+              ((linkOKToUninitTransitionEnable_i = '1') and (linkDownEvent = '1')) or
+              ((linkUninitPacketDiscardActiveEnable_i = '1') and (linkUninitPacketDiscardEvent = '1'))) else '0';
 
-   LinkUninitDiscardTimer: entity work.Timer(rtl)   --implemented for IDLE1 and IDLE2 links.. not yet for IDLE3
-     generic map(timerWidth => LinkUninitTimerWidth,
-              repeatedPulse => false)
-        port map(clk_i => clk,
-              reset_ni => reset_ni,
-          resetValue_i => LinkUninitTimeout_i,     -- if x"000000" the timer is disabled
-           timerTick_i => LinkUninitTimerTick_i,   -- tick rate strobe input for this timer: x"FFFFFF" = 6-12 s --> 6 to 12 / 16777215 = 357.62789 ps to 715.25578 ps per tick --> 2.7962025MHz to 1.39810125MHz
-                  wd_i => linkUp,                  -- watch dog input "from kicker"
-             expired_o => Expired);
+  linkEvent: process(reset_ni, clk)
+  begin
+    if reset_ni = '0' then
+      linkInitialized_D <= '0';
+      linkUninitPacketDiscardActive_D <= '0';
+
+      linkUpEvent <= '0';
+      linkDownEvent <= '0';
+    elsif rising_edge(clk) then
+      linkInitialized_D <= linkInitialized_i;
+      linkUninitPacketDiscardActive_D <= linkUninitPacketDiscardActive;
+
+      if (linkUninitPacketDiscardActive_D = '0') and (linkUninitPacketDiscardActive = '1') then
+        linkUninitPacketDiscardEvent <= '1';
+      else
+        linkUninitPacketDiscardEvent <= '0';
+      end if;
       
+      if linkInitialized_D = '0' and linkInitialized_i = '1' then
+        linkUpEvent <= '1';
+        linkDownEvent <= '0';
+      elsif linkInitialized_D = '1' and linkInitialized_i = '0' then
+        linkUpEvent <= '0';
+        linkDownEvent <= '1';
+      else
+        linkUpEvent <= '0';
+        linkDownEvent <= '0';
+      end if;
+    end if;
+  end process;
+
+  process(linkUninitTimeout_i)
+  begin
+    for i in 0 to LINK_UNINIT_TIMER_WIDTH-1 loop
+      if (linkUninitTimeout_i'left-i) >= 0 then
+        counterReset(counterReset'left-i) <= linkUninitTimeout_i(linkUninitTimeout_i'left-i);
+      else
+        counterReset(counterReset'left-i) <= '0';
+      end if;
+    end loop;
+  end process;
+
+  process(clk, reset_ni)
+
+  begin
+    if (reset_ni = '0') then
+      counter <= (others=>'0');
+      linkUninitPacketDiscardActive <= '0';
+    elsif (clk'event and clk = '1') then
+      if (linkInitialized_i = '1') then
+        counter <= counterReset;
+        linkUninitPacketDiscardActive <= '0';
+      else
+        if (counter /= 0) then
+          counter <= counter - 1;
+          linkUninitPacketDiscardActive <= '0';
+        else
+          if (linkUninitPacketDiscardActiveClear_i = '1') then
+            linkUninitPacketDiscardActive <= '0';
+          else
+            linkUninitPacketDiscardActive <= '1';
+          end if;
+        end if;
+      end if;
+    end if;
+  end process;
+  
 end architecture;

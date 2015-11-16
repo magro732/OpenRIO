@@ -10,7 +10,7 @@
 --
 -- OpenRIO is distributed in the hope that it will be useful,
 -- but WITHOUT ANY WARRANTY; without even the implied warranty of
--- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 -- GNU Lesser General Public License for more details.
 --
 -- You should have received a copy of the GNU General Lesser Public License
@@ -29,7 +29,7 @@
 -------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
--- MaintenancePortManager
+-- RioSwitchMaintenancePortManager
 -------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
@@ -37,110 +37,108 @@ use ieee.numeric_std.all;
 use work.rio_common.all;
 
 -------------------------------------------------------------------------------
--- Entity for MaintenancePortManager
+-- Entity for RioSwitchMaintenancePortManager
 -------------------------------------------------------------------------------
-entity MaintenancePortManager is
-  generic(SWITCH_PORTS : natural := 4;
-          PORT_WRITE_TIMEOUT_RESET_VALUE : std_logic_vector(15 downto 0):= x"FFFF"); -- x"FFFF" = 100 ms
-  port(       clk   : in  std_logic;
-              areset_n   : in  std_logic;
-              -- 
-              -- Signal interconnect for MaintenanceInbound    --
-              readRequestReadyInbound_i : in  std_logic;
-              writeRequestReadyInbound_i : in  std_logic;
-              readResponseReadyInbound_i : in  std_logic;
-              writeResponseReadyInbound_i : in  std_logic;
-              portWriteReadyInbound_i : in  std_logic;
-              vcInbound_i : in  std_logic;
-              crfInbound_i : in  std_logic;
-              prioInbound_i : in  std_logic_vector( 1 downto 0);
-              ttInbound_i : in  std_logic_vector( 1 downto 0);
-              dstIdInbound_i : in  std_logic_vector(31 downto 0);
-              srcIdInbound_i : in  std_logic_vector(31 downto 0);                  
-              sizeInbound_i : in  std_logic_vector( 3 downto 0);                  
-              statusInbound_i : in  std_logic_vector( 3 downto 0);
-              tidInbound_i : in  std_logic_vector( 7 downto 0);
-              hopInbound_i : in  std_logic_vector( 7 downto 0);
-              offsetInbound_i : in  std_logic_vector(20 downto 0);
-              wdptrInbound_i : in  std_logic;
-              payloadLengthInbound_i : in  std_logic_vector( 2 downto 0);
-              payloadIndexInbound_o : out std_logic_vector( 2 downto 0);                  
-              payloadInbound_i : in  std_logic_vector(63 downto 0);
-              doneInbound_o : out std_logic;
-              --
-              -- Signal interconnect for MaintenanceOutbound   --
-              readRequestReadyOutbound_o : out std_logic;
-              writeRequestReadyOutbound_o : out std_logic;
-              readResponseReadyOutbound_o : out std_logic;
-              writeResponseReadyOutbound_o : out std_logic;
-              portWriteReadyOutbound_o : out std_logic;
-              vcOutbound_o : out std_logic;
-              crfOutbound_o : out std_logic;
-              prioOutbound_o : out std_logic_vector( 1 downto 0);
-              ttOutbound_o : out std_logic_vector( 1 downto 0);
-              dstIdOutbound_o : out std_logic_vector(31 downto 0);
-              srcIdOutbound_o : out std_logic_vector(31 downto 0);
-              sizeOutbound_o : out std_logic_vector( 3 downto 0);
-              statusOutbound_o : out std_logic_vector( 3 downto 0);
-              tidOutbound_o : out std_logic_vector( 7 downto 0);
-              hopOutbound_o : out std_logic_vector( 7 downto 0);
-              offsetOutbound_o : out std_logic_vector(20 downto 0);
-              wdptrOutbound_o : out std_logic;
-              payloadLengthOutbound_o : out std_logic_vector( 2 downto 0);
-              payloadIndexOutbound_i : in  std_logic_vector( 2 downto 0);
-              payloadOutbound_o : out std_logic_vector(63 downto 0);
-              doneOutbound_i : in  std_logic;
-              -- 
-              -- Signal interconnect for RioLogicalMaintenance --
-              readRequestReadyMnt_o : out std_logic;
-              writeRequestReadyMnt_o : out std_logic;
-              sizeMnt_o : out std_logic_vector( 3 downto 0);
-              offsetMnt_o : out std_logic_vector(20 downto 0);
-              wdptrMnt_o : out std_logic;
-              payloadLengthMnt_o : out std_logic_vector( 2 downto 0);
-              payloadIndexMnt_i : in  std_logic_vector( 2 downto 0);
-              payloadMnt_o : out std_logic_vector(63 downto 0);
-              doneMnt_i : in  std_logic;
-              readResponseReadyMnt_i : in  std_logic;
-              writeResponseReadyMnt_i : in  std_logic;
-              statusMnt_i : in  std_logic_vector( 3 downto 0);
-              payloadLengthMnt_i : in  std_logic_vector( 2 downto 0);
-              payloadIndexMnt_o : out std_logic_vector( 2 downto 0);
-              payloadMnt_i : in  std_logic_vector(63 downto 0);
-              doneMnt_o : out std_logic;
-              --
-              -- Port control / Arbiter
-              inboundFramePort_i : in  std_logic_vector( 7 downto 0);
-              outboundFramePort_o : out std_logic_vector( 7 downto 0);
-              lookupData_i : in  std_logic_vector( 7 downto 0);
-              lookupAddr_o : out std_logic_vector(15 downto 0);
-              lookupStb_o : out std_logic;
-              lookupAck_i : in  std_logic;
-              --
-              -- Various signals for the Error Reporting Port-Write Packet Data Payload/HotSwap event --
-              hotSwapEvent_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0);
-              --                     Dev32_PW : in  std_logic;
-              --                   Dev8_or_16 : in  std_logic;
-              Dev16_deviceID_msb : in  std_logic_vector( 7 downto 0); 
-              Dev8_deviceID : in  std_logic_vector( 7 downto 0); 
-              --               Dev32_deviceID : in  std_logic_vector(31 downto 0) := (others=>'0');  -- (32 bit address mode is not supported)
-              PortWriteTransmissionDisable_i : in  std_logic;                                       -- Normal='0', if '1' no error-reporting port-write event message is sent.
-              Tick_1_5us_i : in  std_logic;                                       -- Ticker input: 1.5259 us/tick, same as used for PacketTimeToLiveTick
-              ComponentTag_CSR_i : in  std_logic_vector(31 downto 0);                   -- CSR is sent with Error Reporting port-write event message.
-              portNwriteDisabled_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); -- from lp-serial: Port N Error and Status CSR (standard:bit 26), if set -no port write event will be generated for the port.
-              PortNwritePending_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0);       -- If set, the port-write has not been acknowledged and the packet shall restransmitt until ack.
-              setPortNwritePending_o : out std_logic_vector(SWITCH_PORTS-1 downto 0);       -- Commands to set Port-Write Pending Status Bit of Port-n-Error and Status CSR
-              PortNindex_o : out integer range 0 to SWITCH_PORTS;                 -- Index selector for PortNerrorDetect_CSR_i
-              PortNerrorDetect_CSR_i : in  std_logic_vector(31 downto 0);                   -- CSR is sent with Error Reporting port-write event message.
-              LogicalTransportLayerErrorDetectCSR_i : in  std_logic_vector(31 downto 0) := (others=>'0')   -- CSR is sent with Error Reporting port-write event message.
-              );
+entity RioSwitchMaintenancePortManager is
+  generic(
+    SWITCH_PORTS : natural := 4;
+    PORT_WRITE_TIMEOUT_VALUE : natural);
+  port(
+    clk : in  std_logic;
+    areset_n : in  std_logic;
+
+    -- Signal interconnect for MaintenanceInbound    --
+    readRequestReadyInbound_i : in  std_logic;
+    writeRequestReadyInbound_i : in  std_logic;
+    readResponseReadyInbound_i : in  std_logic;
+    writeResponseReadyInbound_i : in  std_logic;
+    portWriteReadyInbound_i : in  std_logic;
+    vcInbound_i : in  std_logic;
+    crfInbound_i : in  std_logic;
+    prioInbound_i : in  std_logic_vector( 1 downto 0);
+    ttInbound_i : in  std_logic_vector( 1 downto 0);
+    dstIdInbound_i : in  std_logic_vector(31 downto 0);
+    srcIdInbound_i : in  std_logic_vector(31 downto 0);                  
+    sizeInbound_i : in  std_logic_vector( 3 downto 0);                  
+    statusInbound_i : in  std_logic_vector( 3 downto 0);
+    tidInbound_i : in  std_logic_vector( 7 downto 0);
+    hopInbound_i : in  std_logic_vector( 7 downto 0);
+    offsetInbound_i : in  std_logic_vector(20 downto 0);
+    wdptrInbound_i : in  std_logic;
+    payloadLengthInbound_i : in  std_logic_vector( 2 downto 0);
+    payloadIndexInbound_o : out std_logic_vector( 2 downto 0);                  
+    payloadInbound_i : in  std_logic_vector(63 downto 0);
+    doneInbound_o : out std_logic;
+
+    -- Signal interconnect for MaintenanceOutbound   --
+    readRequestReadyOutbound_o : out std_logic;
+    writeRequestReadyOutbound_o : out std_logic;
+    readResponseReadyOutbound_o : out std_logic;
+    writeResponseReadyOutbound_o : out std_logic;
+    portWriteReadyOutbound_o : out std_logic;
+    vcOutbound_o : out std_logic;
+    crfOutbound_o : out std_logic;
+    prioOutbound_o : out std_logic_vector( 1 downto 0);
+    ttOutbound_o : out std_logic_vector( 1 downto 0);
+    dstIdOutbound_o : out std_logic_vector(31 downto 0);
+    srcIdOutbound_o : out std_logic_vector(31 downto 0);
+    sizeOutbound_o : out std_logic_vector( 3 downto 0);
+    statusOutbound_o : out std_logic_vector( 3 downto 0);
+    tidOutbound_o : out std_logic_vector( 7 downto 0);
+    hopOutbound_o : out std_logic_vector( 7 downto 0);
+    offsetOutbound_o : out std_logic_vector(20 downto 0);
+    wdptrOutbound_o : out std_logic;
+    payloadLengthOutbound_o : out std_logic_vector( 2 downto 0);
+    payloadIndexOutbound_i : in  std_logic_vector( 2 downto 0);
+    payloadOutbound_o : out std_logic_vector(63 downto 0);
+    doneOutbound_i : in  std_logic;
+
+    -- Signal interconnect for RioLogicalMaintenance --
+    readRequestReadyMnt_o : out std_logic;
+    writeRequestReadyMnt_o : out std_logic;
+    sizeMnt_o : out std_logic_vector( 3 downto 0);
+    offsetMnt_o : out std_logic_vector(20 downto 0);
+    wdptrMnt_o : out std_logic;
+    payloadLengthMnt_o : out std_logic_vector( 2 downto 0);
+    payloadIndexMnt_i : in  std_logic_vector( 2 downto 0);
+    payloadMnt_o : out std_logic_vector(63 downto 0);
+    doneMnt_i : in  std_logic;
+    readResponseReadyMnt_i : in  std_logic;
+    writeResponseReadyMnt_i : in  std_logic;
+    statusMnt_i : in  std_logic_vector( 3 downto 0);
+    payloadLengthMnt_i : in  std_logic_vector( 2 downto 0);
+    payloadIndexMnt_o : out std_logic_vector( 2 downto 0);
+    payloadMnt_i : in  std_logic_vector(63 downto 0);
+    doneMnt_o : out std_logic;
+
+    -- Port control / Arbiter
+    inboundFramePort_i : in  std_logic_vector( 7 downto 0);
+    outboundFramePort_o : out std_logic_vector( 7 downto 0);
+    lookupData_i : in  std_logic_vector( 7 downto 0);
+    lookupAddr_o : out std_logic_vector(15 downto 0);
+    lookupStb_o : out std_logic;
+    lookupAck_i : in  std_logic;
+
+    -- Various signals for the Error Reporting Port-Write Packet Data Payload/HotSwap event --
+    hotSwapEvent_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0);
+    dev16_deviceID_msb : in  std_logic_vector( 7 downto 0); 
+    dev8_deviceID : in  std_logic_vector( 7 downto 0); 
+    portWriteTransmissionDisable_i : in  std_logic;                                       -- Normal='0', if '1' no error-reporting port-write event message is sent.
+    componentTag_CSR_i : in  std_logic_vector(31 downto 0);                   -- CSR is sent with Error Reporting port-write event message.
+    portNwriteDisabled_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0) := (others=>'0'); -- from lp-serial: Port N Error and Status CSR (standard:bit 26), if set -no port write event will be generated for the port.
+    portNwritePending_i : in  std_logic_vector(SWITCH_PORTS-1 downto 0);       -- If set, the port-write has not been acknowledged and the packet shall restransmitt until ack.
+    setPortNwritePending_o : out std_logic_vector(SWITCH_PORTS-1 downto 0);       -- Commands to set Port-Write Pending Status Bit of Port-n-Error and Status CSR
+    portNindex_o : out integer range 0 to SWITCH_PORTS;                 -- Index selector for PortNerrorDetect_CSR_i
+    portNerrorDetect_CSR_i : in  std_logic_vector(31 downto 0);                   -- CSR is sent with Error Reporting port-write event message.
+    logicalTransportLayerErrorDetectCSR_i : in  std_logic_vector(31 downto 0) := (others=>'0')   -- CSR is sent with Error Reporting port-write event message.
+    );
 end entity;
 
 
 -------------------------------------------------------------------------------
--- Architecture for MaintenancePortManager
+-- Architecture for RioSwitchMaintenancePortManager
 -------------------------------------------------------------------------------
-architecture rtl of MaintenancePortManager is
+architecture rtl of RioSwitchMaintenancePortManager is
 
 --constant tt_Dev8               : std_logic_vector( 1 downto 0) := b"00";  --tt field definition for  8 bit address mode
   constant tt_Dev16              : std_logic_vector( 1 downto 0) := b"01";  --tt field definition for 16 bit address mode
@@ -268,19 +266,45 @@ begin
     end if;
   end process;
   
-  --Instantiation of port-Write Timers. 
-  --Timer is reset on initiated tx of a port-write error-event, and timer output is used to gate re-transmission after expiration.
-  pwtogen:for i in 0 to SWITCH_PORTS-1 
-  generate
-    PWtimerN: Timer
-      generic map(timerWidth => PORT_WRITE_TIMEOUT_RESET_VALUE'length,
-                  repeatedPulse => false) --keep output high after expiration
-      port map(clk_i => clk,
-               reset_ni => areset_n,
-               resetValue_i => PORT_WRITE_TIMEOUT_RESET_VALUE, 
-               timerTick_i => Tick_1_5us_i,           --tick rate strobe input for this timer: x"FFFF" = 100ms --> 1.52590219 us/tick --> 655350 Hz
-               wd_i => portNwriteTimeoutWD(i),  --watch dog input "from kicker" -ie. toggle this high whenever a packet is created
-               expired_o => portNwriteTimeout(i));
+  -- Instantiation of port-write timers. 
+  -- The timer supervises when a port-write has been acknowledged and resends
+  -- the port-write if the acknowledge has taken a too long time to receive.
+  portWriteTimerN: for portIndex in 0 to SWITCH_PORTS-1 generate
+    portWriteTimer: block
+      port(
+        clk : in std_logic;
+        areset_n : in std_logic;
+        clear_i : in std_logic;
+        timeout_o : out std_logic);
+
+      port map(clk=>clk,
+               areset_n=>areset_n,
+               clear_i=>portNwriteTimeoutWD(portIndex),
+               timeout_o=>portNwriteTimeout(portIndex));
+
+      signal counter : natural range 0 to PORT_WRITE_TIMEOUT_VALUE := PORT_WRITE_TIMEOUT_VALUE;
+    begin
+
+      process(clk, areset_n)
+      begin
+        if (areset_n = '0') then
+          counter <= PORT_WRITE_TIMEOUT_VALUE;
+          timeout_o <= '0';
+        elsif (rising_edge(clk)) then
+          if (clear_i = '1') and (PORT_WRITE_TIMEOUT_VALUE /= 0) then
+            counter <= PORT_WRITE_TIMEOUT_VALUE;
+            timeout_o <= '0';
+          else
+            if (counter /= 0) then
+              counter <= counter - 1;
+            else
+              timeout_o <= '1';
+            end if;
+          end if;
+        end if;
+      end process;
+
+    end block;
   end generate;
   
   -----------------------------------------------------------------------------
@@ -314,7 +338,8 @@ begin
     elsif rising_edge(clk) then
       case masterState is
         
-        when STATE_IDLE => ---------------------------------------------------------------------
+        when STATE_IDLE =>
+          ---------------------------------------------------------------------
           -- Wait for frame to be available.
           ---------------------------------------------------------------------
           -- REMARK: Discard erronous frames.

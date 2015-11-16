@@ -10,7 +10,7 @@
 --
 -- OpenRIO is distributed in the hope that it will be useful,
 -- but WITHOUT ANY WARRANTY; without even the implied warranty of
--- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 -- GNU Lesser General Public License for more details.
 --
 -- You should have received a copy of the GNU General Lesser Public License
@@ -59,14 +59,15 @@ architecture TestRioSwitchImpl of TestRioSwitch is
   component RioSwitch is
     generic(
       ENABLE_DISCARD_UNINITIALIZED_ROUTES : boolean := false;
+      LINK_UNINIT_TIMER_WIDTH : natural;
+      PORT_WRITE_TIMEOUT_VALUE : natural;
       SWITCH_PORTS : natural range 3 to 255 := 4; 
       DEVICE_IDENTITY : std_logic_vector(15 downto 0);
       DEVICE_VENDOR_IDENTITY : std_logic_vector(15 downto 0);
       DEVICE_REV : std_logic_vector(31 downto 0);
       ASSY_IDENTITY : std_logic_vector(15 downto 0);
       ASSY_VENDOR_IDENTITY : std_logic_vector(15 downto 0);
-      ASSY_REV : std_logic_vector(15 downto 0);
-      PORT_WRITE_TIMEOUT_RESET_VALUE : std_logic_vector(15 downto 0) := x"FFFF");
+      ASSY_REV : std_logic_vector(15 downto 0));
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -116,7 +117,7 @@ architecture TestRioSwitchImpl of TestRioSwitch is
   constant SWITCH_ASSY_VENDOR_IDENTITY : std_logic_vector(15 downto 0) := x"2233";
   constant SWITCH_ASSY_REV : std_logic_vector(15 downto 0) := x"4455";
   
-  constant verboseInfo : boolean := false;      --if True, print info in vPrint-strings (neat when debugging, set to false for regression tests)
+  constant verboseInfo : boolean := true;      --if True, print info in vPrint-strings (neat when debugging, set to false for regression tests)
   
   constant tt_8bit  : std_logic_vector(1 downto 0) := b"00";
   constant tt_16bit : std_logic_vector(1 downto 0) := b"01";
@@ -225,6 +226,7 @@ begin
   TestSwitch: RioSwitch
     generic map(
       ENABLE_DISCARD_UNINITIALIZED_ROUTES=>true,
+      LINK_UNINIT_TIMER_WIDTH=>28,
       SWITCH_PORTS=>PORTS,
       DEVICE_IDENTITY=>SWITCH_IDENTITY,
       DEVICE_VENDOR_IDENTITY=>SWITCH_VENDOR_IDENTITY,
@@ -232,7 +234,7 @@ begin
       ASSY_IDENTITY=>SWITCH_ASSY_IDENTITY,
       ASSY_VENDOR_IDENTITY=>SWITCH_ASSY_VENDOR_IDENTITY,
       ASSY_REV=>SWITCH_ASSY_REV,
-      PORT_WRITE_TIMEOUT_RESET_VALUE=>x"0020")  -- x"0020": override default 100ms timeout -> 48.8 us
+      PORT_WRITE_TIMEOUT_VALUE=>1220)  -- x"0020": override default 100ms timeout -> 48.8 us
     port map(
       clk=>clk, areset_n=>areset_n, 
       writeFrameFull_i=>writeFrameFull,
@@ -1282,8 +1284,6 @@ begin
    
     wait for 10 us;             
 
-    TestEnd;
-    
     ---------------------------------------------------------------------------
     TestSpec("-----------------------------------------------------------------");
     TestSpec("TG_RioSwitch-TC4");
@@ -1296,35 +1296,36 @@ begin
     ---------------------------------------------------------------------------
     TestCaseStart("TG_RioSwitch-TC4-Step1");
     ---------------------------------------------------------------------------
-    --
+
     lpsAddr:=16#0100#; --Base address of the LP_serial Block, within configuration space.
     embAddr:=16#2100#; --Base address of the Error Management Block, within configuration space.
-    --
+
     vPrint("Check that 'Assembly Informaiton CAR' point to LP-Serial EF-block.");
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"01", address=>x"00000c", data=>(SWITCH_ASSY_REV & std_logic_vector(to_unsigned(lpsAddr,16))));
-    --
+
     vPrint("Check that EF is 'LP-Serial Register Block Header' and points to Error Management EF-block.");
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"02", address=>std_logic_vector(to_unsigned(lpsAddr,24)), data=>(std_logic_vector(to_unsigned(embAddr,16)) & x"0003")); --expect address to error management block & x"0003" for LP-s.
-    --
+
     vPrint("Check that EF is 'Error Management/Hot-Swap Register Block Header' and points to 0=N/A");
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"03", address=>std_logic_vector(to_unsigned(embAddr,24)), data=>(x"0000_0017")); --expect address 0 & x"0017" for hot-swap (later when error mangement is implemented, changes to x"0007").
-    --
+
     vPrint("Check 'Error Managment/HotSwap Extensions Block CAR'");
     ReadConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                  tid=>x"04", address=>std_logic_vector(to_unsigned(embAddr+16#004#,24)), data=>(x"C000_0000"));
+
     ---------------------------------------------------------------------------
     
-    linkInitialized(0) <= '1'; --assume that normal case is "link up" when HotSwap-bits is being configured by the CPU..
-    --
+    linkInitialized(0) <= '1'; --assume that normal case is "link up" when HotSwap-bits is being configured by the CPU.
+
     destIdErrorEvent <= x"E770";  --Destination Address for all Error Event Port-Writes
     expectedDestPort <= 0;        --Port where the port-write is expected to appear, i.e. default route
-    --
-    componentTag<=x"ABBA_5AAB";   --A unique Tag for the Device Under Test..
+
+    componentTag<=x"ABBA_5AAB";   --A unique Tag for the Device Under Test.
     wait for 10 us;             
-    --
+
     vPrint("WriteConfig reg. at address " & integer'image(embAddr+16#028#) & " (set Target Device Id)"); 
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                   tid=>x"f0", address=>std_logic_vector(to_unsigned(embAddr+16#028#,24)), data=>destIdErrorEvent & x"8000"); -- Port Write Target deviceID CSR:  Target device address: E770 (the receiver of the event notifications)
@@ -1345,17 +1346,20 @@ begin
 
     ExchangeFrames;
     
-    vPrint("WriteConfig reg. at address x""078"" (configure Default Route)"); --configure default route 
+    -- Set the defult route to activly point to port 0.
+    vPrint("WriteConfig reg. at address x""078"" (configure Default Route)");
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"f3", address=>x"000078", data=>(others=>'0')); --set defult route to port 0
+                  tid=>x"f3", address=>x"000078", data=>x"00000080");
     ExchangeFrames;
 
+    ---------------------------------------------------------------------------
     TestSpec("-----------------------------------------------------------------");
     TestSpec("Step 2:");
     TestSpec("Action: Loop through all ports and ..");
     TestSpec("   A)    ..set LinkInitialized<='0' to initiate a HotSwap event, then");
     TestSpec("   B)    ..set LinkInitialized<='1' to initiate a HotSwap event.     ");
     TestSpec("Result: The switch should generate a Port-Write for each event.");
+    ---------------------------------------------------------------------------
     
     for i in 0 to PORTS-1 loop             
        --activate events for link OK->NOK, and NOK->OK, but not the discard timer event
@@ -1466,6 +1470,7 @@ begin
        
     end loop;
 
+    ---------------------------------------------------------------------------
     TestSpec("-----------------------------------------------------------------");
     TestSpec("Step 3:");
     TestSpec("Action: For all ports at the same time..");
@@ -1529,7 +1534,7 @@ begin
                      tid=>x"e5", address=> std_logic_vector(to_unsigned(lpsAddr+16#058#+16#0020#*i,24)), data=>x"0000_0001");  -- Port n Error and Status CSR
        ExchangeFrames;
     end loop;
-    --
+
     wait for 80 us; --wait some time to verify that error-event-port-write is not re-triggered, as the port-write-pending bit has been cleared.
     wait until rising_edge(clk);
     
@@ -1608,6 +1613,7 @@ begin
     end loop;
 
     
+    ---------------------------------------------------------------------------
     TestSpec("-----------------------------------------------------------------");
     TestSpec("Step 4:");
     TestSpec("Action: Send for each port, a Maintenance Port-Write packet,");
@@ -1621,12 +1627,12 @@ begin
     --configure default route 
     vPrint("WriteConfig reg. at address x""078"" (configure Default Route)");
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                  tid=>x"fa", address=>x"000078", data=>x"0000_00" & std_logic_vector(to_unsigned(expectedDestPort,8))); --set defult route to port ..
+                  tid=>x"fa", address=>x"000078", data=>x"0000_00" & '1' & std_logic_vector(to_unsigned(expectedDestPort,7))); --set defult route to port ..
     ExchangeFrames;
     
     for portIndex in 0 to PORTS-1 loop
        vPrint("TC4:Step4 - Routing from Port" & integer'image(portIndex) & " to Port" & integer'image(expectedDestPort));
-       --
+
        maintData(0):=x"9876_5432_10FE_DCBA";
        maintData(1):=x"ABCD_EF01_2345_6789";
        SendFrame(portIndex=>portIndex,        -- Maintenence Port-Write Transaction
@@ -1656,6 +1662,7 @@ begin
        
     end loop;
         
+    ---------------------------------------------------------------------------
     TestSpec("-----------------------------------------------------------------");
     TestSpec("Step 5:");
     TestSpec("Action: Set PortWriteTransmissionDisable='1' and Loop through all ports and ..");
@@ -1670,12 +1677,13 @@ begin
     TestSpec("   C)    The switch should Not generate a Port-Write for each port.");
 --  TestSpec("   D)    The switch should generate a Port-Write for each port.");
 --  TestSpec("   E)    The switch should generate a Port-Write for each port.");
+    ---------------------------------------------------------------------------
     
     vPrint("WriteConfig reg. 'Port Write Transmission Control CSR' (PortWriteTransmissionDisable<='1')");
     WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
                   tid=>x"fa", address=>std_logic_vector(to_unsigned(embAddr+16#034#,24)), data=>x"0000_0001"); --disable port-writes globally within error management
     ExchangeFrames;
-    --
+
     for i in 0 to PORTS-1 loop             
        --activate events for link OK->NOK, and NOK->OK, but not the discard timer event
        vPrint("WriteConfig reg. 'Port N Error Rate Enable CSR' at address " & integer'image(embAddr+16#044#+16#0040#*i) & " Port" & integer'image(i) & " (Activate events for linkOk2nok and linkNok2ok transitions)"); 
@@ -1726,7 +1734,7 @@ begin
        wait until rising_edge(clk);
        
     end loop;
-    --
+
     ---------------------------------------------------------------------------
     TestCaseStart("TG_RioSwitch-TC4-Step5C");
     ---------------------------------------------------------------------------
@@ -1765,8 +1773,8 @@ begin
        --Define the Link Uninit Timeout
        vPrint("WriteConfig reg. 'Port N Link Uninit Discard Timer CSR' at address " & integer'image(embAddr+16#070#+16#0040#*i) & " Port" & integer'image(i)); 
        WriteConfig32(portIndex=>0, destinationId=>x"0000", sourceId=>x"0002", hop=>x"00",
-                     tid=>x"f5", address=> std_logic_vector(to_unsigned(embAddr+16#070#+16#0040#*i,24)), data=>x"000064_00"); -- Port N Link Uninit Discard Timer CSR
-       ExchangeFrames;                                                                          -- 600 ns/lsb  x"000064" = 60us
+                     tid=>x"f5", address=> std_logic_vector(to_unsigned(embAddr+16#070#+16#0040#*i,24)), data=>x"00005e00"); -- Port N Link Uninit Discard Timer CSR
+       ExchangeFrames;                                                                          -- 640 ns/lsb  x"00005e" = 60us
        
        --clear error detect register  
        vPrint("WriteConfig reg. 'Port N Error Detect CSR' at address " & integer'image(embAddr+16#040#+16#0040#*i) & " Port" & integer'image(i) & " (clear error detect register)"); 
@@ -1791,7 +1799,7 @@ begin
        wait until rising_edge(clk);
     end loop;
 
-    PortNerrorDetectCSR<=x"6000_0000"; -- Link Ok To Uninit transition and Link_Uninit Packet Discard Active (timer period expired)
+    PortNerrorDetectCSR<=x"2000_0000"; -- Link_Uninit Packet Discard Active (timer period expired)
     wait for 0 ns;
     for i in 0 to PORTS-1 loop             
        --setup expected response
