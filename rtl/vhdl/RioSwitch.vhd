@@ -1022,7 +1022,7 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
 
   component RioSwitchHotSwapPortStatus is 
     generic(
-      LINK_UNINIT_TIMER_WIDTH : integer := 24);
+      LINK_UNINIT_TIMER_WIDTH : integer);
     port(
       clk : in  std_logic;
       reset_ni : in  std_logic;
@@ -1033,7 +1033,7 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
       linkUninitToOKTransitionEnable_i : in  std_logic;
       linkUninitPacketDiscardActiveEnable_i : in  std_logic;
       linkUninitPacketDiscardActiveClear_i : in std_logic;
-      linkUninitTimeout_i : in  std_logic_vector(LINK_UNINIT_TIMER_WIDTH-1 downto 0);
+      linkUninitTimeout_i : in  std_logic_vector(23 downto 0);
       
       linkOKToUninitTransition_o : out std_logic;
       linkUninitToOKTransition_o : out std_logic;
@@ -2026,10 +2026,10 @@ begin
                      -- Port N Link Uninit Discard Timer CSR.
                      -----------------------------------------------------------------
                      if configWe = '1' then
-                        LinkUninitTimeout(portIndex) <= configDataWrite(31 downto 8);
+                        linkUninitTimeout(portIndex) <= configDataWrite(31 downto 8);
                      end if;
                      
-                     configDataReadInternal(31 downto 8) <= LinkUninitTimeout(portIndex);   --0xFFFFFF shall correspond to 6-12 s, if 0 the discard timer shall be disabled.
+                     configDataReadInternal(31 downto 8) <= linkUninitTimeout(portIndex);   --0xFFFFFF shall correspond to 6-12 s, if 0 the discard timer shall be disabled.
                      configDataReadInternal( 7 downto 0) <= (others=>'0');
                      
                   elsif(unsigned(configAdr) = (x"000148" + (x"000020"*portIndex))) then
