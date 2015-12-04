@@ -91,6 +91,7 @@ typedef enum
 #define RIOPACKET_PORT_WRITE_TRANSMISSION_CONTROL_CSR(offset) ((offset)+0x34ul)
 #define RIOPACKET_PORT_N_ERROR_DETECT_CSR(offset, port) ((offset)+(0x40ul*(port)))
 #define RIOPACKET_PORT_N_ERROR_RATE_ENABLE_CSR(offset, port) ((offset)+(0x44ul*(port)))
+#define RIOPACKET_PORT_N_LINK_UNINIT_DISCARD_TIMER_CSR(offset, port) ((offset)+(0x70ul+(0x40ul*(port))))
 
 /** @note Deprecated constants. Use the RIOPACKET_ prefixed constants instead. */
 #define DEVICE_IDENTITY_CAR ((uint32_t)0x00000000ul)
@@ -277,6 +278,23 @@ uint16_t RIOPACKET_serialize(const RioPacket_t *packet, const uint16_t size, uin
  * once it has been deserialized.
  */
 uint8_t RIOPACKET_deserialize(RioPacket_t *packet, const uint16_t size, const uint8_t *buffer);
+
+
+/**
+ * \brief Convert a packet into a printable buffer.
+ *
+ * \param[in] packet The packet to operate on.
+ * \param[in] buffer The address to write the string to.
+ *
+ * This function converts a packet into a human readable '\0'-terminated ASCII-format and 
+ * write it to the argument buffer. 
+ *
+ * \note The caller must guarantee that the destination buffer is large enough to contain 
+ * the resulting string.
+ */
+#ifdef ENABLE_TOSTRING
+void RIOPACKET_toString(RioPacket_t *packet, char *buffer);
+#endif
 
 
 /**
@@ -870,8 +888,10 @@ void RIOPACKET_setResponseWithPayload(RioPacket_t *packet,
  * \param[out] srcId The source deviceId in this packet.
  * \param[out] tid The transaction identifier in this packet.
  * \param[in] offset The offset into the payload to start reading from.
- * \param[out] payloadSize The number of bytes in the payload.
+ * \param[in] payloadSize The number of bytes to get from the payload. If set to zero, 
+ * all received bytes are copied.
  * \param[out] payload The payload of the packet.
+ * \return The number of bytes that were copied.
  *
  * This function returns the content of a packet as if it contained a RESPONSE with payload.
  *
@@ -890,10 +910,10 @@ void RIOPACKET_setResponseWithPayload(RioPacket_t *packet,
  *  response. The address used in the RIOPACKET_setNread() can be used directly since
  *  a modulo8 is done on it before it is used as offset.
  */
-void RIOPACKET_getResponseWithPayload(const RioPacket_t *packet, 
-                                      uint16_t *dstId, uint16_t *srcId, 
-                                      uint8_t *tid, uint8_t offset,
-                                      uint16_t *payloadSize, uint8_t *payload);
+uint16_t RIOPACKET_getResponseWithPayload(const RioPacket_t *packet, 
+                                          uint16_t *dstId, uint16_t *srcId, 
+                                          uint8_t *tid, uint8_t offset,
+                                          uint16_t payloadSize, uint8_t *payload);
 
 
 /**

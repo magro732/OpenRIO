@@ -262,6 +262,256 @@ uint8_t RIOPACKET_deserialize(RioPacket_t *packet, const uint16_t size, const ui
 }
 
 
+#ifdef ENABLE_TOSTRING
+#include <stdio.h>
+void RIOPACKET_toString(RioPacket_t *packet, char *buffer)
+{
+  uint8_t ftype;
+  uint8_t transaction;
+  uint16_t destId;
+  uint16_t srcId;
+  uint8_t tid;
+
+
+  ftype = RIOPACKET_getFtype(packet);
+  transaction = RIOPACKET_getTransaction(packet);
+  
+  /* Check the message type and switch on it. */
+  switch(ftype)
+  {
+    case RIOPACKET_FTYPE_REQUEST:
+      /**************************************************************************************
+       * A REQUEST has been received.
+       **************************************************************************************/
+      {
+        uint32_t address;
+        uint16_t payloadSize;
+
+
+        if(transaction == RIOPACKET_TRANSACTION_REQUEST_NREAD)
+        {
+          RIOPACKET_getNread(packet, &destId, &srcId, &tid, &address, &payloadSize);
+          sprintf(buffer, 
+                  "NREAD: dstid=%04x srcid=%04x tid=%02x address=%08x payloadSize=%04x", 
+                  destId, srcId, tid, address, payloadSize);
+        }
+        else
+        {
+          sprintf(buffer, "UNKNOWN:ftype=%02x transaction=%02x", ftype, transaction);
+        }
+      }
+      break;
+
+    case RIOPACKET_FTYPE_WRITE:
+      /**************************************************************************************
+       * An WRITE has been received.
+       **************************************************************************************/
+      {
+        uint32_t address;
+        uint16_t payloadSize;
+        uint8_t payload[256];
+        uint32_t index;
+        uint32_t i;
+
+
+        if(transaction == RIOPACKET_TRANSACTION_WRITE_NWRITE)
+        {
+          RIOPACKET_getNwrite(packet, &destId, &srcId, &address, &payloadSize, payload);
+
+          index = sprintf(&buffer[0], 
+                          "NWRITE: dstid=%04x srcid=%04x address=%08x payloadSize=%04x ", 
+                          destId, srcId, address, payloadSize);
+          for(i = 0; i < payloadSize; i++)
+          {
+            index += sprintf(&buffer[index], "%02x", payload[i]);
+          }
+        }
+        else if(transaction == RIOPACKET_TRANSACTION_WRITE_NWRITER)
+        {
+          RIOPACKET_getNwriteR(packet, &destId, &srcId, &tid, &address, &payloadSize, payload);
+
+          index = sprintf(&buffer[0], 
+                          "NWRITER: dstid=%04x srcid=%04x tid=%02x address=%08x payloadSize=%04x ", 
+                          destId, srcId, tid, address, payloadSize);
+          for(i = 0; i < payloadSize; i++)
+          {
+            index += sprintf(&buffer[index], "%02x", payload[i]);
+          }
+        }
+        else
+        {
+          sprintf(buffer, "UNKNOWN:ftype=%02x transaction=%02x", ftype, transaction);
+        }
+      }
+      break;
+
+    case RIOPACKET_FTYPE_MAINTENANCE:
+      /**************************************************************************************
+       * A maintenance packet has been received.
+       **************************************************************************************/
+      {
+        uint8_t hop;
+        uint32_t offset;
+        uint8_t status;
+        uint32_t data;
+
+
+        /* Check the transaction to determine the type. */
+        if(transaction == RIOPACKET_TRANSACTION_MAINT_READ_REQUEST)
+        {
+          /* Maintenance read request. */
+          RIOPACKET_getMaintReadRequest(packet, &destId, &srcId, &hop, &tid, &offset);
+          sprintf(buffer, 
+                  "MAINTREADREQUEST: dstid=%04x srcid=%04x tid=%02x hop=%02x offset=%08x", 
+                  destId, srcId, tid, hop, offset);
+        }
+        else if(transaction == RIOPACKET_TRANSACTION_MAINT_WRITE_REQUEST)
+        {
+          /* Maintenance write request. */
+          RIOPACKET_getMaintWriteRequest(packet, &destId, &srcId, &hop, &tid, &offset, &data);
+          sprintf(buffer, 
+                  "MAINTWRITEREQUEST: dstid=%04x srcid=%04x tid=%02x hop=%02x offset=%08x data=%08x", 
+                  destId, srcId, tid, hop, offset, data);
+        }
+        else if(transaction == RIOPACKET_TRANSACTION_MAINT_READ_RESPONSE)
+        {
+          /* Maintenance read response. */
+          RIOPACKET_getMaintReadResponse(packet, &destId, &srcId, &tid, &status, &data);
+          sprintf(buffer, 
+                  "MAINTREADRESPONSE: dstid=%04x srcid=%04x tid=%02x status=%i data=%08x", 
+                  destId, srcId, tid, status, data);
+        }
+        else if(transaction == RIOPACKET_TRANSACTION_MAINT_WRITE_RESPONSE)
+        {
+          /* Maintenance write repsonse. */
+          RIOPACKET_getMaintWriteResponse(packet, &destId, &srcId, &tid, &status);
+          sprintf(buffer, 
+                  "MAINTWRITERESPONSE: dstid=%04x srcid=%04x tid=%02x status=%i", 
+                  destId, srcId, tid, status);
+        }
+        else if(transaction == RIOPACKET_TRANSACTION_MAINT_PORT_WRITE_REQUEST)
+        {
+          uint32_t componentTag;
+          uint32_t portErrorDetect;
+          uint32_t implementationSpecific;
+          uint8_t portId;
+          uint32_t logicalTransportErrorDetect;
+          
+          /* Maintenance port write packet. */
+          RIOPACKET_getMaintPortWrite(packet, &destId, &srcId, 
+                                      &componentTag, &portErrorDetect, &implementationSpecific, 
+                                      &portId, &logicalTransportErrorDetect);
+          sprintf(buffer, 
+                  "MAINTPORTWRITE: dstid=%04x srcid=%04x componentTag=%08x portErrorDetect=%08x "
+                  "implementationSpecific=%08x portId=%02x logicalTransportErrorDetect=%08x", 
+                  destId, srcId, componentTag, portErrorDetect, implementationSpecific, portId, 
+                  logicalTransportErrorDetect);
+        }
+        else
+        {
+          sprintf(buffer, "UNKNOWN:ftype=%02x transaction=%02x", ftype, transaction);
+        }
+      }
+      break;
+
+    case RIOPACKET_FTYPE_DOORBELL:
+      /**************************************************************************************
+       * A doorbell packet has been received.
+       **************************************************************************************/
+      {
+        uint16_t info;
+
+
+        RIOPACKET_getDoorbell(packet, &destId, &srcId, &tid, &info);
+        sprintf(buffer, 
+                "DOORBELL: dstid=%04x srcid=%04x tid=%02x info=%04x", 
+                destId, srcId, tid, info);
+      }
+      break;
+
+    case RIOPACKET_FTYPE_MESSAGE:
+      /**************************************************************************************
+       * A messaget has been received.
+       **************************************************************************************/
+      {
+        uint16_t payloadSize;
+        uint8_t payload[256];
+        uint32_t index;
+        uint32_t i;
+
+
+        RIOPACKET_getMessage(packet, &destId, &srcId, &tid, &payloadSize, payload);
+
+        index = sprintf(&buffer[0], 
+                        "MESSAGE: dstid=%04x srcid=%04x mailbox=%02x payloadSize=%04x ", 
+                        destId, srcId, tid, payloadSize);
+        for(i = 0; i < payloadSize; i++)
+        {
+          index += sprintf(&buffer[index], "%02x", payload[i]);
+        }
+      }
+      break;
+
+    case RIOPACKET_FTYPE_RESPONSE:
+      /**************************************************************************************
+       * A response packet has been received.
+       **************************************************************************************/
+      {
+        uint8_t status;
+        uint16_t payloadSize;
+        uint8_t payload[256];
+
+
+        if(transaction == RIOPACKET_TRANSACTION_RESPONSE_NO_PAYLOAD)
+        {
+          RIOPACKET_getResponseNoPayload(packet, &destId, &srcId, &tid, &status);
+          sprintf(buffer, 
+                  "RESPONSENOPAYLOAD: dstid=%04x srcid=%04x tid=%02x status=%02x", 
+                  destId, srcId, tid, status);
+        }
+        else if(transaction == RIOPACKET_TRANSACTION_RESPONSE_MESSAGE_RESPONSE)
+        {
+          RIOPACKET_getResponseMessage(packet, &destId, &srcId, &tid, &status);
+          sprintf(buffer, 
+                  "RESPONSEMESSAGE: dstid=%04x srcid=%04x mailbox=%02x status=%02x", 
+                  destId, srcId, tid, status);
+        }
+        else if(transaction == RIOPACKET_TRANSACTION_RESPONSE_WITH_PAYLOAD)
+        {
+          uint32_t i;
+          uint32_t index;
+
+
+          payloadSize = RIOPACKET_getResponseWithPayload(packet, &destId, &srcId, &tid, 0, 0, payload);
+
+          index = sprintf(&buffer[0], 
+                          "RESPONSEWITHPAYLOAD: dstid=%04x srcid=%04x tid=%02x payloadSize=%04x ", 
+                          destId, srcId, tid, payloadSize);
+          for(i = 0; i < payloadSize; i++)
+          {
+            index += sprintf(&buffer[index], "%02x", payload[i]);
+          }
+        }
+        else
+        {
+          sprintf(buffer, "UNKNOWN:ftype=%02x transaction=%02x", ftype, transaction);
+        }
+      }
+      break;
+
+    default:
+      /**************************************************************************************
+       * Unsupported ftype. 
+       **************************************************************************************/
+      sprintf(buffer, "UNKNOWN:ftype=%02x transaction=%02x", ftype, transaction);
+      break;
+  }
+
+  return;
+}
+#endif
+
+
 uint8_t RIOPACKET_getFtype(const RioPacket_t *packet)
 {
   ASSERT(packet != NULL, "Invalid packet pointer");
@@ -1165,23 +1415,30 @@ void RIOPACKET_setResponseWithPayload(RioPacket_t *packet,
 }
 
 
-void RIOPACKET_getResponseWithPayload(const RioPacket_t *packet, 
-                                      uint16_t *dstId, uint16_t *srcId, 
-                                      uint8_t *tid, uint8_t offset, 
-                                      uint16_t *payloadSize, uint8_t *payload)
+uint16_t RIOPACKET_getResponseWithPayload(const RioPacket_t *packet, 
+                                          uint16_t *dstId, uint16_t *srcId, 
+                                          uint8_t *tid, uint8_t offset, 
+                                          uint16_t payloadSize, uint8_t *payload)
 {
   ASSERT(packet != NULL, "Invalid packet pointer");
   ASSERT(dstId != NULL, "Invalid dstId pointer");
   ASSERT(srcId != NULL, "Invalid srcId pointer");
   ASSERT(tid != NULL, "Invalid tid pointer");
-  ASSERT(payloadSize != NULL, "Invalid payloadSize pointer");
   ASSERT(payload != NULL, "Invalid payload pointer");
 
   *dstId = DESTID_GET(packet->payload);
   *srcId = SRCID_GET(packet->payload);
   *tid = TID_GET(packet->payload);
-  *payloadSize = getPacketPayload(&(packet->payload[0]), 8u, ((uint16_t) offset) & 0x7u, 
-                                  (((uint16_t) packet->size)-3u)*4u, payload);
+  if(payloadSize != 0)
+  {
+    return getPacketPayload(&(packet->payload[0]), 8u, ((uint16_t) offset) & 0x7u, 
+                            payloadSize, payload);
+  }
+  else
+  {
+    return getPacketPayload(&(packet->payload[0]), 8u, ((uint16_t) offset) & 0x7u, 
+                            (((uint16_t) packet->size)-3u)*4u, payload);
+  }
 }
 
 

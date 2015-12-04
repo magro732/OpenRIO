@@ -26,7 +26,7 @@
 #define MODULE_TEST
 #include "riostack.c"
 #include "riopacket.c"
-#include <CUnit/Headers/CUnit.h>
+#include <CUnit/CUnit.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -2698,5 +2698,14 @@ CU_ErrorCode addTests( void )
 
   return CUE_SUCCESS;
 }
+
+
+int main(int argc, char argv[])
+{
+  addTests();
+  CU_basic_run_tests();
+  return CU_get_error();
+}
+
 
 /*************************** end of file **************************************/

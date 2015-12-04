@@ -27,6 +27,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include "CUnit/CUnit.h"
 
 #define PrintS(s) printf(s "\n")
 
@@ -406,7 +408,7 @@ void allTests(void)
   TESTEXPR(dstid, 0x1234);
   TESTEXPR(srcid, 0x2345);
   TESTEXPR(tid, 0x34);
-  TESTEXPR(status, 0xde);
+  TESTEXPR(status, 0x0e);
   TESTEXPR(data, 0x4567);
 
   RIOPACKET_setMaintWriteRequest(&packet, 0xc0de, 0xbabe, 0x13, 0x41, 0xffffffff, 0x12345678);
@@ -429,7 +431,7 @@ void allTests(void)
   TESTEXPR(dstid, 0x1234);
   TESTEXPR(srcid, 0x2345);
   TESTEXPR(tid, 0x34);
-  TESTEXPR(status, 0xad);
+  TESTEXPR(status, 0x0d);
 
   RIOPACKET_setMaintPortWrite(&packet, 0x1234, 0x2345, 0x34567890, 0x45678901, 0x56789012, 0x67, 0x78901234);
   RIOPACKET_getMaintPortWrite(&packet, &dstid, &srcid, &componentTag, &portErrorDetect, &implementationSpecific, &portId, &logicalTransportErrorDetect);
@@ -536,7 +538,7 @@ void allTests(void)
 
   memset(payload, 0, sizeof(payload));
   RIOPACKET_setResponseWithPayload(&packet, 0x1234, 0x2345, 0x34, 0, payloadSizeExpected, payloadExpected);
-  RIOPACKET_getResponseWithPayload(&packet, &dstid, &srcid, &tid, 0, &payloadSize, payload);
+  payloadSize = RIOPACKET_getResponseWithPayload(&packet, &dstid, &srcid, &tid, 0, payloadSizeExpected, payload);
 
   TESTEXPR(RIOPACKET_getTransaction(&packet), RIOPACKET_TRANSACTION_RESPONSE_WITH_PAYLOAD);
   TESTCOND(RIOPACKET_valid(&packet));
@@ -550,12 +552,52 @@ void allTests(void)
 
   memset(payload, 0, sizeof(payload));
   RIOPACKET_setResponseWithPayload(&packet, 0x1234, 0x2345, 0x34, 13, payloadSizeExpected-13, payloadExpected);
-  RIOPACKET_getResponseWithPayload(&packet, &dstid, &srcid, &tid, 13, &payloadSize, payload);
+  payloadSize = RIOPACKET_getResponseWithPayload(&packet, &dstid, &srcid, &tid, 13, payloadSizeExpected-13, payload);
 
   TESTCOND(RIOPACKET_valid(&packet));
-  TESTEXPR(payloadSize, payloadSizeExpected-8);
+  TESTEXPR(payloadSize, payloadSizeExpected-13);
   TESTEXPR(memcmp(payload, payloadExpected, payloadSizeExpected-13), 0);
 
+  /* Response with small payload */
+
+  memset(payload, 0x55, sizeof(payload));
+  RIOPACKET_setResponseWithPayload(&packet, 0x1234, 0x2345, 0x34, 0, 1, payloadExpected);
+  payloadSize = RIOPACKET_getResponseWithPayload(&packet, &dstid, &srcid, &tid, 0, 1, payload);
+
+  TESTEXPR(RIOPACKET_getTransaction(&packet), RIOPACKET_TRANSACTION_RESPONSE_WITH_PAYLOAD);
+  TESTCOND(RIOPACKET_valid(&packet));
+  TESTEXPR(dstid, 0x1234);
+  TESTEXPR(srcid, 0x2345);
+  TESTEXPR(tid, 0x34);
+  TESTEXPR(payloadSize, 1);
+  TESTEXPR(payload[0], payloadExpected[0]);
+  for(i = 1; i < sizeof(payload); i++)
+  {
+    TESTEXPR(payload[i], 0x55);
+  }
+  
+  /* Response with unknown sized payload */
+
+  memset(payload, 0x55, sizeof(payload));
+  RIOPACKET_setResponseWithPayload(&packet, 0x1234, 0x2345, 0x34, 0, 1, payloadExpected);
+  payloadSize = RIOPACKET_getResponseWithPayload(&packet, &dstid, &srcid, &tid, 0, 0, payload);
+
+  TESTEXPR(RIOPACKET_getTransaction(&packet), RIOPACKET_TRANSACTION_RESPONSE_WITH_PAYLOAD);
+  TESTCOND(RIOPACKET_valid(&packet));
+  TESTEXPR(dstid, 0x1234);
+  TESTEXPR(srcid, 0x2345);
+  TESTEXPR(tid, 0x34);
+  TESTEXPR(payloadSize, 8);
+  TESTEXPR(payload[0], payloadExpected[0]);
+  for(i = 1; i < 8; i++)
+  {
+    TESTEXPR(payload[i], 0x00);
+  }
+  for(i = 8; i < sizeof(payload); i++)
+  {
+    TESTEXPR(payload[i], 0x55);
+  }
+  
   /******************************************************************************/
   TESTEND;
   /******************************************************************************/
@@ -2974,5 +3016,14 @@ CU_ErrorCode addTests( void )
 
   return CUE_SUCCESS;
 }
+
+
+int main(int argc, char argv[])
+{
+  addTests();
+  CU_basic_run_tests();
+  return CU_get_error();
+}
+
 
 /*************************** end of file **************************************/

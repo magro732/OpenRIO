@@ -13,40 +13,33 @@
 #define __RIO_CONFIG
 
 /*******************************************************************************
-* Includes
-*******************************************************************************/
+ * Includes
+ *******************************************************************************/
 
-#include <stdint.h>
-
-/*******************************************************************************
-* Global typedefs
-*******************************************************************************/
-
-#ifndef ASSERT
 #ifdef MODULE_TEST
-#include <stdio.h>
-#define ASSERT(c, s) (c)?:fprintf(stderr, s)
-#endif
-#endif
-
-#ifndef ASSERT0
-#ifdef MODULE_TEST
-#include <stdio.h>
-#define ASSERT0(s) fprintf(stderr, s)
-#endif
-#endif
-
-#ifndef DEBUG_OUT
-#define DEBUG_OUT(...) fprintf(stderr, __VA_ARGS__)
+#include <CUnit/CUnit.h>
 #endif
 
 /*******************************************************************************
-* Global declarations
-*******************************************************************************/
+ * Global macros
+ *******************************************************************************/
+
+#ifdef MODULE_TEST
+#define ASSERT0(s) { CU_ASSERT( TEST_numExpectedAssertsRemaining > 0 ); --TEST_numExpectedAssertsRemaining; }
+#define ASSERT(c, s) { if( !(c) ) { ASSERT0( s ); } }
+#endif
+
+/*******************************************************************************
+ * Global declarations
+ *******************************************************************************/
  
+#ifdef MODULE_TEST
+extern int TEST_numExpectedAssertsRemaining;
+#endif
+
 /*******************************************************************************
-* Global function prototypes
-*******************************************************************************/
+ * Global function prototypes
+ *******************************************************************************/
  
 #endif // __RIO_CONFIG
  
