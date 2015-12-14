@@ -2405,7 +2405,7 @@ begin
   -----------------------------------------------------------------------------
   -- Interconnection.
   -----------------------------------------------------------------------------
-  stb_o <= stb_i(selectedMaster);
+  stb_o <= stb_i(selectedMaster) and activeCycle;
   addr_o <= addr_i(selectedMaster);
 
   Interconnect: for i in 0 to WIDTH-1 generate
