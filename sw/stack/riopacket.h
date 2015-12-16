@@ -81,17 +81,17 @@ typedef enum
 #define RIOPACKET_PORT_LINK_TIMEOUT_CONTROL_CSR(offset) ((offset) + 0x00000020ul)
 #define RIOPACKET_PORT_RESPONSE_TIMEOUT_CONTROL_CSR(offset) ((offset) + 0x00000024ul)
 #define RIOPACKET_PORT_GENERAL_CONTROL_CSR(offset) ((offset) + 0x0000003cul)
-#define RIOPACKET_PORT_N_LOCAL_ACKID_CSR(offset, n) ((offset) + (0x00000048ul+((n)*0x00000020ul)))
-#define RIOPACKET_PORT_N_ERROR_AND_STATUS_CSR(offset, n) ((offset) + (0x00000058ul+((n)*0x00000020ul)))
-#define RIOPACKET_PORT_N_CONTROL_CSR(offset, n) ((offset) + (0x0000005cul+((n)*0x00000020ul)))
+#define RIOPACKET_PORT_N_LOCAL_ACKID_CSR(offset, port) ((offset) + (0x00000048ul + ((port)*0x00000020ul)))
+#define RIOPACKET_PORT_N_ERROR_AND_STATUS_CSR(offset, port) ((offset) + (0x00000058ul + ((port)*0x00000020ul)))
+#define RIOPACKET_PORT_N_CONTROL_CSR(offset, port) ((offset) + (0x0000005cul + ((port)*0x00000020ul)))
 
 #define RIOPACKET_ERROR_MANAGEMENT_EXTENSIONS_BLOCK_HEADER(offset) (offset)
 #define RIOPACKET_ERROR_MANAGEMENT_HOT_SWAP_EXTENSIONS_BLOCK_CAR(offset) ((offset)+0x4ul)
 #define RIOPACKET_PORT_WRITE_TARGET_DEVICE_ID_CSR(offset) ((offset)+0x28ul)
 #define RIOPACKET_PORT_WRITE_TRANSMISSION_CONTROL_CSR(offset) ((offset)+0x34ul)
-#define RIOPACKET_PORT_N_ERROR_DETECT_CSR(offset, port) ((offset)+(0x40ul*(port)))
-#define RIOPACKET_PORT_N_ERROR_RATE_ENABLE_CSR(offset, port) ((offset)+(0x44ul*(port)))
-#define RIOPACKET_PORT_N_LINK_UNINIT_DISCARD_TIMER_CSR(offset, port) ((offset)+(0x70ul+(0x40ul*(port))))
+#define RIOPACKET_PORT_N_ERROR_DETECT_CSR(offset, port) ((offset) + (0x00000040ul + ((port)*0x00000040ul)))
+#define RIOPACKET_PORT_N_ERROR_RATE_ENABLE_CSR(offset, port) ((offset) + (0x00000044ul + ((port)*0x00000040ul)))
+#define RIOPACKET_PORT_N_LINK_UNINIT_DISCARD_TIMER_CSR(offset, port) ((offset) + (0x00000070ul + ((port)*0x00000040ul)))
 
 /** @note Deprecated constants. Use the RIOPACKET_ prefixed constants instead. */
 #define DEVICE_IDENTITY_CAR ((uint32_t)0x00000000ul)
@@ -123,8 +123,9 @@ typedef enum
 #define ERROR_MANAGEMENT_HOT_SWAP_EXTENSIONS_BLOCK_CAR(offset) ((offset)+0x4ul)
 #define PORT_WRITE_TARGET_DEVICE_ID_CSR(offset) ((offset)+0x28ul)
 #define PORT_WRITE_TRANSMISSION_CONTROL_CSR(offset) ((offset)+0x34ul)
-#define PORT_N_ERROR_DETECT_CSR(offset, port) ((offset)+(0x40ul*(port)))
-#define PORT_N_ERROR_RATE_ENABLE_CSR(offset, port) ((offset)+(0x44ul*(port)))
+#define PORT_N_ERROR_DETECT_CSR(offset, port) ((offset)+(0x00000040ul+((port)*0x00000040ul)))
+#define PORT_N_ERROR_RATE_ENABLE_CSR(offset, port) ((offset)+(0x00000044ul+((port)*0x00000040ul)))
+#define PORT_N_LINK_UNINIT_DISCARD_TIMER_CSR(offset, port) ((offset)+(0x00000070ul+((port)*0x00000040ul)))
 
 /* Packet tt constants (2-bits). */
 typedef enum
