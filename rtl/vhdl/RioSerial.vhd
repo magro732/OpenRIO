@@ -539,7 +539,7 @@ architecture RioTransmitterImpl of RioTransmitter is
 
   signal statusReceivedCurrent, statusReceivedNext : std_logic;
   signal counterCurrent, counterNext : natural range 0 to 15;
-  signal packetErrorCurrent, packetErrorNext : natural range 0 to NUMBER_PACKET_ERRORS_ALLOWED;
+  signal packetErrorCurrent, packetErrorNext : natural range 0 to NUMBER_PACKET_ERRORS_ALLOWED+1;
   signal symbolsTransmittedCurrent, symbolsTransmittedNext : natural range 0 to 255;
   
   type FrameStateType is (FRAME_START, FRAME_CHECK, FRAME_ACKID, FRAME_BODY, FRAME_END);
@@ -1516,17 +1516,21 @@ begin
             readFrame_o <= '1';
             ackIdNext <= ackIdCurrent + 1;
             packetErrorNext <= 0;
+          elsif (packetErrorCurrent = NUMBER_PACKET_ERRORS_ALLOWED) then
+            -- Remove this frame. It has been rejected by the link-partner too
+            -- many times.
+            packetErrorNext <= packetErrorCurrent + 1;
+            readFrame_o <= '1';
           else
             -- Keep this frame.
             -- Restart the window and the frame transmission.
             frameStateNext <= FRAME_START;
             readWindowReset_o <= '1';
             stateNext <= STATE_NORMAL;
-            if(packetErrorCurrent /= NUMBER_PACKET_ERRORS_ALLOWED) then
+            if (packetErrorCurrent /= NUMBER_PACKET_ERRORS_ALLOWED+1) then
               packetErrorNext <= packetErrorCurrent + 1;
             else
               packetErrorNext <= 0;
-              readFrame_o <= '1';
             end if;
           end if;
 
