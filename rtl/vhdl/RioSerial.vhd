@@ -166,6 +166,7 @@ entity RioSerial is
     linkInitialized_o : out std_logic;
     inputPortEnable_i : in std_logic;
     outputPortEnable_i : in std_logic;
+    linkUninitPacketDiscardActive_i : in std_logic;
 
     -- Support for portLocalAckIdCSR.
     localAckIdWrite_i : in std_logic;
@@ -238,6 +239,7 @@ architecture RioSerialImpl of RioSerial is
 
       portLinkTimeout_i : in std_logic_vector(TIMEOUT_WIDTH-1 downto 0);
       portEnable_i : in std_logic;
+      linkUninitPacketDiscardActive_i : in std_logic;
       
       localAckIdWrite_i : in std_logic;
       clrOutstandingAckId_i : in std_logic;
@@ -354,6 +356,7 @@ begin
       portEnable_i=>outputPortEnable_i,
       localAckIdWrite_i=>localAckIdWrite_i, 
       clrOutstandingAckId_i=>clrOutstandingAckId_i, 
+      linkUninitPacketDiscardActive_i=>linkUninitPacketDiscardActive_i,
       outstandingAckId_i=>outstandingAckId_i, 
       outboundAckId_i=>outboundAckId_i, 
       outstandingAckId_o=>outstandingAckId_o, 
@@ -454,6 +457,7 @@ entity RioTransmitter is
     -- Status signals used for maintenance.
     portLinkTimeout_i : in std_logic_vector(TIMEOUT_WIDTH-1 downto 0);
     portEnable_i : in std_logic;
+    linkUninitPacketDiscardActive_i : in std_logic;
 
     -- Support for localAckIdCSR.
     localAckIdWrite_i : in std_logic;
@@ -683,7 +687,7 @@ begin
           frameStateCurrent, ackIdCurrent, ackIdWindowCurrent, bufferStatusCurrent,
           txControlStype0, txControlParameter0, txControlParameter1,
           rxControlStype0, rxControlParameter0, rxControlParameter1,
-          portEnable_i, 
+          portEnable_i, linkUninitPacketDiscardActive_i,
           localAckIdWrite_i, clrOutstandingAckId_i,
           outstandingAckId_i, outboundAckId_i,
           txFull_i,
@@ -800,7 +804,13 @@ begin
               -- go initialized. To avoid a congested switch, the packet is
               -- discarded and will have to be resent by the source when the link
               -- is up and running.
-              readFrame_o <= '1';
+
+              -- First check if the linkUninitPacketDiscardActive timer is running.
+              if (linkUninitPacketDiscardActive_i = '0') then
+                -- The timer is not active.
+                -- It is ok to discard the packet.
+                readFrame_o <= '1';
+              end if;
             else
               -- No new full packets are ready.
               -- Dont do anything.

@@ -111,6 +111,7 @@ architecture TestRioSerialImpl of TestRioSerial is
       linkInitialized_o : out std_logic;
       inputPortEnable_i : in std_logic;
       outputPortEnable_i : in std_logic;
+      linkUninitPacketDiscardActive_i : in std_logic;
     
       localAckIdWrite_i : in std_logic;
       clrOutstandingAckId_i : in std_logic;
@@ -2320,6 +2321,7 @@ begin
       linkInitialized_o=>linkInitialized,
       inputPortEnable_i=>inputPortEnable,
       outputPortEnable_i=>outputPortEnable,
+      linkUninitPacketDiscardActive_i=>'0',
       localAckIdWrite_i=>localAckIdWrite, 
       clrOutstandingAckId_i=>clrOutstandingAckId, 
       inboundAckId_i=>inboundAckIdWrite, 
