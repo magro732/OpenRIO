@@ -135,13 +135,12 @@ begin
   end process;
 
   process(clk, reset_ni)
-
   begin
     if (reset_ni = '0') then
       counter <= (others=>'0');
       linkUninitPacketDiscardActive <= '0';
     elsif (clk'event and clk = '1') then
-      if (linkInitialized_i = '1') then
+      if (linkInitialized_i = '1') or (linkUninitTimeout_i = x"000000") then
         counter <= counterReset;
         linkUninitPacketDiscardActive <= '0';
       else
