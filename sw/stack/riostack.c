@@ -105,7 +105,6 @@ typedef enum
 /*#define LINK_RESPONSE_PORT_STATUS_ERROR_STOPPED 5u*/
 #define LINK_RESPONSE_PORT_STATUS_OK 16u
 
-
 /*******************************************************************************
  * Local typedefs
  *******************************************************************************/
@@ -331,6 +330,7 @@ void RIOSTACK_open(RioStack_t *stack, void *private,
   stack->txFrameState = TX_FRAME_START;
   stack->txAckId = 0u;
   stack->txAckIdWindow = 0u;
+  stack->txPacketErrorCounter = 0u;
   stack->txQueue = queueCreate((uint8_t) (txPacketBufferSize/RIOSTACK_BUFFER_SIZE), txPacketBuffer);
 
   /* Setup status counters for inbound direction. */
@@ -1301,6 +1301,7 @@ static void handlePacketAccepted(RioStack_t *stack, const uint8_t ackId, const u
        a new packet. */
     stack->txQueue = queueDequeue(stack->txQueue);
     stack->txAckId = MASK_5BITS(stack->txAckId + 1u);
+    stack->txPacketErrorCounter = 0;
     stack->statusOutboundPacketComplete++;
   }
   else
@@ -1384,6 +1385,8 @@ static void handleLinkResponse(RioStack_t *stack, const uint8_t ackId, const uin
   /* Check if this symbols is expected. */
   if(stack->txState == TX_STATE_OUTPUT_ERROR_STOPPED)
   {
+    /* A link-response is expected. */
+
     /* Calculate the number of packets that has not received an acknowledge on our side and 
        on the link-partner side. */
     window = MASK_5BITS(stack->txAckIdWindow - stack->txAckId);
@@ -1392,16 +1395,32 @@ static void handleLinkResponse(RioStack_t *stack, const uint8_t ackId, const uin
     /* Check if the link-partners response is acceptable. */
     if(windowReceived <= window)
     {
-      /* A link-response is expected. */
-
+      /* The link-partner response is acceptable. */
+      
       /* Remove entries in the queue that the link-partner has sent acknowledges for that has been lost. */
       while(stack->txAckId != ackId)
       {
         stack->txQueue = queueDequeue(stack->txQueue);
         stack->txAckId = MASK_5BITS(stack->txAckId + 1u);
+        stack->txPacketErrorCounter = 0;
         stack->statusOutboundPacketComplete++;
       }
 
+      /* Check if this packet has been rejected too many times. */
+      if(stack->txPacketErrorCounter < 3)
+      {
+        /* Not rejected too many times. */
+        /* Just increase the count of the number of rejections. */
+        stack->txPacketErrorCounter++;
+      }
+      else
+      {
+        /* Rejected too many times. */
+        /* Remove the packet but dont update the ackId. */
+        stack->txQueue = queueDequeue(stack->txQueue);
+        stack->txPacketErrorCounter = 0;
+      }
+      
       /* Set the transmission window to the resend packets that has not been received. */
       stack->txQueue = queueWindowReset(stack->txQueue);
       stack->txAckIdWindow = ackId;

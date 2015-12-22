@@ -237,6 +237,7 @@ typedef struct
   uint8_t txAckId; /**< The ackId that is awaiting a packet-accepted. */
   uint8_t txAckIdWindow; /**< The ackId that was las transmitted. */
   uint8_t txBufferStatus; /**< The buffer status of the link-partner. */
+  uint8_t txPacketErrorCounter;
   RioQueue_t txQueue; /**< The outbound queue of packets. */
 
   /* Common protocol stack variables. */
