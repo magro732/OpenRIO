@@ -50,6 +50,13 @@
   trivial and clarifies the code. */
 /*lint -e750 Allow unused macros for future usage. */
 
+/** The number of times a packet should be _retried_ when the link partner keeps 
+    sending PACKET_NOT_ACCEPTED. A value of X will result in the packet being send 
+    a maximum number X+1 times (retried X times). 
+    This limit exists to avoid a link being locked-up if for example a non-
+    maintenance packet is sent when not allowed. */
+#define MAX_PACKET_ERROR_RETRIES 3u
+
 /* Macro to update 5-bit ackId counters. */
 #define MASK_5BITS(x) ((uint8_t) ((x) & 0x1fu))
 
@@ -1407,7 +1414,7 @@ static void handleLinkResponse(RioStack_t *stack, const uint8_t ackId, const uin
       }
 
       /* Check if this packet has been rejected too many times. */
-      if(stack->txPacketErrorCounter < 3)
+      if(stack->txPacketErrorCounter < MAX_PACKET_ERROR_RETRIES)
       {
         /* Not rejected too many times. */
         /* Just increase the count of the number of rejections. */

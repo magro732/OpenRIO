@@ -61,21 +61,21 @@ static void testSymbol(RioSymbol_t got, RioSymbol_t expected)
   const uint8_t cmd = CMD_GET( got.data );
   const uint8_t crc5 = CRC5_GET( got.data );
 
-  CU_ASSERT_EQUAL( got.type, expected.type );
+  TESTEXPR( got.type, expected.type );
 
   switch( got.type )
   {
     case RIOSTACK_SYMBOL_TYPE_CONTROL:
-      CU_ASSERT_EQUAL( stype0, STYPE0_GET( expected.data ) );
-      CU_ASSERT_EQUAL( parameter0, PARAMETER0_GET( expected.data ) );
-      CU_ASSERT_EQUAL( parameter1, PARAMETER1_GET( expected.data ) );
-      CU_ASSERT_EQUAL( stype1, STYPE1_GET( expected.data ) );
-      CU_ASSERT_EQUAL( cmd, CMD_GET( expected.data ) );
-      CU_ASSERT_EQUAL( crc5, CRC5_GET( expected.data ) );
-      CU_ASSERT_EQUAL( got.data, expected.data );
+      TESTEXPR( stype0, STYPE0_GET( expected.data ) );
+      TESTEXPR( parameter0, PARAMETER0_GET( expected.data ) );
+      TESTEXPR( parameter1, PARAMETER1_GET( expected.data ) );
+      TESTEXPR( stype1, STYPE1_GET( expected.data ) );
+      TESTEXPR( cmd, CMD_GET( expected.data ) );
+      TESTEXPR( crc5, CRC5_GET( expected.data ) );
+      TESTEXPR( got.data, expected.data );
       break;
     case RIOSTACK_SYMBOL_TYPE_DATA:
-      CU_ASSERT_EQUAL( got.data, expected.data );
+      TESTEXPR( got.data, expected.data );
       break;
     case RIOSTACK_SYMBOL_TYPE_ERROR:
     case RIOSTACK_SYMBOL_TYPE_IDLE:
@@ -1963,9 +1963,19 @@ static void allTests(void)
   TESTEXPR(RIOSTACK_getInboundQueueLength(&stack), 2);
   TESTEXPR(RIOSTACK_getOutboundQueueLength(&stack), 0);
 
-  startStack(QUEUE_LENGTH);
+  /******************************************************************************/
+  TESTEND;
+  /******************************************************************************/
+  PrintS("----------------------------------------------------------------------");
+  PrintS("Step 8:");
+  PrintS("Action: Send a packet with invalid CRC.");
+  PrintS("Result: A packet-not-accepted should be received.");
+  PrintS("----------------------------------------------------------------------");
+  /******************************************************************************/
+  TESTSTART("TG_riostack-TC4-Step8");
+  /******************************************************************************/
 
-  /* Invalid CRC */
+  startStack(QUEUE_LENGTH);
 
   packetLength = createDoorbell(packet, 0, 0, 0xffff, 0, 0);
   packet[0] ^= 0x00000001; /* Ruin CRC */
@@ -1985,9 +1995,19 @@ static void allTests(void)
   TESTSYMBOL(RIOSTACK_portGetSymbol(&stack),
       createControlSymbol(STYPE0_PACKET_NOT_ACCEPTED, 0, PACKET_NOT_ACCEPTED_CAUSE_PACKET_CRC, STYPE1_NOP, 0));
 
-  startStack(QUEUE_LENGTH);
+  /******************************************************************************/
+  TESTEND;
+  /******************************************************************************/
+  PrintS("----------------------------------------------------------------------");
+  PrintS("Step 9:");
+  PrintS("Action: Send a packet that is shorter than full length.");
+  PrintS("Result: A packet-not-accepted should be received.");
+  PrintS("----------------------------------------------------------------------");
+  /******************************************************************************/
+  TESTSTART("TG_riostack-TC4-Step9");
+  /******************************************************************************/
 
-  /* Short packet */
+  startStack(QUEUE_LENGTH);
 
   packetLength = createDoorbell(packet, 0, 0, 0xffff, 36, 0);
   RIOSTACK_portAddSymbol(&stack, createControlSymbol(STYPE0_STATUS, 0, 8, STYPE1_START_OF_PACKET, 0));
@@ -2006,6 +2026,60 @@ static void allTests(void)
   TESTSYMBOL(RIOSTACK_portGetSymbol(&stack),
       createControlSymbol(STYPE0_PACKET_NOT_ACCEPTED, 0, PACKET_NOT_ACCEPTED_CAUSE_GENERAL, STYPE1_NOP, 0));
 
+  /******************************************************************************/
+  TESTEND;
+  /******************************************************************************/
+  PrintS("----------------------------------------------------------------------");
+  PrintS("Step 10:");
+  PrintS("Action: Send an egress packet and dont accept it for too many retries.");
+  PrintS("Result: The packet should be dropped once the retransmission limit has");
+  PrintS("        been reached.");
+  PrintS("----------------------------------------------------------------------");
+  /******************************************************************************/
+  TESTSTART("TG_riostack-TC4-Step10");
+  /******************************************************************************/
+
+  startStack(QUEUE_LENGTH);
+
+  /* Create a packet that will not be accepted. */
+  RIOPACKET_setDoorbell(&rioPacket, 0, 0xffff, 0x1d, 0xabab);
+  RIOSTACK_setOutboundPacket(&stack, &rioPacket);
+  packetLength = createDoorbell(packet, 0, 0, 0xffff, 0x1d, 0xabab);
+
+  /* Check that the packet is retransmitted when an packet-not-accepted is being received. */
+  for(j = 0; j < (MAX_PACKET_ERROR_RETRIES+1); j++)
+  {
+    TESTSYMBOL(RIOSTACK_portGetSymbol(&stack),
+               createControlSymbol(STYPE0_STATUS, stack.rxAckId, getBufferStatus(&stack), STYPE1_START_OF_PACKET, 0));
+    for( i = 0; i < packetLength; i++ )
+    {
+      TESTSYMBOL(RIOSTACK_portGetSymbol(&stack), createDataSymbol(packet[i]));
+    }
+    TESTSYMBOL(RIOSTACK_portGetSymbol(&stack),
+               createControlSymbol(STYPE0_STATUS, stack.rxAckId, getBufferStatus(&stack), STYPE1_END_OF_PACKET, 0));
+    RIOSTACK_portAddSymbol(&stack, createControlSymbol(STYPE0_PACKET_NOT_ACCEPTED, 0, 8, STYPE1_NOP, 0));
+
+    TESTSYMBOL(RIOSTACK_portGetSymbol(&stack),
+               createControlSymbol(STYPE0_STATUS, stack.rxAckId, getBufferStatus(&stack), STYPE1_LINK_REQUEST, 4));
+    RIOSTACK_portAddSymbol(&stack, createControlSymbol(STYPE0_LINK_RESPONSE, 0, 8, STYPE1_NOP, 0));
+  }
+
+  /* Create a new packet that is different from the one previously sent. */
+  RIOPACKET_setDoorbell(&rioPacket, 0, 0xdead, 0xbe, 0xefff);
+  RIOSTACK_setOutboundPacket(&stack, &rioPacket);
+  packetLength = createDoorbell(packet, 0, 0, 0xdead, 0xbe, 0xefff);
+
+  /* Check that the new packet is transmitted. The previous packet should have been discarded. */
+  TESTSYMBOL(RIOSTACK_portGetSymbol(&stack),
+             createControlSymbol(STYPE0_STATUS, stack.rxAckId, getBufferStatus(&stack), STYPE1_START_OF_PACKET, 0));
+  for( i = 0; i < packetLength; i++ )
+  {
+    TESTSYMBOL(RIOSTACK_portGetSymbol(&stack), createDataSymbol(packet[i]));
+  }
+  TESTSYMBOL(RIOSTACK_portGetSymbol(&stack),
+             createControlSymbol(STYPE0_STATUS, stack.rxAckId, getBufferStatus(&stack), STYPE1_END_OF_PACKET, 0));
+  RIOSTACK_portAddSymbol(&stack, createControlSymbol(STYPE0_PACKET_ACCEPTED, 0, 8, STYPE1_NOP, 0));
+  
   /******************************************************************************/
   TESTEND;
   /******************************************************************************/
