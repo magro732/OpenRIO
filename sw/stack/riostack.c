@@ -1308,7 +1308,7 @@ static void handlePacketAccepted(RioStack_t *stack, const uint8_t ackId, const u
        a new packet. */
     stack->txQueue = queueDequeue(stack->txQueue);
     stack->txAckId = MASK_5BITS(stack->txAckId + 1u);
-    stack->txPacketErrorCounter = 0;
+    stack->txPacketErrorCounter = 0u;
     stack->statusOutboundPacketComplete++;
   }
   else
@@ -1409,7 +1409,7 @@ static void handleLinkResponse(RioStack_t *stack, const uint8_t ackId, const uin
       {
         stack->txQueue = queueDequeue(stack->txQueue);
         stack->txAckId = MASK_5BITS(stack->txAckId + 1u);
-        stack->txPacketErrorCounter = 0;
+        stack->txPacketErrorCounter = 0u;
         stack->statusOutboundPacketComplete++;
       }
 
@@ -1425,7 +1425,7 @@ static void handleLinkResponse(RioStack_t *stack, const uint8_t ackId, const uin
         /* Rejected too many times. */
         /* Remove the packet but dont update the ackId. */
         stack->txQueue = queueDequeue(stack->txQueue);
-        stack->txPacketErrorCounter = 0;
+        stack->txPacketErrorCounter = 0u;
       }
       
       /* Set the transmission window to the resend packets that has not been received. */

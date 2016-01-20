@@ -637,7 +637,7 @@ void RIOPACKET_setMaintReadResponse(RioPacket_t *packet,
   /* sourceId(15:0)|transaction(3:0)|status(3:0)|srcTID(7:0) */
   content = (uint32_t) srcId << 16;
   content |= (uint32_t) RIOPACKET_TRANSACTION_MAINT_READ_RESPONSE << 12;
-  content |= ((uint32_t) (status & 0xf)) << 8;
+  content |= (uint32_t) (((uint32_t) status) & 0xful) << 8;
   content |= (uint32_t) tid;
   crc = RIOPACKET_crc32(content, crc);
   packet->payload[1] = content;
@@ -786,7 +786,7 @@ void RIOPACKET_setMaintWriteResponse(RioPacket_t *packet,
   /* sourceId(15:0)|transaction(3:0)|status(3:0)|srcTID(7:0) */
   content = ((uint32_t) srcId) << 16;
   content |= (uint32_t) RIOPACKET_TRANSACTION_MAINT_WRITE_RESPONSE << 12;
-  content |= ((uint32_t) (status & 0xf)) << 8;
+  content |= (uint32_t) (((uint32_t) status) & 0xful) << 8;
   content |= (uint32_t) tid;
   crc = RIOPACKET_crc32(content, crc);
   packet->payload[1] = content;
@@ -1420,6 +1420,9 @@ uint16_t RIOPACKET_getResponseWithPayload(const RioPacket_t *packet,
                                           uint8_t *tid, uint8_t offset, 
                                           uint16_t payloadSize, uint8_t *payload)
 {
+  uint16_t returnValue ;
+
+  
   ASSERT(packet != NULL, "Invalid packet pointer");
   ASSERT(dstId != NULL, "Invalid dstId pointer");
   ASSERT(srcId != NULL, "Invalid srcId pointer");
@@ -1429,16 +1432,20 @@ uint16_t RIOPACKET_getResponseWithPayload(const RioPacket_t *packet,
   *dstId = DESTID_GET(packet->payload);
   *srcId = SRCID_GET(packet->payload);
   *tid = TID_GET(packet->payload);
-  if(payloadSize != 0)
+  if(payloadSize != 0u)
   {
-    return getPacketPayload(&(packet->payload[0]), 8u, ((uint16_t) offset) & 0x7u, 
-                            payloadSize, payload);
+    returnValue =
+      getPacketPayload(&(packet->payload[0]), 8u, ((uint16_t) offset) & 0x7u, 
+                       payloadSize, payload);
   }
   else
   {
-    return getPacketPayload(&(packet->payload[0]), 8u, ((uint16_t) offset) & 0x7u, 
-                            (((uint16_t) packet->size)-3u)*4u, payload);
+    returnValue =
+      getPacketPayload(&(packet->payload[0]), 8u, ((uint16_t) offset) & 0x7u, 
+                       (((uint16_t) packet->size)-3u)*4u, payload);
   }
+
+  return returnValue;
 }
 
 
