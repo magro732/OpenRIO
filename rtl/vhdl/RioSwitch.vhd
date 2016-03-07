@@ -63,7 +63,8 @@ entity RioSwitch is
     DEVICE_REV : std_logic_vector(31 downto 0);
     ASSY_IDENTITY : std_logic_vector(15 downto 0);
     ASSY_VENDOR_IDENTITY : std_logic_vector(15 downto 0);
-    ASSY_REV : std_logic_vector(15 downto 0));
+    ASSY_REV : std_logic_vector(15 downto 0);
+    EXTENDED_ROUTE_SUPPORT : boolean := false );
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -108,27 +109,32 @@ end entity;
 -------------------------------------------------------------------------------
 architecture RioSwitchImpl of RioSwitch is
 
+
   component RouteTableInterconnect is
     generic(
-      WIDTH : natural range 1 to 256 := 8);
+      WIDTH : natural range 1 to 256 := 8;
+      EXTENDED_ROUTE_SUPPORT : boolean := false );
     port(
       clk : in std_logic;
       areset_n : in std_logic;
 
       stb_i : in Array1(WIDTH-1 downto 0);
       addr_i : in Array16(WIDTH-1 downto 0);
-      dataM_o : out Array8(WIDTH-1 downto 0);
+      --dataM_o : out Array8(WIDTH-1 downto 0); ASA
+      dataM_o : out Array33(WIDTH-1 downto 0);
       ack_o : out Array1(WIDTH-1 downto 0);
 
       stb_o : out std_logic;
       addr_o : out std_logic_vector(15 downto 0);
-      dataS_i : in std_logic_vector(7 downto 0);
+      --dataS_i : in std_logic_vector(7 downto 0); ASA
+      dataS_i : in std_logic_vector(32 downto 0);
       ack_i : in std_logic);
   end component;
   
   component SwitchPortInterconnect is
     generic(
-      WIDTH : natural range 1 to 256 := 8);
+      WIDTH : natural range 1 to 256 := 8;
+      EXTENDED_ROUTE_SUPPORT : boolean := false );
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -158,14 +164,16 @@ architecture RioSwitchImpl of RioSwitch is
       DEVICE_REV : std_logic_vector(31 downto 0);
       ASSY_IDENTITY : std_logic_vector(15 downto 0);
       ASSY_VENDOR_IDENTITY : std_logic_vector(15 downto 0);
-      ASSY_REV : std_logic_vector(15 downto 0));
+      ASSY_REV : std_logic_vector(15 downto 0);
+      EXTENDED_ROUTE_SUPPORT : boolean := false );
     port(
       clk : in std_logic;
       areset_n : in std_logic;
 
       lookupStb_i : in std_logic;
       lookupAddr_i : in std_logic_vector(15 downto 0);
-      lookupData_o : out std_logic_vector(7 downto 0);
+      --lookupData_o : out std_logic_vector(7 downto 0); ASA
+      lookupData_o : out std_logic_vector(32 downto 0);
       lookupAck_o : out std_logic;
       
       masterCyc_o : out std_logic;
@@ -186,7 +194,8 @@ architecture RioSwitchImpl of RioSwitch is
 
       lookupStb_o : out std_logic;
       lookupAddr_o : out std_logic_vector(15 downto 0);
-      lookupData_i : in std_logic_vector(7 downto 0);
+      --lookupData_i : in std_logic_vector(7 downto 0); ASA
+      lookupData_i : in std_logic_vector(32 downto 0);
       lookupAck_i : in std_logic;
 
       portLinkTimeout_o : out std_logic_vector(23 downto 0);
@@ -212,7 +221,8 @@ architecture RioSwitchImpl of RioSwitch is
   
   component SwitchPort is
     generic(
-      PORT_INDEX : natural);
+      PORT_INDEX : natural;
+      EXTENDED_ROUTE_SUPPORT : boolean := false );
     port(
       clk : in std_logic;
       areset_n : in std_logic;
@@ -235,9 +245,10 @@ architecture RioSwitchImpl of RioSwitch is
 
       lookupStb_o : out std_logic;
       lookupAddr_o : out std_logic_vector(15 downto 0);
-      lookupData_i : in std_logic_vector(7 downto 0);
+      lookupData_i : in std_logic_vector(32 downto 0); -- ASA
       lookupAck_i : in std_logic;
 
+      linkInitialized_i : in std_logic; -- ASA
       readFrameEmpty_i : in std_logic;
       readFrame_o : out std_logic;
       readContent_o : out std_logic;
@@ -252,12 +263,15 @@ architecture RioSwitchImpl of RioSwitch is
 
   signal masterLookupStb : Array1(SWITCH_PORTS downto 0);
   signal masterLookupAddr : Array16(SWITCH_PORTS downto 0);
-  signal masterLookupData : Array8(SWITCH_PORTS downto 0);
+
+  --signal masterLookupData : Array8(SWITCH_PORTS downto 0); -- ASA
+  signal masterLookupData : Array33(SWITCH_PORTS downto 0); -- ASA
   signal masterLookupAck : Array1(SWITCH_PORTS downto 0);
 
   signal slaveLookupStb : std_logic;
   signal slaveLookupAddr : std_logic_vector(15 downto 0);
-  signal slaveLookupData : std_logic_vector(7 downto 0);
+  --signal slaveLookupData : std_logic_vector(7 downto 0);
+  signal slaveLookupData : std_logic_vector(32 downto 0);
   signal slaveLookupAck : std_logic;
   
   signal masterCyc : Array1(SWITCH_PORTS downto 0);
@@ -283,7 +297,9 @@ begin
   -----------------------------------------------------------------------------
   RouteInterconnect: RouteTableInterconnect
     generic map(
-      WIDTH=>SWITCH_PORTS+1)
+      WIDTH=>SWITCH_PORTS+1,
+      EXTENDED_ROUTE_SUPPORT=>EXTENDED_ROUTE_SUPPORT
+  )
     port map(
       clk=>clk, areset_n=>areset_n, 
       stb_i=>masterLookupStb, addr_i=>masterLookupAddr, 
@@ -296,7 +312,9 @@ begin
   -----------------------------------------------------------------------------
   PortInterconnect: SwitchPortInterconnect
     generic map(
-      WIDTH=>SWITCH_PORTS+1)
+      WIDTH=>SWITCH_PORTS+1,
+      EXTENDED_ROUTE_SUPPORT=>EXTENDED_ROUTE_SUPPORT
+  )
     port map(
       clk=>clk, areset_n=>areset_n, 
       masterCyc_i=>masterCyc, masterStb_i=>masterStb, masterWe_i=>masterWe, masterAddr_i=>masterAddr, 
@@ -310,7 +328,9 @@ begin
   PortGeneration: for portIndex in 0 to SWITCH_PORTS-1 generate
     PortInst: SwitchPort
       generic map(
-        PORT_INDEX=>portIndex)
+        PORT_INDEX=>portIndex,
+        EXTENDED_ROUTE_SUPPORT=>EXTENDED_ROUTE_SUPPORT
+    )
       port map(
         clk=>clk, areset_n=>areset_n,
         masterCyc_o=>masterCyc(portIndex), masterStb_o=>masterStb(portIndex),
@@ -324,6 +344,7 @@ begin
         lookupStb_o=>masterLookupStb(portIndex),
         lookupAddr_o=>masterLookupAddr(portIndex), 
         lookupData_i=>masterLookupData(portIndex), lookupAck_i=>masterLookupAck(portIndex),
+        linkInitialized_i=>linkInitialized_i(portIndex),
         readFrameEmpty_i=>readFrameEmpty_i(portIndex), readFrame_o=>readFrame_o(portIndex), 
         readContent_o=>readContent_o(portIndex), 
         readContentEnd_i=>readContentEnd_i(portIndex), readContentData_i=>readContentData_i(portIndex), 
@@ -343,7 +364,9 @@ begin
       DEVICE_REV=>DEVICE_REV,
       ASSY_IDENTITY=>ASSY_IDENTITY,
       ASSY_VENDOR_IDENTITY=>ASSY_VENDOR_IDENTITY,
-      ASSY_REV=>ASSY_REV)
+      ASSY_REV=>ASSY_REV,
+      EXTENDED_ROUTE_SUPPORT=>EXTENDED_ROUTE_SUPPORT
+  )
     port map(
       clk=>clk, areset_n=>areset_n, 
       lookupStb_i=>slaveLookupStb, lookupAddr_i=>slaveLookupAddr,
@@ -388,7 +411,8 @@ use work.rio_common.all;
 -------------------------------------------------------------------------------
 entity SwitchPort is
   generic(
-    PORT_INDEX : natural);
+    PORT_INDEX : natural;
+    EXTENDED_ROUTE_SUPPORT : boolean := false );
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -416,10 +440,11 @@ entity SwitchPort is
     -- Address-lookup interface.
     lookupStb_o : out std_logic;
     lookupAddr_o : out std_logic_vector(15 downto 0);
-    lookupData_i : in std_logic_vector(7 downto 0);
+    lookupData_i : in std_logic_vector(32 downto 0);
     lookupAck_i : in std_logic;
 
     -- Physical port frame buffer interface.
+    linkInitialized_i : in std_logic; -- ASA
     readFrameEmpty_i : in std_logic;
     readFrame_o : out std_logic;
     readContent_o : out std_logic;
@@ -451,16 +476,20 @@ architecture SwitchPortImpl of SwitchPort is
 
   type SlaveStateType is (STATE_IDLE, STATE_SEND_ACK);
   signal slaveState : SlaveStateType;
+  signal nextRouteConfiguration : unsigned (1 downto 0);
   
   alias ftype : std_logic_vector(3 downto 0) is readContentData_i(19 downto 16);
   alias tt : std_logic_vector(1 downto 0) is readContentData_i(21 downto 20);
   
+  -- Used to store the lookup result for a particular destination id
+  signal  lookupDataCache : std_logic_vector(32 downto 0);
 begin
 
   -----------------------------------------------------------------------------
   -- Master interface process.
   -----------------------------------------------------------------------------
   Master: process(clk, areset_n)
+      variable lookupPort : std_logic_vector(7 downto 0);
   begin
     if (areset_n = '0') then
       masterState <= STATE_IDLE;
@@ -473,6 +502,7 @@ begin
       masterWe_o <= '0';
       masterAddr_o <= (others => '0');
       masterData_o <= (others => '0');
+      lookupDataCache <= (others => '0');
       
       readContent_o <= '0';
       readFrame_o <= '0';
@@ -582,8 +612,20 @@ begin
             -- Terminate the lookup cycle.
             lookupStb_o <= '0';
 
+            -- Define the next route to be used depending if the Extended bit route
+            --  is set or not
+            if  lookupData_i(32) = '0' then
+                nextRouteConfiguration <= "00" ;
+            else
+                nextRouteConfiguration <= "01" ;
+            end if;
+
             -- Proceed to read the target port.
-            masterAddr_o <= '0' & lookupData_i & '0';
+            --masterAddr_o <= '0' & lookupData_i & '0';
+            -- Keep track of the result of the lookup if we have to try another port
+            --  in case of Extended Route support
+            lookupDataCache <= lookupData_i;
+            masterAddr_o <= '0' & lookupData_i(7 downto 0) & '0';
             masterState <= STATE_READ_TARGET_PORT;
           else
             -- Wait until the address lookup is complete.
@@ -635,6 +677,22 @@ begin
               -- Terminate the cycle and retry later.
               masterCyc_o <= '0';
               masterStb_o <= '0';
+
+              -- If we are using Extended Route support, we move to the next
+              --  available port if we fail with the current one
+              if  lookupDataCache(32) = '1' then
+                  nextRouteConfiguration <= nextRouteConfiguration + 1;
+              end if;
+
+              -- Retrieve the next port to be used to reach the specified destinationId
+              lookupPort := lookupDataCache(8*(to_integer(nextRouteConfiguration)+1) -1 downto 8*to_integer(nextRouteConfiguration));
+
+              -- If the previous, was the last port usable then wrap back to the first one
+              if lookupPort = x"FF" then
+                  lookupPort := lookupDataCache(7 downto 0);
+              end if;
+
+              masterAddr_o <= '0' & lookupPort & '0';
               masterState <= STATE_READ_TARGET_PORT;
             end if;
           else
@@ -757,7 +815,7 @@ begin
                 writeFrameAbort_o <= slaveData_i(1);
               else
                 -- Reading the status address.
-                slaveData_o <= writeFrameFull_i;
+                  slaveData_o <= writeFrameFull_i or not linkInitialized_i; -- ASA Report also if the link initialized
               end if;
             else
               -- Accessing port data address.
@@ -821,7 +879,8 @@ entity SwitchPortMaintenance is
     DEVICE_REV : std_logic_vector(31 downto 0);
     ASSY_IDENTITY : std_logic_vector(15 downto 0);
     ASSY_VENDOR_IDENTITY : std_logic_vector(15 downto 0);
-    ASSY_REV : std_logic_vector(15 downto 0));
+    ASSY_REV : std_logic_vector(15 downto 0);
+    EXTENDED_ROUTE_SUPPORT : boolean := false );
   port(
     clk : in std_logic;
     areset_n : in std_logic;
@@ -829,7 +888,8 @@ entity SwitchPortMaintenance is
     -- Routing table port lookup signals.
     lookupStb_i : in std_logic;
     lookupAddr_i : in std_logic_vector(15 downto 0);
-    lookupData_o : out std_logic_vector(7 downto 0);
+    -- ASA lookupData_o : out std_logic_vector(7 downto 0);
+    lookupData_o : out std_logic_vector(32 downto 0);
     lookupAck_o : out std_logic;
   
     -- Master port signals.
@@ -855,7 +915,8 @@ entity SwitchPortMaintenance is
     -- Address-lookup interface.
     lookupStb_o : out std_logic;
     lookupAddr_o : out std_logic_vector(15 downto 0);
-    lookupData_i : in std_logic_vector(7 downto 0);
+  -- ASA
+    lookupData_i : in std_logic_vector(32 downto 0);
     lookupAck_i : in std_logic;
 
     -- Port common access interface.
@@ -992,14 +1053,21 @@ architecture SwitchPortMaintenanceImpl of SwitchPortMaintenance is
 
   signal lookupEnable : std_logic;
   signal lookupAddress : std_logic_vector(10 downto 0);
-  signal lookupData : std_logic_vector(7 downto 0);
+  -- ASA signal lookupData : std_logic_vector(7 downto 0); 
+  signal lookupData : std_logic_vector(32 downto 0);
+  -- Used to store the lookup result for a particular destination id
+  signal lookupDataCache : std_logic_vector(32 downto 0);
   signal lookupAck : std_logic;
+  signal nextRouteConfiguration : unsigned (1 downto 0);
 
   signal routeTableEnable : std_logic;
   signal routeTableWrite : std_logic;
+  signal extendedRouteTableWrite : std_logic;
   signal routeTableAddress : std_logic_vector(10 downto 0);
-  signal routeTablePortWrite : std_logic_vector(7 downto 0);
-  signal routeTablePortRead : std_logic_vector(7 downto 0);
+  -- ASA increase the size to 4 route
+  signal routeTablePortWrite : std_logic_vector(32 downto 0);
+  -- ASA increase the size to 4 route
+  signal routeTablePortRead : std_logic_vector(32 downto 0);
   
   signal routeTablePortDefault : std_logic_vector(7 downto 0);
 
@@ -1051,6 +1119,7 @@ begin
   -- Master interface process.
   -----------------------------------------------------------------------------
   Master: process(clk, areset_n)
+      variable lookupPort : std_logic_vector(7 downto 0);
   begin
     if (areset_n = '0') then
       masterState <= STATE_IDLE;
@@ -1494,9 +1563,20 @@ begin
             
             -- Terminate the lookup cycle.
             lookupStb_o <= '0';
+            
+            -- Define the next route to be used depending if the Extended bit route
+            --  is set or not
+            if  lookupData_i(32) = '0' then
+                nextRouteConfiguration <= "00" ;
+            else
+                nextRouteConfiguration <= "01" ;
+            end if;
 
             -- Wait for the target port to reply.
-            masterAddr_o <= '0' & lookupData_i & '0';
+            -- Keep track of the result of the lookup if we have to try another port
+            --  in case of Extended Route support
+            lookupDataCache <= lookupData_i;
+            masterAddr_o <= '0' & lookupData_i(7 downto 0) & '0';
             masterState <= STATE_READ_TARGET_PORT;
           else
             -- Wait until the address lookup is complete.
@@ -1538,11 +1618,28 @@ begin
               
               -- Change state to transfer the frame.
               masterState <= STATE_WAIT_TARGET_WRITE;
-            else
-              -- The target port has no empty buffer to receive the frame.
-              -- Terminate the cycle and retry later.
+          else
+                -- The target port has no empty buffer to receive the frame.
+                -- Terminate the cycle and retry later.
               masterCyc_o <= '0';
               masterStb_o <= '0';
+
+                -- If we are using Extended Route support, we move to the next
+                --  available port if we fail with the current one
+              if  lookupDataCache(32) = '1' then
+                  nextRouteConfiguration <= nextRouteConfiguration + 1;
+              end if;
+
+              -- Retrieve the next port to be used to reach the specified destinationId
+              lookupPort := lookupDataCache(8*(to_integer(nextRouteConfiguration)+1) -1 downto 8*to_integer(nextRouteConfiguration));
+
+              -- If the previous, was the last port usable then wrap back to the first one
+              if lookupPort = x"FF" then
+                  lookupPort := lookupDataCache(7 downto 0);
+              end if;
+
+              masterAddr_o <= '0' & lookupPort & '0';
+
               masterState <= STATE_READ_TARGET_PORT;
             end if;
           else
@@ -1801,7 +1898,8 @@ begin
   -- Lookup interface port memory signals.
   lookupEnable <= '1' when (lookupStb_i = '1') and (lookupAddr_i(15 downto 11) = "00000") else '0';
   lookupAddress <= lookupAddr_i(10 downto 0);
-  lookupData_o <= lookupData when (lookupEnable = '1') else routeTablePortDefault;
+  -- ASA lookupData_o <= lookupData when (lookupEnable = '1') else routeTablePortDefault;
+  lookupData_o <= lookupData when (lookupEnable = '1') else '0' & x"000000" & routeTablePortDefault;
   lookupAck_o <= lookupAck;
   LookupProcess: process(clk, areset_n)
   begin
@@ -1821,7 +1919,8 @@ begin
   -- Dual port memory containing the routing table.
   RoutingTable: MemoryDualPort
     generic map(
-      ADDRESS_WIDTH=>11, DATA_WIDTH=>8)
+    -- ASA increase the size of data width to store all route
+      ADDRESS_WIDTH=>11, DATA_WIDTH=>33)
     port map(
       clkA_i=>clk, enableA_i=>routeTableEnable, writeEnableA_i=>routeTableWrite,
       addressA_i=>routeTableAddress,
@@ -1851,6 +1950,7 @@ begin
 
       routeTableEnable <= '1';
       routeTableWrite <= '0';
+      extendedRouteTableWrite <= '0';
       routeTableAddress <= (others => '0');
       routeTablePortWrite <= (others => '0');
       routeTablePortDefault <= (others => '0');
@@ -1935,7 +2035,11 @@ begin
               configDataReadInternal(27 downto 10) <= (others => '0');
               
               -- Extended route table configuration support.
-              configDataReadInternal(9) <= '0';
+              if EXTENDED_ROUTE_SUPPORT = true then 
+                  configDataReadInternal(9) <= '1';
+              else
+                  configDataReadInternal(9) <= '0';
+              end if;
               
               -- Standard route table configuration support.
               configDataReadInternal(8) <= '1';
@@ -2025,9 +2129,15 @@ begin
               if (configWrite = '1') then
                 -- Write the address to access the routing table.
                 routeTableAddress <= configDataWrite(10 downto 0);
+                if EXTENDED_ROUTE_SUPPORT = true then 
+                    extendedRouteTableWrite <=  configDataWrite(31);
+                end if;
               end if;
               
               configDataReadInternal(31 downto 11) <= (others => '0');
+              if EXTENDED_ROUTE_SUPPORT = true then 
+                  configDataReadInternal(31) <= extendedRouteTableWrite;
+              end if;
               configDataReadInternal(10 downto 0) <= routeTableAddress;
               
             when x"000074" =>
@@ -2039,11 +2149,15 @@ begin
                 -- Write the port information for the address selected by the
                 -- above register.
                 routeTableWrite <= '1';
-                routeTablePortWrite <= configDataWrite(7 downto 0);
+                -- ASA get here the extended route information if available
+                routeTablePortWrite(31 downto 0) <= configDataWrite(31 downto 0);
+                -- ASA complete by the bit saying if this entry is an Extended Route entry
+                routeTablePortWrite(32)          <= extendedRouteTableWrite;
               end if;
 
-              configDataReadInternal(31 downto 8) <= (others => '0');
-              configDataReadInternal(7 downto 0) <= routeTablePortRead;
+              -- ASA get here the extended route information if available
+              --configDataReadInternal(31 downto 8) <= (others => '0');
+              configDataReadInternal(31 downto 0) <= routeTablePortRead(31 downto 0);
               
             when x"000078" =>
               -----------------------------------------------------------------
@@ -2281,19 +2395,22 @@ use work.rio_common.all;
 -------------------------------------------------------------------------------
 entity RouteTableInterconnect is
   generic(
-    WIDTH : natural range 1 to 256 := 8);
+    WIDTH : natural range 1 to 256 := 8;
+    EXTENDED_ROUTE_SUPPORT : boolean := false );
   port(
     clk : in std_logic;
     areset_n : in std_logic;
 
     stb_i : in Array1(WIDTH-1 downto 0);
     addr_i : in Array16(WIDTH-1 downto 0);
-    dataM_o : out Array8(WIDTH-1 downto 0);
+    --dataM_o : out Array8(WIDTH-1 downto 0); ASA
+    dataM_o : out Array33(WIDTH-1 downto 0);
     ack_o : out Array1(WIDTH-1 downto 0);
 
     stb_o : out std_logic;
     addr_o : out std_logic_vector(15 downto 0);
-    dataS_i : in std_logic_vector(7 downto 0);
+    --dataS_i : in std_logic_vector(7 downto 0);-- ASA
+    dataS_i : in std_logic_vector(32 downto 0);
     ack_i : in std_logic);
 end entity;
 
@@ -2359,7 +2476,8 @@ use work.rio_common.all;
 -------------------------------------------------------------------------------
 entity SwitchPortInterconnect is
   generic(
-    WIDTH : natural range 1 to 256 := 8);
+    WIDTH : natural range 1 to 256 := 8;
+    EXTENDED_ROUTE_SUPPORT : boolean := false );
   port(
     clk : in std_logic;
     areset_n : in std_logic;
