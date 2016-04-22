@@ -383,7 +383,7 @@ uint8_t RIOSTACK_getLinkIsInitialized(const RioStack_t *stack)
 
 
   status = (uint8_t) !(((stack->rxState == RX_STATE_UNINITIALIZED) || 
-                        (stack->rxState == RX_STATE_PORT_INITIALIZED)) &&
+                        (stack->rxState == RX_STATE_PORT_INITIALIZED)) ||
                        ((stack->txState == TX_STATE_UNINITIALIZED) || 
                         (stack->txState == TX_STATE_PORT_INITIALIZED)));
   
