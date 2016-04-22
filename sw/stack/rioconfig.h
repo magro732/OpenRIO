@@ -16,6 +16,8 @@
  * Includes
  *******************************************************************************/
 
+#include <stdint.h>
+
 #ifdef MODULE_TEST
 #include <CUnit/CUnit.h>
 #endif
