@@ -482,12 +482,36 @@ package rio_common is
   constant PACKET_NOT_ACCEPTED_CAUSE_LOSS_DESCRAMBLER : std_logic_vector(4 downto 0) := "00111";
   constant PACKET_NOT_ACCEPTED_CAUSE_GENERAL_ERROR : std_logic_vector(4 downto 0) := "11111";
   
+  -----------------------------------------------------------------------------
+  -- Function to or together all bits in a vector.
+  -----------------------------------------------------------------------------
+  function or_reduce( V: std_logic_vector )
+    return std_ulogic;
+
 end package;
 
 -------------------------------------------------------------------------------
 -- RioCommon package body description.
 -------------------------------------------------------------------------------
 package body rio_common is
+
+  -----------------------------------------------------------------------------
+  -- Function to or together all bits in a vector.
+  -----------------------------------------------------------------------------
+  function or_reduce( V: std_logic_vector )
+    return std_ulogic is
+    variable result: std_ulogic;
+  begin
+    for i in V'range loop
+      if i = V'left then
+        result := V(i);
+      else
+        result := result or V(i);
+      end if;
+      exit when result = '1';
+    end loop;
+    return result;
+  end function;
 
 end rio_common;
 

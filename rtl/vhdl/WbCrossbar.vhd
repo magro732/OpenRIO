@@ -48,7 +48,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use work.baseio_common.all;
+use work.rio_common.all;
 
 -------------------------------------------------------------------------------
 -- Entity for WbCrossbar.
@@ -203,7 +203,7 @@ end architecture;
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use work.baseio_common.all;
+use work.rio_common.all;
 
 -------------------------------------------------------------------------------
 -- 
