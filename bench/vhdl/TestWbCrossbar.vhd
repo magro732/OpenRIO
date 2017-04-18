@@ -87,7 +87,7 @@ end configuration;
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use work.test_common.all;
+use work.TestPortPackage.all;
 
 
 -------------------------------------------------------------------------------
@@ -309,18 +309,18 @@ begin
     wait until clk'event and clk = '1';
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_WbCrossbar");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_WbCrossbar-TC1");
-    PrintS("Description: Test single master accesses.");
-    PrintS("Requirement: N/A");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Test write accesses from all masters to all slaves.");
-    PrintS("Result: The write operation should target the correct slave.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_WbCrossbar");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_WbCrossbar-TC1");
+    TestSpec("Description: Test single master accesses.");
+    TestSpec("Requirement: N/A");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Test write accesses from all masters to all slaves.");
+    TestSpec("Result: The write operation should target the correct slave.");
     ---------------------------------------------------------------------------
-    PrintR("TG_WbCrossbar-TC1-Step1");
+    TestCaseStart("TG_WbCrossbar-TC1-Step1");
     ---------------------------------------------------------------------------
 
     for i in 0 to 3 loop
@@ -343,11 +343,11 @@ begin
     end loop;
 
     ---------------------------------------------------------------------------
-    PrintS("Step 2:");
-    PrintS("Action: Test read accesses from all masters to all slaves.");
-    PrintS("Result: The read operation should target the correct slave.");
+    TestSpec("Step 2:");
+    TestSpec("Action: Test read accesses from all masters to all slaves.");
+    TestSpec("Result: The read operation should target the correct slave.");
     ---------------------------------------------------------------------------
-    PrintR("TG_WbCrossbar-TC1-Step2");
+    TestCaseStart("TG_WbCrossbar-TC1-Step2");
     ---------------------------------------------------------------------------
 
     for i in 0 to 3 loop
@@ -370,17 +370,17 @@ begin
     end loop;
     
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_WbCrossbar-TC2");
-    PrintS("Description: Test multi master access to the same slave.");
-    PrintS("Requirement: N/A");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Test simultanous write accesses from all masters to the ");
-    PrintS("        same slave.");
-    PrintS("Result: Each masters access should be scheduled after one another.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_WbCrossbar-TC2");
+    TestSpec("Description: Test multi master access to the same slave.");
+    TestSpec("Requirement: N/A");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Test simultanous write accesses from all masters to the ");
+    TestSpec("        same slave.");
+    TestSpec("Result: Each masters access should be scheduled after one another.");
     ---------------------------------------------------------------------------
-    PrintR("TG_WbCrossbar-TC2-Step1");
+    TestCaseStart("TG_WbCrossbar-TC2-Step1");
     ---------------------------------------------------------------------------
     
     MasterWriteStart(0, "0000", x"11");
@@ -418,16 +418,16 @@ begin
     wait until clk'event and clk = '1';
 
     ---------------------------------------------------------------------------
-    PrintS("-----------------------------------------------------------------");
-    PrintS("TG_WbCrossbar-TC3");
-    PrintS("Description: Test multi master access to different slaves.");
-    PrintS("Requirement: N/A");
-    PrintS("-----------------------------------------------------------------");
-    PrintS("Step 1:");
-    PrintS("Action: Initiate accesses from all masters to each different slaves.");
-    PrintS("Result: All the transferes should be activeated simultanously.");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("TG_WbCrossbar-TC3");
+    TestSpec("Description: Test multi master access to different slaves.");
+    TestSpec("Requirement: N/A");
+    TestSpec("-----------------------------------------------------------------");
+    TestSpec("Step 1:");
+    TestSpec("Action: Initiate accesses from all masters to each different slaves.");
+    TestSpec("Result: All the transferes should be activeated simultanously.");
     ---------------------------------------------------------------------------
-    PrintR("TG_WbCrossbar-TC3-Step1");
+    TestCaseStart("TG_WbCrossbar-TC3-Step1");
     ---------------------------------------------------------------------------
 
     MasterWriteStart(0, "0000", x"11");
@@ -457,12 +457,12 @@ begin
     MasterWriteEnd(3);
 
     ---------------------------------------------------------------------------
-    PrintS("Step 2:");
-    PrintS("Action: Test to start a new access while one is currently ongoing.");
-    PrintS("Result: The first access should complete first and the new access");
-    PrintS("        should following it directly.");
+    TestSpec("Step 2:");
+    TestSpec("Action: Test to start a new access while one is currently ongoing.");
+    TestSpec("Result: The first access should complete first and the new access");
+    TestSpec("        should following it directly.");
     ---------------------------------------------------------------------------
-    PrintR("TG_WbCrossbar-TC1-Step2");
+    TestCaseStart("TG_WbCrossbar-TC1-Step2");
     ---------------------------------------------------------------------------
 
     MasterWriteStart(0, "0000", x"11");
